@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 
@@ -814,3 +815,91 @@ def test_kubernetes_secret_redaction_is_scoped_to_its_own_document() -> None:
 
     assert _SECRET_VALUE not in redacted
     assert "PUBLIC-CONFIG-VALUE" in redacted
+
+
+# --- Hallazgos de la 7a revision independiente -------------------------------
+# Los tres comparten un principio: no hay que devolver texto sin redactar solo
+# porque la pasada estructural no vio nada.
+
+
+def test_secret_redaction_bounds_yaml_alias_fan_out() -> None:
+    """Un DAG de alias no debe recorrerse como si fuera un arbol.
+
+    safe_load resuelve los alias a referencias COMPARTIDAS; sin memoizacion por
+    identidad, el mismo objeto se revisita una vez por arista entrante. 62
+    marcadores en ~440 bytes pasaban por debajo del guard y costaban ~6.8s.
+    """
+    levels, branch = 16, 3
+    lines = ["l0: &n0 [x, x, x]"]
+    for level in range(1, levels):
+        refs = ", ".join([f"*n{level - 1}"] * branch)
+        lines.append(f"l{level}: &n{level} [{refs}]")
+    lines += ["root:", "  kind: Secret", f"  data: *n{levels - 1}"]
+    bomb = "\n".join(lines) + "\n"
+
+    start = time.perf_counter()
+    bounded_redacted_text(bomb, MAX_ARCHITECTURE_READ_BYTES)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 2.0, f"el saneador tardo {elapsed:.1f}s: fan-out sin acotar"
+
+
+def test_secret_redaction_fails_closed_on_unparseable_helm_template() -> None:
+    """Las plantillas Helm no son YAML valido, asi que caen al fallback por
+    construccion. Con CRLF, el fallback heredado de la ronda 6 filtraba entero."""
+    helm = (
+        "{{- if .Values.enabled }}\n"
+        "apiVersion: v1\n"
+        "kind: Secret\n"
+        "metadata:\n"
+        "  name: app-credentials\n"
+        "data:\n"
+        f"  ca.crt: {_SECRET_VALUE}\n"
+        "{{- end }}\n"
+    )
+
+    for label, text in (("LF", helm), ("CRLF", helm.replace("\n", "\r\n"))):
+        redacted = bounded_redacted_text(text, MAX_ARCHITECTURE_READ_BYTES)
+        assert _SECRET_VALUE not in redacted, f"fuga con finales {label}"
+
+
+def test_secret_redaction_covers_manifest_embedded_in_a_scalar() -> None:
+    """Un Secret renderizado dentro del data: de un ConfigMap: el documento
+    externo no es Secret, asi que la pasada estructural no lo ve."""
+    embedded = (
+        "apiVersion: v1\n"
+        "kind: ConfigMap\n"
+        "metadata:\n"
+        "  name: rendered\n"
+        "data:\n"
+        "  rendered-secret.yaml: |\n"
+        "    kind: Secret\n"
+        "    data:\n"
+        f"      ca.crt: {_SECRET_VALUE}\n"
+    )
+
+    redacted = bounded_redacted_text(embedded, MAX_ARCHITECTURE_READ_BYTES)
+
+    assert _SECRET_VALUE not in redacted
+
+
+def test_secret_redaction_fallback_sees_list_item_secrets() -> None:
+    """Degradacion forzada: un hermano malformado manda todo al fallback, y alli
+    el Secret venia como item de lista (`- kind: Secret`), que el reconocimiento
+    no toleraba por el guion."""
+    combined = (
+        "kind: List\n"
+        "items:\n"
+        "- kind: Secret\n"
+        "  metadata:\n"
+        "    name: app-credentials\n"
+        "  data:\n"
+        f"    ca.crt: {_SECRET_VALUE}\n"
+        "---\n"
+        "bad:\n"
+        "\tkey: value\n"
+    )
+
+    redacted = bounded_redacted_text(combined, MAX_ARCHITECTURE_READ_BYTES)
+
+    assert _SECRET_VALUE not in redacted

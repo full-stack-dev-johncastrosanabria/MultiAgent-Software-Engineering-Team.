@@ -215,30 +215,50 @@ _K8S_SECRET_KIND = re.compile(r"""^kind:[ \t]*['"]?Secret['"]?[ \t]*$""", re.MUL
 _K8S_SECRET_BLOCK = re.compile(r"^(?:data|stringData):[ \t]*$")
 
 
-def _redact_secret_lines(value: str) -> str:
-    """Fallback por lineas para cuando el documento no se puede parsear.
+# `(?:-\s+)?` tolera el guion de item de lista: en un `kind: List` el Secret
+# llega como `- kind: Secret`, y sin eso el fallback no lo reconocia.
+_SECRET_KIND_ANY = re.compile(
+    r"""^\s*(?:-\s+)?['"]?kind['"]?\s*:\s*['"]?Secret['"]?\s*$""", re.MULTILINE
+)
+_SECRET_BLOCK_ANY = re.compile(
+    r"""^(\s*(?:-\s+)?)['"]?(?:data|stringData)['"]?\s*:\s*$"""
+)
+_YAML_ENTRY = re.compile(r"""^(\s*)(['"]?[\w.\-/]+['"]?)\s*:\s*(?:.*)$""")
 
-    Solo reconoce Secrets top-level sin comillas: es un ultimo recurso ante YAML
-    invalido o sospechoso, no la via principal.
+
+def _redact_secret_lines(value: str) -> str:
+    """Pasada conservadora para texto que el parser no resolvio.
+
+    Falla CERRADO: si aparece un `kind: Secret` en cualquier parte -incluido
+    dentro del scalar de otro documento- se blanquea todo bloque `data:`/
+    `stringData:` a cualquier indentacion. Sobre-redactar aca es el intercambio
+    buscado: las plantillas Helm no son YAML valido y caen aqui por construccion,
+    asi que esta pasada no puede depender de reconocer la estructura.
     """
-    if not _K8S_SECRET_KIND.search(value):
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    if not _SECRET_KIND_ANY.search(normalized):
         return value
     out: list[str] = []
-    inside = False
-    for line in value.splitlines(keepends=True):
+    block_indent: int | None = None
+    for line in normalized.splitlines(keepends=True):
         body = line.rstrip("\n")
-        if _K8S_SECRET_BLOCK.match(body):
-            inside = True
+        opening = _SECRET_BLOCK_ANY.match(body)
+        if opening is not None:
+            block_indent = len(opening.group(1))
             out.append(line)
             continue
-        if inside:
-            if body.strip() and not body[0].isspace():
-                inside = False          # a new top-level key closes the block
+        if block_indent is not None:
+            indent = len(body) - len(body.lstrip())
+            if body.strip() and indent <= block_indent:
+                block_indent = None
             else:
                 if body.strip():
-                    indent = line[: len(line) - len(line.lstrip())]
-                    key = body.strip().split(":", 1)[0] if ":" in body else ""
-                    out.append(f"{indent}{key}: [REDACTED]\n" if key else f"{indent}[REDACTED]\n")
+                    entry = _YAML_ENTRY.match(body)
+                    out.append(
+                        f"{entry.group(1)}{entry.group(2)}: [REDACTED]\n"
+                        if entry is not None
+                        else " " * indent + "[REDACTED]\n"
+                    )
                 else:
                     out.append(line)
                 continue
@@ -250,10 +270,32 @@ _SECRET_TOKEN = re.compile(r"\bSecret\b")
 MAX_YAML_ALIAS_MARKERS = 64
 
 
-def _blank_secret_values(node: Any, *, depth: int = 0) -> bool:
-    """Blanquear `data`/`stringData` de todo mapping cuyo `kind` sea Secret."""
-    if depth > MAX_ARCHITECTURE_JSON_DEPTH:
+def _blank_secret_values(
+    node: Any,
+    *,
+    depth: int = 0,
+    seen: set[int] | None = None,
+    budget: list[int] | None = None,
+) -> bool:
+    """Blanquear `data`/`stringData` de todo mapping cuyo `kind` sea Secret.
+
+    safe_load resuelve los alias a referencias COMPARTIDAS, asi que sin memoizar
+    por identidad el mismo objeto se recorre una vez por arista entrante y un
+    grafo de ~440 bytes cuesta millones de visitas. La cota de profundidad no
+    sirve: el costo viene del fan-out, no del anidamiento.
+    """
+    if seen is None:
+        seen = set()
+    if budget is None:
+        budget = [MAX_ARCHITECTURE_JSON_NODES]
+    if depth > MAX_ARCHITECTURE_JSON_DEPTH or budget[0] <= 0:
         return False
+    if isinstance(node, dict | list):
+        marker = id(node)
+        if marker in seen:
+            return False
+        seen.add(marker)
+    budget[0] -= 1
     found = False
     if isinstance(node, dict):
         kind = node.get("kind")
@@ -267,10 +309,10 @@ def _blank_secret_values(node: Any, *, depth: int = 0) -> bool:
                     node[field] = "[REDACTED]"
                     found = True
         for child in list(node.values()):
-            found |= _blank_secret_values(child, depth=depth + 1)
+            found |= _blank_secret_values(child, depth=depth + 1, seen=seen, budget=budget)
     elif isinstance(node, list):
         for child in node:
-            found |= _blank_secret_values(child, depth=depth + 1)
+            found |= _blank_secret_values(child, depth=depth + 1, seen=seen, budget=budget)
     return found
 
 
@@ -284,18 +326,22 @@ def _redact_kubernetes_secret_manifests(value: str) -> str:
     """
     if not _SECRET_TOKEN.search(value):
         return value
-    if value.count("&") + value.count("*") > MAX_YAML_ALIAS_MARKERS:
-        return _redact_secret_lines(value)      # posible bomba de alias: no parsear
-    try:
-        documents = list(yaml.safe_load_all(value))
-    except (yaml.YAMLError, RecursionError, ValueError):
-        return _redact_secret_lines(value)
-    if not _blank_secret_values(documents):
-        return value
-    try:
-        return yaml.safe_dump_all(documents, default_flow_style=False, sort_keys=False)
-    except (yaml.YAMLError, RecursionError, ValueError):
-        return _redact_secret_lines(value)
+    documents: list[Any] | None = None
+    if value.count("&") + value.count("*") <= MAX_YAML_ALIAS_MARKERS:
+        try:
+            documents = list(yaml.safe_load_all(value))
+        except (yaml.YAMLError, RecursionError, ValueError):
+            documents = None
+    if documents is not None and _blank_secret_values(documents):
+        # La pasada estructural resolvio el documento: respeta el alcance por
+        # documento y no hay que sobre-redactar hermanos legitimos.
+        try:
+            return yaml.safe_dump_all(documents, default_flow_style=False, sort_keys=False)
+        except (yaml.YAMLError, RecursionError, ValueError):
+            pass
+    # No haber encontrado un Secret no es evidencia de que no lo haya: puede venir
+    # embebido en un scalar, o el texto puede no ser parseable.
+    return _redact_secret_lines(value)
 
 
 def bounded_redacted_text(value: str, limit: int) -> str:
