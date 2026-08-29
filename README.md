@@ -1,4 +1,10 @@
-# Autonomous Software Engineering Team
+# Autonomous Software Engineering Team (ASET)
+
+![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-Workflow-orange)
+![MCP](https://img.shields.io/badge/Model_Context_Protocol-Integrated-green)
+![Langfuse](https://img.shields.io/badge/Observability-Langfuse-purple)
+![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 Equipo local-first de exactamente seis agentes — Product, Architecture,
 Developer, Security, Testing y Reviewer — coordinado únicamente por un
