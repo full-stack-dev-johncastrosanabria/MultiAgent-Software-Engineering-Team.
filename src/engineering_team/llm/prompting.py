@@ -18,7 +18,8 @@ from engineering_team.models.context import ContextEnvelope
 from engineering_team.repository_evidence import (
     MAX_ARCHITECTURE_READ_BYTES,
     MAX_ARCHITECTURE_READ_FILES,
-    bounded_utf8,
+    bounded_rag_evidence,
+    bounded_redacted_text,
     result_path,
 )
 
@@ -100,13 +101,17 @@ def build_role_prompts(
         "agent": envelope.agent.value,
         "current_task": envelope.current_task,
         "state_projection": projection,
-        "rag_evidence": [
-            {
-                "source": item.source, "section": item.section, "chunk_id": item.chunk_id,
-                "score": item.score,
-            }
-            for item in envelope.rag_evidence
-        ],
+        "rag_evidence": (
+            []
+            if role is AgentRole.ARCHITECTURE
+            else [
+                {
+                    "source": item.source, "section": item.section, "chunk_id": item.chunk_id,
+                    "score": item.score,
+                }
+                for item in envelope.rag_evidence
+            ]
+        ),
         "tool_results": (
             [
                 {
@@ -158,7 +163,8 @@ def build_role_prompts(
         architecture_rag = envelope.rag_evidence[:MAX_ARCHITECTURE_READ_FILES]
         evidence_count = len(architecture_reads) + len(architecture_rag)
         content_budget = (
-            MAX_ARCHITECTURE_READ_BYTES // evidence_count if evidence_count else 0
+            max(0, MAX_ARCHITECTURE_READ_BYTES // evidence_count - 1024)
+            if evidence_count else 0
         )
         if architecture_reads:
             source_blocks += (
@@ -167,7 +173,7 @@ def build_role_prompts(
                     json.dumps({
                         "kind": "repository",
                         "path": result_path(item.input_summary),
-                        "content": bounded_utf8(item.output_summary, content_budget),
+                        "content": bounded_redacted_text(item.output_summary, content_budget),
                     }, ensure_ascii=False)
                     for item in architecture_reads
                 )
@@ -178,10 +184,7 @@ def build_role_prompts(
                 + "\n".join(
                     json.dumps({
                         "kind": "rag",
-                        "chunk_id": item.chunk_id,
-                        "source": item.source,
-                        "section": item.section,
-                        "content": bounded_utf8(item.fragment, content_budget),
+                        **bounded_rag_evidence(item, content_budget).model_dump(mode="json"),
                     }, ensure_ascii=False)
                     for item in architecture_rag
                 )

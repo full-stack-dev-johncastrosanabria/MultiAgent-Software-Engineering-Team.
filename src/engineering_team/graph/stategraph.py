@@ -27,9 +27,13 @@ from engineering_team.contracts.state import EngineeringState
 from engineering_team.guardrails.validation import require_explicit_destructive_authorization
 from engineering_team.models.context import build_context
 from engineering_team.repository_evidence import (
+    MAX_ARCHITECTURE_READ_BYTES,
     MAX_ARCHITECTURE_READ_FILES,
-    bounded_utf8,
+    MAX_ARCHITECTURE_SEARCH_BYTES,
+    bounded_rag_evidence,
+    bounded_redacted_text,
     parse_repository_paths,
+    summarize_path_tool_result,
 )
 
 from .routers import review_route, security_route
@@ -212,39 +216,65 @@ def build_engineering_graph(
             tool_results = list(current.tool_results)
             required_mcp_missing = False
             existing_repo_paths: set[str] = set()
+            architecture_rag = list(rag_evidence)
+            architecture_read_results: list[tuple[str, Any]] = []
+            architecture_retrieval_ran = False
             if retriever is not None and role in {
                 AgentRole.ARCHITECTURE, AgentRole.SECURITY, AgentRole.TESTING
             }:
                 retrieved = retriever.retrieve(current.requirement, agent=role)
-                rag_evidence.extend(
-                    item for item in retrieved if item.chunk_id not in {old.chunk_id for old in rag_evidence}
-                )
+                new_evidence = [
+                    item for item in retrieved
+                    if item.chunk_id not in {old.chunk_id for old in rag_evidence}
+                ]
+                if role is AgentRole.ARCHITECTURE:
+                    architecture_retrieval_ran = True
+                    architecture_rag.extend(new_evidence)
+                else:
+                    rag_evidence.extend(new_evidence)
                 if retriever.last_error is not None:
                     errors.append(retriever.last_error)
-                if trace is not None:
+                if trace is not None and role is not AgentRole.ARCHITECTURE:
                     trace.record(
                         "RAG retrieval", as_type="retriever", input={"query": current.requirement},
                         output=[item.model_dump(mode="json") for item in retrieved],
                         metadata={"agent": role.value, "status": retriever.last_status},
                     )
             if repository_mcp is not None and role in {AgentRole.ARCHITECTURE, AgentRole.DEVELOPER}:
-                result = repository_mcp.list_files(role)
+                raw_result = repository_mcp.list_files(role)
+                architecture_listed_paths = (
+                    parse_repository_paths(raw_result.output_summary)
+                    if role is AgentRole.ARCHITECTURE
+                    and raw_result.status is ToolStatus.SUCCESS
+                    else []
+                )
+                result = (
+                    summarize_path_tool_result(raw_result)
+                    if role is AgentRole.ARCHITECTURE
+                    else raw_result
+                )
                 required_mcp_missing |= preserve_tool_result(
                     result, role, errors, tool_results, repository_mcp
                 )
                 if role is AgentRole.ARCHITECTURE and result.status is ToolStatus.SUCCESS:
-                    listed_paths = parse_repository_paths(result.output_summary)
+                    listed_paths = architecture_listed_paths
                     terms = ArchitectureAgent.relevance_terms(
                         current.specification, current.requirement
                     )
                     search_hits: list[str] = []
                     for term in terms[:3]:
-                        searched = repository_mcp.search_code(role, term)
+                        raw_search = repository_mcp.search_code(role, term)
+                        ephemeral_hits = (
+                            parse_repository_paths(raw_search.output_summary)
+                            if raw_search.status is ToolStatus.SUCCESS else []
+                        )
+                        searched = summarize_path_tool_result(
+                            raw_search, limit=MAX_ARCHITECTURE_SEARCH_BYTES
+                        )
                         required_mcp_missing |= preserve_tool_result(
                             searched, role, errors, tool_results, repository_mcp
                         )
-                        if searched.status is ToolStatus.SUCCESS:
-                            search_hits.extend(parse_repository_paths(searched.output_summary))
+                        search_hits.extend(ephemeral_hits)
                     ranked = ArchitectureAgent.rank_paths(listed_paths, search_hits, terms)
                     if search_hits:
                         hit_set = set(search_hits)
@@ -252,13 +282,7 @@ def build_engineering_graph(
                         ranked = relevant_ranked or ranked
                     for path in ranked[:MAX_ARCHITECTURE_READ_FILES]:
                         raw_read = repository_mcp.read_file(role, path)
-                        read = raw_read.model_copy(update={
-                            "input_summary": f"path={path}",
-                            "output_summary": bounded_utf8(raw_read.output_summary),
-                        })
-                        required_mcp_missing |= preserve_tool_result(
-                            read, role, errors, tool_results, repository_mcp
-                        )
+                        architecture_read_results.append((path, raw_read))
                 elif role is AgentRole.DEVELOPER and result.status is ToolStatus.SUCCESS:
                     listed_paths = [
                         line.strip().replace("\\", "/")
@@ -300,6 +324,45 @@ def build_engineering_graph(
                                     read, role, errors, tool_results, repository_mcp
                                 )
                                 already_read.add(target_path)
+            if role is AgentRole.ARCHITECTURE:
+                unique_rag = []
+                seen_chunks: set[str] = set()
+                for item in architecture_rag:
+                    if item.chunk_id not in seen_chunks:
+                        unique_rag.append(item)
+                        seen_chunks.add(item.chunk_id)
+                    if len(unique_rag) == MAX_ARCHITECTURE_READ_FILES:
+                        break
+                evidence_count = len(unique_rag) + len(architecture_read_results)
+                content_budget = (
+                    max(0, MAX_ARCHITECTURE_READ_BYTES // evidence_count - 1024)
+                    if evidence_count else 0
+                )
+                rag_evidence = [
+                    bounded_rag_evidence(item, content_budget)
+                    for item in unique_rag
+                ]
+                for path, raw_read in architecture_read_results:
+                    read = raw_read.model_copy(update={
+                        "input_summary": f"path={path}",
+                        "output_summary": bounded_redacted_text(
+                            raw_read.output_summary, content_budget
+                        ),
+                        "error": (
+                            bounded_redacted_text(raw_read.error, 2 * 1024)
+                            if raw_read.error is not None else None
+                        ),
+                    })
+                    required_mcp_missing |= preserve_tool_result(
+                        read, role, errors, tool_results, repository_mcp
+                    )
+                if trace is not None and architecture_retrieval_ran:
+                    trace.record(
+                        "RAG retrieval", as_type="retriever",
+                        input={"query": current.requirement},
+                        output=[item.model_dump(mode="json") for item in rag_evidence],
+                        metadata={"agent": role.value, "status": retriever.last_status},
+                    )
             if quality_mcp is not None and role is AgentRole.TESTING:
                 result = quality_mcp.run_tests(role, test_paths)
                 required_mcp_missing |= preserve_tool_result(

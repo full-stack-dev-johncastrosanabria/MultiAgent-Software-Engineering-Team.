@@ -200,6 +200,11 @@ def _preserves_governed_facts(candidate: dict[str, Any], parsed: BaseModel) -> b
     """Prevent schema-valid model output from weakening deterministic evidence."""
     actual = parsed.model_dump(mode="json")
     model_name = type(parsed).__name__
+    if model_name == "ArchitectureProposal":
+        # Architecture is deterministically derived from bounded repository and
+        # RAG evidence. A model may validate its shape, but it must not rewrite
+        # any decision, impact, risk, component, or cited source.
+        return actual == candidate
     if model_name == "ImplementationResult":
         if candidate.get("action_mode") != "APPLIED":
             # PROPOSED mode is fully deterministic today: the LLM only
