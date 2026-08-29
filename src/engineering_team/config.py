@@ -40,17 +40,6 @@ class Settings(BaseSettings):
     cloud_chain_architecture: str = ""
     cloud_chain_developer: str = ""
     cloud_chain_security: str = ""
-    # Legacy compatibility settings below. CloudRouter uses cloud_chain_* instead;
-    # these pools/escape settings no longer select models. Kept for older configs.
-    gemini_models: str = (
-        "gemini-3.6-flash,gemini-3.5-flash,gemini-3.7-flash,gemini-flash-latest"
-    )
-    gemini_developer_models: str = (
-        "gemini-3.6-flash,gemini-3.5-flash,gemini-3.1-pro-preview,"
-        "gemini-pro-latest,gemini-3.7-flash"
-    )
-    cloud_escape_model: str = "openai/gpt-oss-120b"
-    cloud_escape_tail_roles: str = "developer"
     langfuse_public_key: str | None = None
     langfuse_secret_key: SecretStr | None = None
     langfuse_base_url: str | None = Field(
