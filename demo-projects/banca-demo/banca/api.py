@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
@@ -50,7 +51,9 @@ def logout(authorization: str = Header(default="")) -> dict[str, str]:
 
 
 @app.get("/api/perfil")
-def leer_perfil(usuario=Depends(actor_autenticado)) -> dict[str, object]:
+def leer_perfil(
+    usuario: Annotated[dict[str, object], Depends(actor_autenticado)],
+) -> dict[str, object]:
     perfil = obtener_perfil(conexion, usuario["id"])
     if perfil is None:
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
@@ -58,7 +61,9 @@ def leer_perfil(usuario=Depends(actor_autenticado)) -> dict[str, object]:
 
 
 @app.get("/api/cuentas")
-def listar_cuentas(usuario=Depends(actor_autenticado)) -> dict[str, object]:
+def listar_cuentas(
+    usuario: Annotated[dict[str, object], Depends(actor_autenticado)],
+) -> dict[str, object]:
     filas = cuentas_de_usuario(conexion, usuario["id"])
     return {
         "total": saldo_total(conexion, usuario["id"]),
@@ -68,7 +73,9 @@ def listar_cuentas(usuario=Depends(actor_autenticado)) -> dict[str, object]:
 
 @app.get("/api/cuentas/{cuenta_id}/transacciones")
 def listar_transacciones(
-    cuenta_id: int, limite: int = 20, usuario=Depends(actor_autenticado)
+    cuenta_id: int,
+    usuario: Annotated[dict[str, object], Depends(actor_autenticado)],
+    limite: int = 20,
 ) -> dict[str, object]:
     try:
         filas = transacciones_de_cuenta(conexion, cuenta_id, usuario["id"], limite)

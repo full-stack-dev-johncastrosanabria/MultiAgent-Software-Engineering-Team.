@@ -1,5 +1,4 @@
 import pytest
-
 from banca.cuentas import CuentaNoEncontrada
 from banca.transacciones import LIMITE_MAXIMO, registrar, transacciones_de_cuenta
 

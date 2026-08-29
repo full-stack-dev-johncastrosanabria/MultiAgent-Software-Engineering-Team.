@@ -1,7 +1,6 @@
 """Pruebas de las operaciones aritméticas."""
 
 import pytest
-
 from calculadora import operaciones
 
 

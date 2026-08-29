@@ -1,6 +1,7 @@
 """Web interface for the calculator using Streamlit."""
 
 import streamlit as st
+
 from calculadora import operaciones
 
 OPERATIONS = {
@@ -36,8 +37,8 @@ def main() -> None:
         try:
             result = func(*inputs)
             st.success(f"Resultado: {result}")
-        except Exception as e:
-            st.error(f"Error: {e}")
+        except (ArithmeticError, ValueError) as exc:
+            st.error(f"Error: {exc}")
 
 if __name__ == "__main__":
     main()

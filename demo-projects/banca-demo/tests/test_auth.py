@@ -1,5 +1,4 @@
 import pytest
-
 from banca.auth import ErrorAutenticacion, autenticar, cerrar_sesion, usuario_de_sesion
 
 

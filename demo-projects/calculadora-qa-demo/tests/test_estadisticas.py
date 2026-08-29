@@ -1,7 +1,6 @@
 """Pruebas de estadística descriptiva."""
 
 import pytest
-
 from calculadora import estadisticas
 
 

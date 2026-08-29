@@ -1,5 +1,4 @@
 import pytest
-
 from banca.cuentas import CuentaNoEncontrada, cuentas_de_usuario, obtener_cuenta_propia, saldo_total
 
 
