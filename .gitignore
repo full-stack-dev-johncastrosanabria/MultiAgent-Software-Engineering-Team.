@@ -22,3 +22,13 @@ evaluation/reports/ui-audit-*
 .impeccable/
 PRODUCT.md
 DESIGN.md
+PROJECT_STATE.md
+.claude/
+.github/
+CLAUDE.md
+AGENTS.md
+.superpowers/
+.specify/
+.ruff_cache/
+specs/
+scripts/handoff.py
