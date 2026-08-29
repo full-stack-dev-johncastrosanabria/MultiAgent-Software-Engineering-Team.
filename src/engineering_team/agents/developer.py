@@ -5,6 +5,7 @@ from typing import Any, ClassVar
 from engineering_team.contracts.enums import ActionMode, ToolStatus
 from engineering_team.contracts.models import ImplementationResult
 from engineering_team.models.context import ContextEnvelope
+from engineering_team.repository_evidence import is_credential_path
 
 from .base import AgentBase
 
@@ -87,8 +88,10 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
             path
             and not candidate.is_absolute()
             and ".." not in candidate.parts
-            and not any(part == ".env" or part.startswith(".env.") for part in candidate.parts)
             and "__pycache__" not in candidate.parts
+            # El contenido que lee el Developer va literal al prompt y no puede
+            # sanearse: debe reescribir el archivo fiel. El control es no leerlo.
+            and not is_credential_path(path)
         )
 
     @staticmethod

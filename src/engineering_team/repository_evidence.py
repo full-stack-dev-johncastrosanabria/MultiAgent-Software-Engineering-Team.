@@ -172,6 +172,23 @@ def _redact_quoted_sensitive_values(value: str) -> str:
     return "".join(output)
 
 
+def is_credential_path(raw_path: str) -> bool:
+    """True si la ruta nombra material de credenciales, sin opinar sobre el resto.
+
+    Se comparte con el Developer, que necesita EXACTAMENTE esta parte y no la
+    allowlist de sufijos: debe poder escribir archivos nuevos de cualquier tipo,
+    pero nunca leer una clave privada -su contenido va literal al prompt-.
+    """
+    candidate = PurePosixPath(raw_path.strip().replace("\\", "/"))
+    folded = tuple(part.casefold() for part in candidate.parts)
+    return (
+        any(part in _EXCLUDED_PARTS for part in folded)
+        or candidate.name.casefold() in _EXCLUDED_NAMES
+        or any(part == ".env" or part.startswith(".env.") for part in folded)
+        or any(marker in part for part in folded for marker in _SENSITIVE_NAME_MARKERS)
+    )
+
+
 def safe_repository_path(raw_path: str) -> str | None:
     """Normalize a relative, non-secret repository path or reject it.
 

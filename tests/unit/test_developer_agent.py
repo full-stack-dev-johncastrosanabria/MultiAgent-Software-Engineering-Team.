@@ -155,3 +155,25 @@ def test_developer_selects_inspected_transaction_module_not_first_listed_paths()
     assert "Implement the bounded change above" not in result.diff
     assert any("read_file" in item for item in result.evidence)
     assert result.security_surface_changed is True
+
+
+def test_developer_refuses_credential_paths_architecture_already_rejects() -> None:
+    """El Developer manda el contenido crudo al prompt, sin saneador: no puede
+    sanearlo porque debe reescribir el archivo fiel. Entonces el control es no
+    leerlo. Estas rutas ya las rechazaba Architecture."""
+    for path in (
+        ".ssh/id_rsa",
+        "id_rsa",
+        "credentials.json",
+        ".aws/credentials",
+        "secrets/db.yaml",
+        ".npmrc",
+        ".pypirc",
+        "id_ed25519",
+    ):
+        assert not DeveloperAgent._safe_path(path), path
+
+
+def test_developer_still_accepts_ordinary_source_and_new_files() -> None:
+    for path in ("src/app.py", "tests/test_app.py", "deploy/backup.yaml", "README.md"):
+        assert DeveloperAgent._safe_path(path), path
