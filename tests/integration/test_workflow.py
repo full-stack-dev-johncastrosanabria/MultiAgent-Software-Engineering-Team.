@@ -52,6 +52,17 @@ class ScriptedReviewer(ReviewerAgent):
         return self.decisions.popleft() if self.decisions else super().execute(envelope)
 
 
+class PassingQuality:
+    """A green suite. The reviewer's evidence gate rejects any run without one, so a
+    test that expects APPROVED has to supply the run_tests evidence a real run records."""
+
+    def run_tests(self, role, paths=None):
+        return ToolResult(
+            tool_name="run_tests", allowed_role=role, status=ToolStatus.SUCCESS,
+            input_summary="safe", output_summary="1 passed", duration_ms=1,
+        )
+
+
 @pytest.mark.parametrize(
     ("decision", "expected_tail"),
     [
@@ -67,7 +78,9 @@ class ScriptedReviewer(ReviewerAgent):
 )
 def test_reviewer_remediation_chains_return_through_required_validation(decision, expected_tail):
     reviewer = ScriptedReviewer([decision])
-    graph = build_engineering_graph(agent_overrides={AgentRole.REVIEWER: reviewer})
+    graph = build_engineering_graph(
+        agent_overrides={AgentRole.REVIEWER: reviewer}, quality_mcp=PassingQuality()
+    )
 
     result = graph.invoke({"run_id": "remediation", "requirement": "safe bounded change"})
 
@@ -307,7 +320,8 @@ class SuccessfulCloudRuntime:
 
 def test_local_failure_uses_graph_integrated_cloud_fallback_and_preserves_error():
     result = build_engineering_graph(
-        model_runtime=FailingLocalRuntime(), cloud_runtime=SuccessfulCloudRuntime()
+        model_runtime=FailingLocalRuntime(), cloud_runtime=SuccessfulCloudRuntime(),
+        quality_mcp=PassingQuality(),
     ).invoke({"run_id": "fallback", "requirement": "safe bounded change"})
 
     assert result["final_status"] == "APPROVED"
@@ -365,9 +379,9 @@ def test_testing_does_not_fallback_to_a_model_after_cloud_failure():
 
 def test_reviewer_uses_deterministic_evidence_without_an_llm_call():
     runtime = RecordingRuntime()
-    result = build_engineering_graph(model_runtime=runtime).invoke(
-        {"run_id": "fast-review", "requirement": "safe bounded change"}
-    )
+    result = build_engineering_graph(
+        model_runtime=runtime, quality_mcp=PassingQuality()
+    ).invoke({"run_id": "fast-review", "requirement": "safe bounded change"})
 
     assert result["final_status"] == "APPROVED"
     assert AgentRole.REVIEWER not in runtime.roles

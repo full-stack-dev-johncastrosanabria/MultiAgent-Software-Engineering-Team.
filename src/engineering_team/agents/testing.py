@@ -14,6 +14,13 @@ from engineering_team.models.context import ContextEnvelope
 
 from .base import AgentBase
 
+# What counts as an executed test. A tool qualifies only if it really ran behavior
+# and reported a status; the reviewer additionally requires it to be attributed to
+# the Testing role. `scenario_acceptance` executes the scenario against the live
+# service and reports named observations, so it is evidence in exactly the same
+# sense a pytest run is — the tool name differs, the epistemic status does not.
+TEST_EVIDENCE_TOOLS = frozenset({"run_tests", "scenario_acceptance"})
+
 # `happy_path` is always required. Every other dimension is required only when the
 # specification actually implies it, so the claim stays specific to the change.
 _ALWAYS_REQUIRED = ("happy_path",)
@@ -74,7 +81,9 @@ class TestingAgent(AgentBase[TestResult]):
     role = "Testing"
 
     def execute(self, envelope: ContextEnvelope) -> TestResult:
-        run_tests = [item for item in envelope.tool_results if item.tool_name == "run_tests"]
+        run_tests = [
+            item for item in envelope.tool_results if item.tool_name in TEST_EVIDENCE_TOOLS
+        ]
         latest = run_tests[-1] if run_tests else None
         status = latest.status if latest is not None else ToolStatus.SUCCESS
 
@@ -99,9 +108,14 @@ class TestingAgent(AgentBase[TestResult]):
 
         # 3. Which required dimension each piece of evidence demonstrates.
         coverage: dict[str, list[str]] = {name: [] for name in sorted(required)}
-        for name in executed:
-            for dimension in _categories_for(_normalise(name), business_terms) & required:
-                coverage[dimension].append(name)
+        for item in run_tests:
+            name = item.evidence_reference or item.tool_name
+            # A failed execution proves nothing, so only its identifier is read; a
+            # successful one also speaks through what it observed.
+            spoken = f"{name} {item.output_summary}" if item.status is ToolStatus.SUCCESS else name
+            for dimension in _categories_for(_normalise(spoken), business_terms) & required:
+                if name not in coverage[dimension]:
+                    coverage[dimension].append(name)
         if latest is not None and status is ToolStatus.SUCCESS:
             # A green suite is direct evidence of the happy path even when the runner
             # reports one aggregate result instead of per-test identifiers.

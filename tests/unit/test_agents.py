@@ -1,3 +1,5 @@
+import pytest
+
 from engineering_team.agents.product import ProductAgent
 from engineering_team.agents.reviewer import ReviewerAgent
 from engineering_team.agents.security import SecurityAgent
@@ -5,7 +7,6 @@ from engineering_team.contracts.enums import AgentRole, ErrorCode, ReviewerStatu
 from engineering_team.contracts.models import ToolResult, WorkflowError
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.models.context import build_context
-import pytest
 
 
 def test_product_agent_returns_validated_specification() -> None:

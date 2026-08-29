@@ -1,0 +1,163 @@
+{
+  "schema_version": "ecc.agent-architecture-audit.report.v1",
+  "executive_verdict": {
+    "overall_health": "high_risk",
+    "primary_failure_mode": "Las etapas Architecture y Reviewer pueden producir una aprobación convincente sin que el diseño ni la cobertura estén suficientemente respaldados por evidencia real.",
+    "most_urgent_fix": "Hacer que Reviewer rechace por código cualquier ejecución sin pruebas reales o con dimensiones de cobertura requeridas sin evidencia."
+  },
+  "scope": {
+    "target_name": "Autonomous Software Engineering Team",
+    "model_stack": [
+      "Ollama mediante LocalModelRuntime",
+      "Gemini, Groq, Mistral y OpenRouter mediante CloudModelRuntime",
+      "LangGraph",
+      "MCP de repositorio y calidad",
+      "Chroma y Sentence Transformers"
+    ],
+    "layers_to_audit": [
+      "1. System prompt",
+      "2. Session history",
+      "3. Long-term memory",
+      "4. Distillation",
+      "5. Active recall",
+      "6. Tool selection",
+      "7. Tool execution",
+      "8. Tool interpretation",
+      "9. Answer shaping",
+      "10. Platform rendering",
+      "11. Hidden repair loops",
+      "12. Persistence"
+    ]
+  },
+  "findings": [
+    {
+      "severity": "critical",
+      "title": "Reviewer aprueba aunque falte evidencia de cobertura requerida",
+      "mechanism": "Testing registra las dimensiones sin evidencia como failures, pero conserva SUCCESS si pytest termina en verde. Reviewer solo rechaza cuando el status no es SUCCESS y, por tanto, puede devolver APPROVED con score 100 aun con brechas explícitas.",
+      "source_layer": "8. Tool interpretation",
+      "root_cause": "La decisión de aprobación está code-gated por el exit status del runner, no por la cobertura requerida que el propio sistema calcula.",
+      "evidence_refs": [
+        "src/engineering_team/agents/testing.py:113",
+        "src/engineering_team/agents/testing.py:118",
+        "src/engineering_team/agents/reviewer.py:61",
+        "src/engineering_team/agents/reviewer.py:70"
+      ],
+      "confidence": 0.99,
+      "recommended_fix": "Añadir un gate determinista que exija un run_tests real y coverage_mapping completo antes de permitir APPROVED."
+    },
+    {
+      "severity": "critical",
+      "title": "Architecture no está fundamentado en el repositorio inspeccionado",
+      "mechanism": "La etapa ejecuta list_files, pero ArchitectureAgent ignora ToolResults y fragmentos RAG y devuelve siempre modular monolith, bounded y risks vacío. En modo no aplicado, el prompt omite la salida de las herramientas y ordena copiar el candidato.",
+      "source_layer": "6. Tool selection",
+      "root_cause": "La herramienta existe y se ejecuta, pero su evidencia nunca entra en la decisión arquitectónica ni en el prompt que podría corregirla.",
+      "evidence_refs": [
+        "src/engineering_team/graph/stategraph.py:225",
+        "src/engineering_team/graph/stategraph.py:230",
+        "src/engineering_team/agents/architecture.py:10",
+        "src/engineering_team/llm/prompting.py:113",
+        "src/engineering_team/llm/prompting.py:143"
+      ],
+      "confidence": 0.99,
+      "recommended_fix": "Leer archivos relevantes para Architecture, pasar evidencia acotada al ContextEnvelope y construir/validar decisiones y riesgos contra esa evidencia."
+    },
+    {
+      "severity": "high",
+      "title": "Las dependencias de proyectos se instalan en el intérprete compartido",
+      "mechanism": "Cada QualityMCP ejecuta pip install . con sys.executable. Las dependencias de una ejecución quedan disponibles para las siguientes y varias ejecuciones pueden mutar el mismo entorno en paralelo.",
+      "source_layer": "12. Persistence",
+      "root_cause": "No existe un entorno virtual o cache de dependencias aislado por proyecto/run.",
+      "evidence_refs": [
+        "src/engineering_team/mcp/quality.py:18",
+        "src/engineering_team/mcp/quality.py:33",
+        "src/engineering_team/mcp/quality.py:37",
+        "src/engineering_team/run_api.py:15"
+      ],
+      "confidence": 0.98,
+      "recommended_fix": "Crear un entorno efímero o content-addressed por lockfile y ejecutar build, tests y scans dentro de él."
+    },
+    {
+      "severity": "high",
+      "title": "El MCP de repositorio indexa y persiste artefactos ignorados sin límite",
+      "mechanism": "_safe_files recorre todo el árbol excepto secretos y symlinks; no respeta .gitignore ni excluye caches. list_files se guarda completo como ToolResult y se envía al trazado. En este checkout había 133984 archivos ignorados, incluidos node_modules, .venv y copias de runs.",
+      "source_layer": "7. Tool execution",
+      "root_cause": "El contrato de listado no tiene política de exclusión, tamaño máximo, paginación ni resumen tipado.",
+      "evidence_refs": [
+        "src/engineering_team/mcp/repository.py:47",
+        "src/engineering_team/mcp/repository.py:64",
+        "src/engineering_team/graph/stategraph.py:166",
+        ".gitignore:1"
+      ],
+      "confidence": 0.99,
+      "recommended_fix": "Aplicar exclusiones Git, límites y paginación; persistir solo conteos y rutas seleccionadas en lugar del listado completo."
+    },
+    {
+      "severity": "medium",
+      "title": "La telemetría confunde ejecución primaria con fallback",
+      "mechanism": "CloudModelRuntime marca fallback_used=true incluso cuando se construye como runtime primario cloud-first. A la inversa, LocalModelRuntime acepta fallback_reason pero no lo refleja en ModelExecutionInfo cuando actúa como secundario.",
+      "source_layer": "9. Answer shaping",
+      "root_cause": "El runtime codifica el rol primary/fallback en la composición, pero el evento de uso no deriva sus campos de esa composición.",
+      "evidence_refs": [
+        "src/engineering_team/apply_run.py:83",
+        "src/engineering_team/apply_run.py:85",
+        "src/engineering_team/llm/cloud.py:467",
+        "src/engineering_team/llm/runtime.py:47"
+      ],
+      "confidence": 0.98,
+      "recommended_fix": "Derivar fallback_used y fallback_reason de primary/self.primary y propagarlos simétricamente en ambos runtimes."
+    },
+    {
+      "severity": "medium",
+      "title": "El historial visible reconstruye decisiones pasadas usando el último review",
+      "mechanism": "route_history conserva nombres de nodos. Al formar el reporte, cada transición Reviewer usa el reason y score del review terminal, por lo que iteraciones históricas pueden mostrar una razón o puntuación que no tuvieron.",
+      "source_layer": "9. Answer shaping",
+      "root_cause": "La persistencia guarda una secuencia de rutas, no eventos de decisión inmutables por iteración.",
+      "evidence_refs": [
+        "src/engineering_team/run_events.py:232",
+        "src/engineering_team/run_events.py:234",
+        "src/engineering_team/run_events.py:247",
+        "src/engineering_team/graph/stategraph.py:448"
+      ],
+      "confidence": 0.97,
+      "recommended_fix": "Persistir cada decisión con iteration, status, reason, score y timestamp y proyectar la UI directamente desde esos eventos."
+    }
+  ],
+  "ordered_fix_plan": [
+    {
+      "order": 1,
+      "goal": "Code-gate de evidencia de pruebas y cobertura",
+      "why_now": "El sistema puede aprobar trabajo insuficientemente validado.",
+      "expected_effect": "Elimina falsos APPROVED y vuelve auditable la decisión final."
+    },
+    {
+      "order": 2,
+      "goal": "Fundamentar Architecture con lecturas reales y evidencia acotada",
+      "why_now": "La salida actual es genérica y no depende del repositorio.",
+      "expected_effect": "Decisiones, impacto y riesgos específicos y verificables."
+    },
+    {
+      "order": 3,
+      "goal": "Aislar dependencias por proyecto o run",
+      "why_now": "Evita contaminación y carreras entre ejecuciones.",
+      "expected_effect": "Resultados reproducibles de build, test y seguridad."
+    },
+    {
+      "order": 4,
+      "goal": "Limitar el MCP de repositorio y respetar exclusiones",
+      "why_now": "Reduce latencia, trazas masivas y evidencia irrelevante.",
+      "expected_effect": "Herramientas predecibles y persistencia compacta."
+    },
+    {
+      "order": 5,
+      "goal": "Corregir semántica de fallback en telemetría",
+      "why_now": "Las métricas actuales pueden atribuir mal primarios y secundarios.",
+      "expected_effect": "Tasas de fallback y diagnósticos confiables."
+    },
+    {
+      "order": 6,
+      "goal": "Persistir decisiones de revisión inmutables",
+      "why_now": "La línea de tiempo no puede reconstruirse fielmente desde nombres de nodos.",
+      "expected_effect": "Historial y UI consistentes con la ejecución real."
+    }
+  ]
+}

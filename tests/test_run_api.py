@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 import engineering_team.run_api as run_api_module
 from engineering_team.apply_service import ApplyService, file_hash, snapshot_project
 from engineering_team.config import Settings
+from engineering_team.contracts.enums import ToolStatus
+from engineering_team.contracts.models import ToolResult
 from engineering_team.graph.stategraph import build_engineering_graph
 from engineering_team.observability.langfuse import TraceSession
 from engineering_team.run_api import RunManager, create_runs_router
@@ -1025,6 +1027,16 @@ def test_executor_error_is_safe_and_persisted_once(tmp_path: Path) -> None:
     assert len(failed["report"]["errors"]) == 1
 
 
+class _PassingQuality:
+    """A green suite. The reviewer's evidence gate rejects any run without one."""
+
+    def run_tests(self, role, paths=None):
+        return ToolResult(
+            tool_name="run_tests", allowed_role=role, status=ToolStatus.SUCCESS,
+            input_summary="safe", output_summary="1 passed", duration_ms=1,
+        )
+
+
 def test_post_to_real_langgraph_to_websocket_delivers_real_final_report(tmp_path: Path) -> None:
     source = _source(tmp_path)
     visited: list[str] = []
@@ -1049,7 +1061,9 @@ def test_post_to_real_langgraph_to_websocket_delivers_real_final_report(tmp_path
         trace = EventForwardingTrace(
             TraceSession(trace_id="test-trace", run_id=snapshot.run_id, live=False), observe,
         )
-        return build_engineering_graph(trace=trace).invoke({
+        return build_engineering_graph(
+            trace=trace, quality_mcp=_PassingQuality()
+        ).invoke({
             "run_id": snapshot.run_id, "requirement": snapshot.message,
             "repository_context": {
                 "authorized": True, "project_path": snapshot.workspace_path,

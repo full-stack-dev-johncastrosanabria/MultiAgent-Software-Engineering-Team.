@@ -1,5 +1,6 @@
-import pytest
 import json
+
+import pytest
 
 from engineering_team.contracts.enums import RouteTarget
 from engineering_team.guardrails.routes import validate_route

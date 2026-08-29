@@ -224,9 +224,9 @@ def test_truncated_output_is_classified_before_json_validation():
 
 
 def test_http_date_retry_after_controls_the_model_cooldown():
+    import time
     from datetime import datetime, timedelta, timezone
     from email.utils import format_datetime
-    import time
 
     settings = Settings(_env_file=None, cloud_enabled=True, mistral_api_key="fixture",
         cloud_chain_product="mistral:mistral-small-latest")

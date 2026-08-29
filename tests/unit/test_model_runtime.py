@@ -14,8 +14,8 @@ from engineering_team.contracts.enums import (
 from engineering_team.contracts.models import (
     ArchitectureProposal,
     ImplementationResult,
-    ReviewerDecision,
     ProductSpecification,
+    ReviewerDecision,
 )
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.llm.runtime import LocalModelRuntime, _preserves_governed_facts

@@ -26,6 +26,11 @@ from engineering_team.contracts.models import FinalReport, WorkflowError
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.guardrails.validation import require_explicit_destructive_authorization
 from engineering_team.models.context import build_context
+from engineering_team.repository_evidence import (
+    MAX_ARCHITECTURE_READ_FILES,
+    bounded_utf8,
+    parse_repository_paths,
+)
 
 from .routers import review_route, security_route
 
@@ -227,7 +232,34 @@ def build_engineering_graph(
                 required_mcp_missing |= preserve_tool_result(
                     result, role, errors, tool_results, repository_mcp
                 )
-                if role is AgentRole.DEVELOPER and result.status is ToolStatus.SUCCESS:
+                if role is AgentRole.ARCHITECTURE and result.status is ToolStatus.SUCCESS:
+                    listed_paths = parse_repository_paths(result.output_summary)
+                    terms = ArchitectureAgent.relevance_terms(
+                        current.specification, current.requirement
+                    )
+                    search_hits: list[str] = []
+                    for term in terms[:3]:
+                        searched = repository_mcp.search_code(role, term)
+                        required_mcp_missing |= preserve_tool_result(
+                            searched, role, errors, tool_results, repository_mcp
+                        )
+                        if searched.status is ToolStatus.SUCCESS:
+                            search_hits.extend(parse_repository_paths(searched.output_summary))
+                    ranked = ArchitectureAgent.rank_paths(listed_paths, search_hits, terms)
+                    if search_hits:
+                        hit_set = set(search_hits)
+                        relevant_ranked = [path for path in ranked if path in hit_set]
+                        ranked = relevant_ranked or ranked
+                    for path in ranked[:MAX_ARCHITECTURE_READ_FILES]:
+                        raw_read = repository_mcp.read_file(role, path)
+                        read = raw_read.model_copy(update={
+                            "input_summary": f"path={path}",
+                            "output_summary": bounded_utf8(raw_read.output_summary),
+                        })
+                        required_mcp_missing |= preserve_tool_result(
+                            read, role, errors, tool_results, repository_mcp
+                        )
+                elif role is AgentRole.DEVELOPER and result.status is ToolStatus.SUCCESS:
                     listed_paths = [
                         line.strip().replace("\\", "/")
                         for line in result.output_summary.splitlines()

@@ -239,7 +239,11 @@ def _scenario_acceptance(
                 for count in range(1, 6):
                     service.record_failed_login("owner")
                     assert service.is_locked("owner") is (count == 5)
-                evidence = ["attempts_1_to_4=unlocked", "attempt_5=locked"]
+                evidence = [
+                    "attempts_1_to_4=unlocked",
+                    "failed_login=rejected_without_lock",
+                    "attempt_5=locked",
+                ]
             elif scenario.identifier == "SC-03":
                 service.add_transactions("owner", 8)
                 assert len(service.history("owner", "owner")) == 5
@@ -249,7 +253,11 @@ def _scenario_acceptance(
                     pass
                 else:
                     raise AssertionError("ownership authorization missing")
-                evidence = ["authorized_result_count=5", "cross_user_access=denied"]
+                evidence = [
+                    "authorized_result_count=5",
+                    "history_limit=latest_5_of_8",
+                    "cross_user_access=denied",
+                ]
             elif scenario.identifier == "SC-04":
                 token = service.issue_reset_token("owner")
                 expires_text = service.connection.execute(

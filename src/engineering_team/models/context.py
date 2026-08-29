@@ -66,7 +66,10 @@ _TOOLS: dict[AgentRole, set[str]] = {
     AgentRole.ARCHITECTURE: {"list_files", "read_file", "search_code", "get_file_content"},
     AgentRole.DEVELOPER: {"list_files", "read_file", "search_code", "get_file_content", "create_file", "update_file", "get_diff", "run_build", "get_build_status", "run_linter"},
     AgentRole.SECURITY: {"scan_dependencies", "run_security_scan", "get_security_report"},
-    AgentRole.TESTING: {"run_tests", "get_test_results", "run_build", "get_build_status", "run_linter"},
+    # `scenario_acceptance` is a Testing-role result, not a tool this agent invokes:
+    # Testing is a deterministic gate and calls nothing. Listing it here only lets the
+    # gate read evidence the run already produced under its own role.
+    AgentRole.TESTING: {"run_tests", "get_test_results", "run_build", "get_build_status", "run_linter", "scenario_acceptance"},
 }
 
 

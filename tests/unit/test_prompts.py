@@ -1,9 +1,9 @@
-import pytest
 import json
 
+import pytest
+
 from engineering_team.agents.product import ProductAgent
-from engineering_team.contracts.enums import AgentRole
-from engineering_team.contracts.enums import ToolStatus
+from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.contracts.models import ToolResult
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.llm.prompting import build_role_prompts, governed_output_schema
