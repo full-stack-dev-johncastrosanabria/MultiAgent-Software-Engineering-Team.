@@ -1,0 +1,1279 @@
+[
+  {
+    "id": "SC-01",
+    "requirement": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+    "expected_status": "APPROVED",
+    "observed_status": "APPROVED",
+    "status_match": true,
+    "expected_security_signal": "Enforced 15-minute expiration and single-use invalidation.",
+    "observed_findings": [
+      "Reset link expires after 15 minutes",
+      "Reset link is single-use"
+    ],
+    "reviewer_score": 100.0,
+    "scores": {
+      "requirements_completeness": 100.0,
+      "architecture_correctness": 100.0,
+      "security_compliance": 100.0,
+      "testing_completeness": 100.0,
+      "implementation_consistency": 100.0,
+      "rag_grounding": 100.0
+    },
+    "iterations": 0,
+    "models_used": [
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b"
+    ],
+    "rag_sources": [
+      "api-design-guidelines.md",
+      "architecture-guidelines.md",
+      "security-guidelines.md",
+      "owasp-api-security.md",
+      "testing-strategy.md",
+      "coding-standards.md"
+    ],
+    "tools_used": [
+      "scenario_acceptance",
+      "list_files",
+      "list_files",
+      "search_code",
+      "search_code",
+      "search_code",
+      "read_file",
+      "read_file",
+      "scan_dependencies",
+      "run_security_scan",
+      "run_tests"
+    ],
+    "tool_evidence": [
+      "mcp://repository/list_files",
+      "mcp://repository/list_files",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://quality/scan_dependencies",
+      "mcp://quality/run_security_scan",
+      "mcp://quality/run_tests"
+    ],
+    "trace_id": "6356fa6f671ff508883d6e489247caa2",
+    "langfuse_live": true,
+    "pass": true,
+    "duration": 244.3847014999992,
+    "llm_calls": 6,
+    "tool_calls": 11,
+    "retrievals": 12,
+    "errors": [],
+    "acceptance_evidence": [
+      "expiration=15_minutes",
+      "first_use=accepted",
+      "second_use=denied"
+    ],
+    "model_usage": [
+      {
+        "agent": "Product",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 23534,
+        "usage": {
+          "prompt_eval_count": 692,
+          "eval_count": 165
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Architecture",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 12983,
+        "usage": {
+          "prompt_eval_count": 981,
+          "eval_count": 126
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 59649,
+        "usage": {
+          "prompt_eval_count": 1220,
+          "eval_count": 644
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 17167,
+        "usage": {
+          "prompt_eval_count": 1181,
+          "eval_count": 107
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 30967,
+        "usage": {
+          "prompt_eval_count": 1072,
+          "eval_count": 266
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 96788,
+        "usage": {
+          "prompt_eval_count": 2150,
+          "eval_count": 531
+        },
+        "structured_output_success": true,
+        "error": null
+      }
+    ]
+  },
+  {
+    "id": "SC-02",
+    "requirement": "Lock an account after five failed authentication attempts.",
+    "expected_status": "APPROVED",
+    "observed_status": "APPROVED",
+    "status_match": true,
+    "expected_security_signal": "Lockout occurs after exactly five failures.",
+    "observed_findings": [
+      "Account locks after exactly 5 failed attempts"
+    ],
+    "reviewer_score": 100.0,
+    "scores": {
+      "requirements_completeness": 100.0,
+      "architecture_correctness": 100.0,
+      "security_compliance": 100.0,
+      "testing_completeness": 100.0,
+      "implementation_consistency": 100.0,
+      "rag_grounding": 100.0
+    },
+    "iterations": 0,
+    "models_used": [
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b"
+    ],
+    "rag_sources": [
+      "api-design-guidelines.md",
+      "security-guidelines.md",
+      "owasp-api-security.md",
+      "testing-strategy.md",
+      "coding-standards.md"
+    ],
+    "tools_used": [
+      "scenario_acceptance",
+      "list_files",
+      "list_files",
+      "search_code",
+      "search_code",
+      "search_code",
+      "read_file",
+      "read_file",
+      "scan_dependencies",
+      "run_security_scan",
+      "run_tests"
+    ],
+    "tool_evidence": [
+      "mcp://repository/list_files",
+      "mcp://repository/list_files",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://quality/scan_dependencies",
+      "mcp://quality/run_security_scan",
+      "mcp://quality/run_tests"
+    ],
+    "trace_id": "083d4b8da6dc39aae489fed44994b335",
+    "langfuse_live": true,
+    "pass": true,
+    "duration": 270.12790333299927,
+    "llm_calls": 6,
+    "tool_calls": 11,
+    "retrievals": 12,
+    "errors": [],
+    "acceptance_evidence": [
+      "attempts_1_to_4=unlocked",
+      "attempt_5=locked"
+    ],
+    "model_usage": [
+      {
+        "agent": "Product",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 20234,
+        "usage": {
+          "prompt_eval_count": 642,
+          "eval_count": 125
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Architecture",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 16888,
+        "usage": {
+          "prompt_eval_count": 973,
+          "eval_count": 128
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 88061,
+        "usage": {
+          "prompt_eval_count": 1173,
+          "eval_count": 611
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 22485,
+        "usage": {
+          "prompt_eval_count": 1177,
+          "eval_count": 107
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 25662,
+        "usage": {
+          "prompt_eval_count": 1069,
+          "eval_count": 266
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 93006,
+        "usage": {
+          "prompt_eval_count": 2151,
+          "eval_count": 532
+        },
+        "structured_output_success": true,
+        "error": null
+      }
+    ]
+  },
+  {
+    "id": "SC-03",
+    "requirement": "Return only the latest five transactions belonging to the authorized user.",
+    "expected_status": "APPROVED",
+    "observed_status": "APPROVED",
+    "status_match": true,
+    "expected_security_signal": "Ownership authorization and maximum result count of five.",
+    "observed_findings": [
+      "Only the authorized user's transactions",
+      "Maximum 5 transactions"
+    ],
+    "reviewer_score": 100.0,
+    "scores": {
+      "requirements_completeness": 100.0,
+      "architecture_correctness": 100.0,
+      "security_compliance": 100.0,
+      "testing_completeness": 100.0,
+      "implementation_consistency": 100.0,
+      "rag_grounding": 100.0
+    },
+    "iterations": 0,
+    "models_used": [
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b"
+    ],
+    "rag_sources": [
+      "api-design-guidelines.md",
+      "owasp-api-security.md",
+      "security-guidelines.md",
+      "testing-strategy.md",
+      "coding-standards.md"
+    ],
+    "tools_used": [
+      "scenario_acceptance",
+      "list_files",
+      "list_files",
+      "search_code",
+      "search_code",
+      "search_code",
+      "read_file",
+      "read_file",
+      "read_file",
+      "scan_dependencies",
+      "run_security_scan",
+      "run_tests"
+    ],
+    "tool_evidence": [
+      "mcp://repository/list_files",
+      "mcp://repository/list_files",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://quality/scan_dependencies",
+      "mcp://quality/run_security_scan",
+      "mcp://quality/run_tests"
+    ],
+    "trace_id": "6fbca1a7c475349655a4951f2096451d",
+    "langfuse_live": true,
+    "pass": true,
+    "duration": 290.644852292,
+    "llm_calls": 6,
+    "tool_calls": 12,
+    "retrievals": 12,
+    "errors": [],
+    "acceptance_evidence": [
+      "authorized_result_count=5",
+      "cross_user_access=denied"
+    ],
+    "model_usage": [
+      {
+        "agent": "Product",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 21526,
+        "usage": {
+          "prompt_eval_count": 659,
+          "eval_count": 143
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Architecture",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 15850,
+        "usage": {
+          "prompt_eval_count": 976,
+          "eval_count": 128
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 104863,
+        "usage": {
+          "prompt_eval_count": 1323,
+          "eval_count": 749
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 21044,
+        "usage": {
+          "prompt_eval_count": 1176,
+          "eval_count": 107
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 25538,
+        "usage": {
+          "prompt_eval_count": 1073,
+          "eval_count": 268
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 97503,
+        "usage": {
+          "prompt_eval_count": 2175,
+          "eval_count": 544
+        },
+        "structured_output_success": true,
+        "error": null
+      }
+    ]
+  },
+  {
+    "id": "SC-04",
+    "requirement": "Provide a password-reset token that never expires.",
+    "expected_status": "REJECTED",
+    "observed_status": "REJECTED",
+    "status_match": true,
+    "expected_security_signal": "Unsafe token lifetime is identified.",
+    "observed_findings": [
+      "sensitive information: password reset tokens must expire",
+      "sensitive information: password reset tokens must expire"
+    ],
+    "reviewer_score": 40.0,
+    "scores": {
+      "requirements_completeness": 70.0,
+      "architecture_correctness": 70.0,
+      "security_compliance": 0.0,
+      "testing_completeness": 70.0,
+      "implementation_consistency": 70.0,
+      "rag_grounding": 70.0
+    },
+    "iterations": 3,
+    "models_used": [
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b"
+    ],
+    "rag_sources": [
+      "api-design-guidelines.md",
+      "security-guidelines.md",
+      "owasp-api-security.md",
+      "testing-strategy.md",
+      "coding-standards.md"
+    ],
+    "tools_used": [
+      "scenario_acceptance",
+      "list_files",
+      "list_files",
+      "search_code",
+      "search_code",
+      "search_code",
+      "read_file",
+      "read_file",
+      "scan_dependencies",
+      "run_security_scan",
+      "run_tests",
+      "list_files",
+      "search_code",
+      "search_code",
+      "search_code",
+      "read_file",
+      "read_file",
+      "scan_dependencies",
+      "run_security_scan",
+      "run_tests",
+      "list_files",
+      "search_code",
+      "search_code",
+      "search_code",
+      "read_file",
+      "read_file",
+      "scan_dependencies",
+      "run_security_scan",
+      "run_tests"
+    ],
+    "tool_evidence": [
+      "mcp://repository/list_files",
+      "mcp://repository/list_files",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://quality/scan_dependencies",
+      "mcp://quality/run_security_scan",
+      "mcp://quality/run_tests",
+      "mcp://repository/list_files",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://quality/scan_dependencies",
+      "mcp://quality/run_security_scan",
+      "mcp://quality/run_tests",
+      "mcp://repository/list_files",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://quality/scan_dependencies",
+      "mcp://quality/run_security_scan",
+      "mcp://quality/run_tests"
+    ],
+    "trace_id": "b544c2cc741f6abf0c9c6d0c99bcf532",
+    "langfuse_live": true,
+    "pass": true,
+    "duration": 1037.371147374999,
+    "llm_calls": 15,
+    "tool_calls": 29,
+    "retrievals": 12,
+    "errors": [],
+    "acceptance_evidence": [
+      "unsafe_non_expiring_requirement=must_reject",
+      "secure_baseline=expires"
+    ],
+    "model_usage": [
+      {
+        "agent": "Product",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 27959,
+        "usage": {
+          "prompt_eval_count": 631,
+          "eval_count": 196
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Architecture",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 17549,
+        "usage": {
+          "prompt_eval_count": 975,
+          "eval_count": 128
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 95814,
+        "usage": {
+          "prompt_eval_count": 1176,
+          "eval_count": 611
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": true,
+        "latency_ms": 74785,
+        "usage": {
+          "prompt_eval_count": 1262,
+          "eval_count": 550
+        },
+        "structured_output_success": false,
+        "error": "LLM_QUALITY_ERROR: governed artifact contradiction"
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 28154,
+        "usage": {
+          "prompt_eval_count": 407,
+          "eval_count": 224
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 26716,
+        "usage": {
+          "prompt_eval_count": 1076,
+          "eval_count": 268
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 93676,
+        "usage": {
+          "prompt_eval_count": 2160,
+          "eval_count": 542
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 92922,
+        "usage": {
+          "prompt_eval_count": 1327,
+          "eval_count": 611
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 37979,
+        "usage": {
+          "prompt_eval_count": 1295,
+          "eval_count": 233
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 21868,
+        "usage": {
+          "prompt_eval_count": 1103,
+          "eval_count": 197
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 106301,
+        "usage": {
+          "prompt_eval_count": 2365,
+          "eval_count": 643
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 85580,
+        "usage": {
+          "prompt_eval_count": 1405,
+          "eval_count": 611
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 43651,
+        "usage": {
+          "prompt_eval_count": 1322,
+          "eval_count": 233
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 38629,
+        "usage": {
+          "prompt_eval_count": 1124,
+          "eval_count": 205
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 236021,
+        "usage": {
+          "prompt_eval_count": 2557,
+          "eval_count": 735
+        },
+        "structured_output_success": true,
+        "error": null
+      }
+    ]
+  },
+  {
+    "id": "SC-05",
+    "requirement": "Allow access to any user's transactions using only that user's arbitrary ID.",
+    "expected_status": "REJECTED",
+    "observed_status": "REJECTED",
+    "status_match": true,
+    "expected_security_signal": "Authorization failure and IDOR are identified.",
+    "observed_findings": [
+      "authorization/IDOR: resource access must be ownership-authorized"
+    ],
+    "reviewer_score": 40.0,
+    "scores": {
+      "requirements_completeness": 70.0,
+      "architecture_correctness": 70.0,
+      "security_compliance": 0.0,
+      "testing_completeness": 70.0,
+      "implementation_consistency": 70.0,
+      "rag_grounding": 70.0
+    },
+    "iterations": 3,
+    "models_used": [
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "qwen3.5:9b"
+    ],
+    "rag_sources": [
+      "api-design-guidelines.md",
+      "architecture-guidelines.md",
+      "owasp-api-security.md",
+      "security-guidelines.md",
+      "testing-strategy.md",
+      "coding-standards.md"
+    ],
+    "tools_used": [
+      "scenario_acceptance",
+      "list_files",
+      "list_files",
+      "search_code",
+      "search_code",
+      "search_code",
+      "read_file",
+      "read_file",
+      "read_file",
+      "scan_dependencies",
+      "run_security_scan",
+      "run_tests",
+      "list_files",
+      "search_code",
+      "search_code",
+      "search_code",
+      "read_file",
+      "read_file",
+      "read_file",
+      "scan_dependencies",
+      "run_security_scan",
+      "run_tests",
+      "list_files",
+      "search_code",
+      "search_code",
+      "search_code",
+      "read_file",
+      "read_file",
+      "read_file",
+      "scan_dependencies",
+      "run_security_scan",
+      "run_tests"
+    ],
+    "tool_evidence": [
+      "mcp://repository/list_files",
+      "mcp://repository/list_files",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://quality/scan_dependencies",
+      "mcp://quality/run_security_scan",
+      "mcp://quality/run_tests",
+      "mcp://repository/list_files",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://quality/scan_dependencies",
+      "mcp://quality/run_security_scan",
+      "mcp://quality/run_tests",
+      "mcp://repository/list_files",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/search_code",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://repository/read_file",
+      "mcp://quality/scan_dependencies",
+      "mcp://quality/run_security_scan",
+      "mcp://quality/run_tests"
+    ],
+    "trace_id": "5b47f4ba5a948147e8ceb42d95840569",
+    "langfuse_live": true,
+    "pass": true,
+    "duration": 2086.5473711659997,
+    "llm_calls": 14,
+    "tool_calls": 32,
+    "retrievals": 12,
+    "errors": [],
+    "acceptance_evidence": [
+      "authorization_failure=detected",
+      "idor=cross_user_access_denied"
+    ],
+    "model_usage": [
+      {
+        "agent": "Product",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 70654,
+        "usage": {
+          "prompt_eval_count": 651,
+          "eval_count": 269
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Architecture",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 27429,
+        "usage": {
+          "prompt_eval_count": 977,
+          "eval_count": 126
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 199877,
+        "usage": {
+          "prompt_eval_count": 1343,
+          "eval_count": 761
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 103511,
+        "usage": {
+          "prompt_eval_count": 1260,
+          "eval_count": 319
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 50262,
+        "usage": {
+          "prompt_eval_count": 1076,
+          "eval_count": 267
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 163615,
+        "usage": {
+          "prompt_eval_count": 2170,
+          "eval_count": 549
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 198511,
+        "usage": {
+          "prompt_eval_count": 1573,
+          "eval_count": 761
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 86004,
+        "usage": {
+          "prompt_eval_count": 1293,
+          "eval_count": 319
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 38371,
+        "usage": {
+          "prompt_eval_count": 1103,
+          "eval_count": 196
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 247227,
+        "usage": {
+          "prompt_eval_count": 2389,
+          "eval_count": 651
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 414827,
+        "usage": {
+          "prompt_eval_count": 1664,
+          "eval_count": 761
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 108186,
+        "usage": {
+          "prompt_eval_count": 1320,
+          "eval_count": 319
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 62852,
+        "usage": {
+          "prompt_eval_count": 1124,
+          "eval_count": 204
+        },
+        "structured_output_success": true,
+        "error": null
+      },
+      {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 299012,
+        "usage": {
+          "prompt_eval_count": 2602,
+          "eval_count": 753
+        },
+        "structured_output_success": true,
+        "error": null
+      }
+    ]
+  }
+]
