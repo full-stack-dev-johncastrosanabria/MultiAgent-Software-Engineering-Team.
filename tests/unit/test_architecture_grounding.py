@@ -750,7 +750,7 @@ def _excluded(manifest: str) -> str:
     """Todo manifiesto Secret sale reemplazado, nunca redactado en el lugar."""
     out = bounded_redacted_text(manifest, MAX_ARCHITECTURE_READ_BYTES)
     assert _SECRET_VALUE not in out
-    assert SECRET_MANIFEST_PLACEHOLDER in out
+    assert out.startswith("[EXCLUDED: Kubernetes ")
     return out
 
 
@@ -884,3 +884,42 @@ def test_secret_manifest_excluded_with_block_scalar_kind() -> None:
 def test_secret_manifest_excluded_with_explicit_type_tag() -> None:
     """`kind: !!str Secret` es YAML valido."""
     _excluded(f"kind: !!str Secret\ndata:\n  ca.crt: {_SECRET_VALUE}\n")
+
+
+def test_exclusion_placeholder_names_the_kind_it_excluded() -> None:
+    """Excluir no deberia ser mudo: Architecture pierde el contenido, pero saber
+    QUE hay un SecretStore configurado es justamente evidencia arquitectonica."""
+    for kind in ("Secret", "SecretList", "SecretStore", "SecretProviderClass"):
+        out = bounded_redacted_text(
+            f"kind: {kind}\ndata:\n  ca.crt: {_SECRET_VALUE}\n",
+            MAX_ARCHITECTURE_READ_BYTES,
+        )
+        assert _SECRET_VALUE not in out
+        assert kind in out, f"el marcador no nombra {kind}"
+
+
+def test_exclusion_placeholder_does_not_echo_untrusted_text() -> None:
+    """El kind viene de contenido no confiable: no puede llegar crudo al marcador."""
+    hostile = (
+        "kind: Secret" + "A" * 400 + "\n"
+        "data:\n"
+        f"  ca.crt: {_SECRET_VALUE}\n"
+    )
+
+    out = bounded_redacted_text(hostile, MAX_ARCHITECTURE_READ_BYTES)
+
+    assert _SECRET_VALUE not in out
+    assert len(out) < 120, "el marcador crecio con la entrada"
+
+
+def test_exclusion_placeholder_survives_injection_shaped_kind() -> None:
+    injected = (
+        "kind: Secret\"; DROP TABLE evidence; --\n"
+        f"data:\n  ca.crt: {_SECRET_VALUE}\n"
+    )
+
+    out = bounded_redacted_text(injected, MAX_ARCHITECTURE_READ_BYTES)
+
+    assert _SECRET_VALUE not in out
+    assert "DROP TABLE" not in out
+

@@ -232,6 +232,10 @@ def bounded_utf8(value: str, limit: int = MAX_ARCHITECTURE_READ_BYTES) -> str:
 # llega como `- kind: Secret`, y sin eso el fallback no lo reconocia.
 SECRET_MANIFEST_PLACEHOLDER = "[EXCLUDED: Kubernetes Secret manifest]"
 
+
+def secret_manifest_placeholder(kind: str) -> str:
+    return f"[EXCLUDED: Kubernetes {kind} manifest]"
+
 # Deliberadamente permisiva y sin anclas de linea: tolera indentacion, guion de
 # item, comillas, flow style, ancla en el valor y CRLF, y encuentra el kind
 # aunque venga embebido en el scalar de otro documento.
@@ -244,22 +248,39 @@ SECRET_MANIFEST_PLACEHOLDER = "[EXCLUDED: Kubernetes Secret manifest]"
 # `(?:[&!]\S+\s+|[|>][-+0-9]*\s+)*` cubre lo que YAML admite entre los dos puntos
 # y el valor: ancla (`&a`), tag explicito (`!!str`) y escalar de bloque (`|`, `>`).
 _SECRET_MANIFEST = re.compile(
-    r"""['"]?\bkind['"]?\s*:\s*(?:[&!]\S+\s+|[|>][-+0-9]*\s+)*['"]?Secret""",
+    r"""['"]?\bkind['"]?\s*:\s*(?:[&!]\S+\s+|[|>][-+0-9]*\s+)*['"]?(Secret\w*)""",
     re.IGNORECASE,
 )
+MAX_EXCLUDED_KIND_CHARS = 40
+
+
+def secret_manifest_kind(value: str) -> str | None:
+    """El `kind` declarado, saneado, o None si el texto no declara ninguno.
+
+    El valor viene de contenido de repositorio no confiable y termina en un
+    prompt, asi que se acota y se restringe a alfanumericos: nombrar el kind
+    devuelve evidencia arquitectonica util -que haya un SecretStore configurado
+    importa- sin convertir el marcador en un canal de inyeccion.
+    """
+    match = _SECRET_MANIFEST.search(value)
+    if match is None:
+        return None
+    kind = "".join(char for char in match.group(1) if char.isalnum())
+    return kind[:MAX_EXCLUDED_KIND_CHARS] or "Secret"
 
 
 def is_secret_manifest(value: str) -> bool:
     """True si el texto declara un `kind: Secret` en cualquier forma."""
-    return _SECRET_MANIFEST.search(value) is not None
+    return secret_manifest_kind(value) is not None
 
 
 def bounded_redacted_text(value: str, limit: int) -> str:
     """Redact credential-shaped assignments before retaining bounded evidence."""
     # Antes de recortar, no despues: YAML no impone orden de claves, asi que un
     # `kind: Secret` puede caer mas alla del tope mientras su `data:` queda dentro.
-    if is_secret_manifest(value):
-        return SECRET_MANIFEST_PLACEHOLDER
+    excluded_kind = secret_manifest_kind(value)
+    if excluded_kind is not None:
+        return secret_manifest_placeholder(excluded_kind)
     raw = bounded_utf8(value, MAX_ARCHITECTURE_RAW_EVIDENCE_BYTES)
     try:
         parsed = json.loads(raw)
