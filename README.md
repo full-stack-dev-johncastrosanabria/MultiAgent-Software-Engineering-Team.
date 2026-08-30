@@ -71,6 +71,34 @@ ollama pull qwen3.5:4b
 ollama pull qwen3.5:9b
 ```
 
+### Sandbox de QualityMCP
+
+La ejecucion segura de build, tests y scans esta soportada en **Darwin** con
+`sandbox-exec` y en **Linux + Bubblewrap** cuando `bwrap` existe en una ruta
+fija del sistema y pasa la validacion de ownership y permisos. En **Windows**,
+en otra plataforma o si falta el backend seguro, QualityMCP responde
+`UNAVAILABLE` (fail-closed): nunca instala ni ejecuta el proyecto en el
+interprete compartido.
+
+Las fases offline niegan `process-fork`. Solo las instalaciones pip, que pueden
+necesitar backends PEP 517, habilitan de forma declarada subprocesses y red bajo
+el mismo sandbox y deadline. En Linux todos los descendientes permanecen en el
+PID namespace de Bubblewrap.
+
+Por defecto el PATH no hereda directorios bajo HOME, el workspace ni temporales.
+Una herramienta self-contained ubicada bajo HOME se puede habilitar de forma
+explicita con una lista separada por el separador de PATH:
+
+```sh
+ASET_QUALITY_TOOL_PATHS="$HOME/.local/aset-tools/bin"
+```
+
+Cada entrada debe ser absoluta, existir, ser un directorio descendiente de HOME
+y quedar fuera del workspace, el venv efimero y roots temporales. Solo esos
+directorios reciben acceso de lectura; HOME nunca se monta completo. Toolchains
+con estado en HOME, como rustup/cargo, deben provisionarse dentro del workspace
+o del venv efimero en vez de usar el estado del operador.
+
 ### Que agente usa modelo
 
 Cuatro de los seis agentes invocan un modelo. **Testing y Reviewer son
