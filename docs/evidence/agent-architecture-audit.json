@@ -136,6 +136,22 @@
       ],
       "confidence": 0.99,
       "recommended_fix": "Incluir implementation en la proyeccion del Developer para que remediar sea reparar. Rechazar de forma determinista toda reescritura que elimine simbolos publicos preexistentes -funciones, clases y tests- salvo que el requerimiento lo pida, comparando por AST y no por lineas ni por cantidad, y devolver ese motivo explicito en vez de dejar que el fallo aparezca como falta de cobertura."
+    },
+    {
+      "severity": "high",
+      "title": "Architecture lee exactamente 4 archivos y nunca comprueba si le alcanzaron",
+      "mechanism": "MAX_ARCHITECTURE_READ_FILES = 4 es un tope duro sin escape. El nodo lista el repositorio, corre hasta 3 terminos de busqueda, rankea las rutas y lee ranked[:4] (stategraph.py:283). No existe ninguna senal de suficiencia: nada pregunta si esos 4 cubrieron la superficie que el requerimiento toca, y el rol no puede pedir un quinto archivo. Medido sobre los proyectos demo, eso es 4 de 22 archivos en banca-demo (18%), 4 de 17 en calculadora-qa-demo (24%) y 4 de 184 en banca-demo-support (2%). Peor: cuando el Reviewer devuelve remediacion de categoria ARCHITECTURE, el nodo vuelve a correr con la misma specification y el mismo requirement; relevance_terms es una funcion pura de esos dos valores, asi que produce los mismos terminos, el mismo ranking y **los mismos 4 archivos**. El ciclo de remediacion no puede ampliar la vista: reintenta con evidencia identica.",
+      "source_layer": "3. Evidence gathering",
+      "root_cause": "El tope existe por presupuesto de contexto, pero se implemento como truncamiento silencioso en vez de como limite declarado. El agente no sabe que fue truncado, asi que un diseno basado en 4 archivos se presenta con la misma confianza que uno basado en el repositorio entero: es la misma falla que el finding 1, no distinguir 'no encontre problemas' de 'no mire lo suficiente', aplicada a la entrada en vez de a la salida.",
+      "evidence_refs": [
+        "src/engineering_team/repository_evidence.py:13",
+        "src/engineering_team/graph/stategraph.py:283",
+        "src/engineering_team/llm/prompting.py:161",
+        "src/engineering_team/agents/architecture.py:22",
+        "src/engineering_team/graph/routers.py:22"
+      ],
+      "confidence": "high",
+      "recommended_fix": "Tres piezas, en orden. (1) Decirle al agente que fue truncado: pasarle cuantas rutas relevantes se descartaron, para que pueda declarar cobertura insuficiente en vez de disenar a ciegas. (2) Dejar que pida archivos por nombre dentro de un presupuesto de bytes, en vez de un tope fijo de conteo -4 archivos de 40 lineas y 4 de 4.000 no son la misma evidencia-. (3) Variar los terminos en remediacion usando la retroalimentacion del Reviewer, para que un reintento no repita la lectura anterior."
     }
   ],
   "ordered_fix_plan": [
@@ -180,6 +196,12 @@
       "goal": "Evitar que el Developer destruya codigo y hacer que remediar sea reparar, que tenga definido que es lo que debe tocar y que no",
       "why_now": "El aislamiento y la compuerta de evidencia contuvieron el daño, pero solo porque existian tests que fallaron al importar. Se borro el hash de contrasenas y la autenticacion entera en una tarea sobre contrasenas; en un archivo sin tests eso llega hasta el Apply.",
       "expected_effect": "Reescrituras conservadoras, localizadas y ciclos de remediacion que converjan."
+    },
+    {
+      "order": 8,
+      "goal": "Limite de lectura declarado y ampliable para Architecture",
+      "why_now": "El ciclo de remediacion reintenta con los mismos 4 archivos, asi que un diseno mal fundamentado no puede corregirse por reintento.",
+      "expected_effect": "Architecture puede declarar cobertura insuficiente y ampliar su lectura, en vez de disenar sobre el 2-24% del proyecto sin saberlo."
     }
   ]
 }
