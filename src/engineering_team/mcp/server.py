@@ -75,7 +75,7 @@ def build_repository_server(root: str | Path) -> MCPServer:
     return server
 
 
-def build_quality_server(root: str | Path, timeout_seconds: int = 60) -> MCPServer:
+def build_quality_server(root: str | Path, timeout_seconds: float = 60) -> MCPServer:
     backend = QualityMCP(root, timeout_seconds=timeout_seconds)
     server = MCPServer(name="engineering-team-quality", log_level="ERROR")
 
@@ -118,7 +118,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--kind", choices=("repository", "quality"), required=True)
     parser.add_argument("--root", required=True)
-    parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--timeout", type=float, default=60)
     args = parser.parse_args()
     server = (
         build_repository_server(args.root)

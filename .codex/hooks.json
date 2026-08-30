@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/scripts/handoff.py\" auto --reason precompact 2>/dev/null || true",
+            "timeout": 20,
+            "statusMessage": "Guardando handoff antes de compactar"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/scripts/handoff.py\" read --hook 2>/dev/null || true",
+            "timeout": 15,
+            "statusMessage": "Leyendo handoff de la sesion anterior"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/scripts/handoff.py\" auto --reason session-end 2>/dev/null || true",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,7 +1,18 @@
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.mcp.client import MCPQualityClient, MCPRepositoryClient
+
+
+def test_mcp_server_bootstrap_is_isolated_from_project_cwd(tmp_path: Path) -> None:
+    client = MCPQualityClient(tmp_path)
+    parameters = client._parameters()
+
+    assert parameters.args[:3] == ["-I", "-m", "engineering_team.mcp.server"]
+    assert Path(parameters.cwd) != tmp_path
 
 
 def test_repository_tools_execute_through_real_stdio_mcp_session(tmp_path: Path) -> None:
@@ -89,6 +100,37 @@ def test_quality_getters_preserve_results_in_one_real_stdio_session(tmp_path: Pa
     assert fetched_build.output_summary == executed_build.output_summary
     assert fetched_scan.status is executed_scan.status
     assert fetched_scan.output_summary == executed_scan.output_summary
+
+
+def test_quality_rpc_uses_one_fractional_end_to_end_deadline(tmp_path: Path) -> None:
+    (tmp_path / "test_never_runs.py").write_text(
+        "def test_never_runs():\n    assert True\n", encoding="utf-8"
+    )
+    before_environments = set(Path(tempfile.gettempdir()).glob("aset-quality-*"))
+    client = MCPQualityClient(tmp_path, timeout_seconds=0.15)
+    started = time.monotonic()
+
+    try:
+        result = client.run_tests(AgentRole.TESTING, ["test_never_runs.py"])
+        elapsed = time.monotonic() - started
+        worker = client._thread
+    finally:
+        client.close()
+
+    assert result.status is ToolStatus.UNAVAILABLE
+    assert elapsed < 0.5
+    assert worker is not None and not worker.is_alive()
+    assert not [
+        thread for thread in threading.enumerate()
+        if thread.name == "mcp-quality-stdio" and thread.is_alive()
+    ]
+    assert set(Path(tempfile.gettempdir()).glob("aset-quality-*")) <= before_environments
+
+
+def test_client_source_is_importable_on_python_310() -> None:
+    source = Path("src/engineering_team/mcp/client.py").read_text(encoding="utf-8")
+
+    assert "from typing import Any, Self" not in source
 
 
 def test_repository_get_diff_reports_real_updates_and_creates_over_protocol(tmp_path: Path) -> None:
