@@ -13,3 +13,6 @@ rotates it out.
 
 A decision here outranks the same claim made anywhere untracked. When they
 disagree, this directory is right and the other file is stale.
+
+For where the product is going rather than why it is as it is, see
+[../roadmap.md](../roadmap.md).

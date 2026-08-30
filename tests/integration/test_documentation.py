@@ -20,3 +20,42 @@ def test_required_documentation_and_demo_commands_are_present() -> None:
         "scenarios-live.json",
     ):
         assert phrase in combined
+
+
+def test_architecture_documentation_has_its_five_parts() -> None:
+    """Each part answers a different question; a missing one means a homeless fact."""
+    for filename in (
+        "docs/architecture/README.md",
+        "docs/architecture/overview.md",
+        "docs/architecture/roadmap.md",
+        "docs/architecture/decisions/README.md",
+        "docs/architecture/checklists/README.md",
+        "docs/architecture/findings/README.md",
+        "docs/architecture/findings/agent-architecture-audit.json",
+    ):
+        assert Path(filename).is_file(), filename
+
+
+def test_every_finding_in_the_audit_appears_in_the_index() -> None:
+    """The JSON is the record; the index is how anyone finds out where it stands."""
+    import json
+
+    audit = json.loads(
+        Path("docs/architecture/findings/agent-architecture-audit.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    index = Path("docs/architecture/findings/README.md").read_text(encoding="utf-8")
+    for number in range(1, len(audit["findings"]) + 1):
+        assert f"| {number} |" in index, f"finding {number} is not in the index"
+
+
+def test_nothing_still_points_at_the_moved_audit() -> None:
+    """A link that survives a move is a link that lies."""
+    stale = []
+    for path in Path(".").rglob("*.md"):
+        if any(part in {".venv", "node_modules", ".git"} for part in path.parts):
+            continue
+        if "docs/evidence/agent-architecture-audit" in path.read_text(encoding="utf-8"):
+            stale.append(str(path))
+    assert not stale, f"stale audit path in: {stale}"
