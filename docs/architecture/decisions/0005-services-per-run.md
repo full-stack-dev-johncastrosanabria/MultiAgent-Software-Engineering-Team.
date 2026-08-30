@@ -1,0 +1,80 @@
+# 5. A project's services live for the run, on a network that reaches nothing else
+
+Date: 2026-08-30
+Status: accepted
+Depends on: [ADR 2](0002-container-runner.md), [ADR 4](0004-profile-per-component.md)
+
+## Context
+
+Databases never came up because the demo projects use `sqlite3`, which is a
+library. It is imported, not started. Nothing had to be running, reachable or
+ordered.
+
+Five of the six repositories reviewed are the opposite. They expect a service
+already running on a developer's machine: NorthgateTollPlaza's `test.sh` refuses
+to start unless `pg_isready` and MongoDB on port 27017 both answer, and tells the
+reader to run `brew services start postgresql@18`. Banking points at
+`localhost:5432`. BusinessAI-Analytics and InterviewCleanApi point at MySQL on
+3306. An autonomous agent has none of that.
+
+It is also not only databases. PruebaNuevosIngresosBackend ships Postgres **and
+Kafka**, with an init container and startup ordering.
+
+The container runner from ADR 2 has two network modes and neither works here.
+`none` cannot reach a database. `bridge` reaches the database, the internet, and
+whatever else is listening on the host.
+
+## Decision
+
+Services are declared per run and live for the run, not for a command. They share
+an **internal** network with the component containers: siblings resolve each
+other by name, and nothing has a route out. This was verified rather than assumed
+— on a `--internal` network a container resolves `db` and cannot open a socket to
+1.1.1.1.
+
+Where a repository ships a compose file, **that is the topology**. It already
+carries images, healthchecks and ordering, authored by people who know the
+project. Where it does not, the topology is derived into an overlay held on the
+ASET side.
+
+Readiness is a health check, never a delay. A service that fails to become ready
+is recorded as its own evidence.
+
+## Alternatives rejected
+
+**`--network bridge` for anything needing a database.** The simplest change and
+the wrong boundary: it hands a project under test the internet and the host's
+other listeners in order to give it one port.
+
+**Services inside the per-command container.** Keeps one lifecycle, but a
+database that dies with each command loses its state between the migration and
+the test that needs it.
+
+**Require a compose file in the target repository.** Same objection as ADR 4:
+the repositories are not ours.
+
+**Fixed sleeps for startup.** Postgres is ready in about a second; SQL Server
+documents 2 GB of RAM and takes far longer. Any constant is either a flake or a
+tax on every run.
+
+**Substitute an in-memory database.** It would remove the problem and the point:
+the value is running the project as it actually is, and a project whose tests
+only pass against a substitute has not been verified.
+
+## Consequences
+
+The runner gains a third network mode and a lifecycle longer than one command,
+which is the first state the container runner has to hold across commands.
+
+**A service failure must not be reported as a test failure.** If the database
+never starts, the tests fail, and a gate reading "tests failed" turns an
+infrastructure problem into a code problem — the misleading headline that made
+[finding 7](../findings/README.md) point at the wrong thing.
+
+The derived topology is itself a deliverable. A compose file that makes
+NorthgateTollPlaza run without `brew services` is a useful pull request that
+changes no application code.
+
+SQL Server publishes `linux/amd64` only. On Apple Silicon that is emulation, for
+a service that starts on every run. Postgres and MySQL publish arm64 and do not
+have this problem, so parity between the two engines should not be promised.

@@ -59,3 +59,13 @@ def test_nothing_still_points_at_the_moved_audit() -> None:
         if "docs/evidence/agent-architecture-audit" in path.read_text(encoding="utf-8"):
             stale.append(str(path))
     assert not stale, f"stale audit path in: {stale}"
+
+
+def test_every_decision_record_appears_in_its_index() -> None:
+    """An ADR nobody can find from the index is an ADR nobody reads."""
+    directory = Path("docs/architecture/decisions")
+    index = (directory / "README.md").read_text(encoding="utf-8")
+    records = sorted(p.name for p in directory.glob("[0-9][0-9][0-9][0-9]-*.md"))
+    assert records, "no decision records found"
+    for name in records:
+        assert name in index, f"{name} is not linked from the decisions index"

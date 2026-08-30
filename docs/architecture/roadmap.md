@@ -68,7 +68,7 @@ distinguish a primary path from a fallback.
 *Status: not started. One construction site, `mcp/server.py`.*
 
 ### 2. Profile per component
-A component is a directory with a build manifest — `pom.xml`, `package.json`,
+[ADR 4](decisions/0004-profile-per-component.md). A component is a directory with a build manifest — `pom.xml`, `package.json`,
 `*.csproj`, `requirements.txt`. Detection is file existence, so it stays
 deterministic and no routing decision comes from model text. Each component
 carries its image and its install, lint, test and build commands.
@@ -78,7 +78,7 @@ carries its image and its install, lint, test and build commands.
 because `TEST_EVIDENCE_TOOLS` names MCP operations and not tool binaries.*
 
 ### 3. Services per run
-Services live for the run, not for a command, on an internal network where the
+[ADR 5](decisions/0005-services-per-run.md). Services live for the run, not for a command, on an internal network where the
 project reaches its own services and nothing else. Verified: on a `--internal`
 network a container resolves its siblings by name and cannot reach the internet.
 Readiness is a health check, never a sleep — Postgres starts in about a second,
@@ -92,7 +92,7 @@ reported as a code problem — the misleading-headline failure of
 *Status: not started. Depends on 2.*
 
 ### 4. The project's own compose as the primary source
-Where a repository ships a compose file, use it rather than inferring a topology.
+[ADR 5](decisions/0005-services-per-run.md). Where a repository ships a compose file, use it rather than inferring a topology.
 It already carries healthchecks, startup order and images. Where it does not,
 derive an overlay that lives on the ASET side, because requiring a file in every
 target repository contradicts the premise of being pointed at projects that
@@ -105,7 +105,7 @@ does not change a line of the project's code.
 *Status: not started.*
 
 ### 5. GitHub as origin, pull request as delivery
-Cloning is the run copy — `create_run_copy` already copies a directory into
+[ADR 6](decisions/0006-github-origin-pull-request-delivery.md). Cloning is the run copy — `create_run_copy` already copies a directory into
 `workspace/runs/<run_id>`, and a clone is the same thing with a different source.
 Delivery inverts more cleanly than it looks: today Apply writes to the source
 tree after human confirmation, with hashes and restore. A branch and a pull
