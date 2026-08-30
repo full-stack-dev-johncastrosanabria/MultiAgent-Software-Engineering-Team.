@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import stat
 import subprocess
@@ -31,6 +32,8 @@ _OUTPUT_LIMIT = 4096
 _SANDBOX_EXECUTABLE = Path("/usr/bin/sandbox-exec")
 _BUBBLEWRAP_CANDIDATES = (Path("/usr/bin/bwrap"), Path("/bin/bwrap"))
 _QUALITY_TOOL_PATHS_ENV = "ASET_QUALITY_TOOL_PATHS"
+_ENVIRONMENT_MARKER = ".aset-quality-owner"
+_ENVIRONMENT_SCHEMA = "aset-quality-v1"
 _PASSTHROUGH_ENVIRONMENT = {
     "COMSPEC", "LANG", "LC_ALL", "LC_CTYPE", "NUMBER_OF_PROCESSORS", "OS",
     "PATHEXT", "SYSTEMDRIVE", "SYSTEMROOT", "TERM", "WINDIR",
@@ -235,6 +238,15 @@ class CommandRunner(Protocol):
         """Whether this runner is shutting down and must accept no new work."""
         ...
 
+    def prepare_environment(self, deadline: float) -> str:
+        """Provision the toolchain this runner will execute against.
+
+        Returns the interpreter path in whatever namespace the runner works in:
+        a host path for a process sandbox, a container path for a container. The
+        caller treats it as opaque and hands it back through `execute`.
+        """
+        ...
+
     def execute(self, request: CommandRequest) -> subprocess.CompletedProcess[str]:
         ...
 
@@ -259,6 +271,56 @@ class ProcessRunner:
     def closing(self) -> bool:
         return self._closing.is_set()
 
+    def prepare_environment(self, deadline: float) -> str:
+        """Build one strict, ephemeral interpreter on the host and return its path.
+
+        The path is a host path because this runner executes on the host. A
+        backend whose boundary is elsewhere returns a path in its own namespace;
+        the caller only ever passes it back to `execute`.
+        """
+        self._scavenge_environments()
+        base = self._prepare_environment_root()
+        directory = Path(tempfile.mkdtemp(prefix="env-", dir=base))
+        self.environment = directory
+        try:
+            base_interpreter = self._base_interpreter()
+            uid = os.getuid() if hasattr(os, "getuid") else 0
+            (directory / _ENVIRONMENT_MARKER).write_text(
+                json.dumps({
+                    "schema": _ENVIRONMENT_SCHEMA,
+                    "uid": uid,
+                    "pid": os.getpid(),
+                }, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            created = self._execute_process(
+                [
+                    base_interpreter, "-I", "-m", "venv", "--without-pip",
+                    str(directory),
+                ],
+                cwd=Path(base_interpreter).parent,
+                deadline=deadline,
+                allow_network=False,
+            )
+            if created.returncode != 0:
+                raise RuntimeError(f"venv creation failed: {created.stderr[-1000:]}")
+            interpreter = str(directory / _VENV_BIN / "python")
+            completed = self._execute_process(
+                [interpreter, "-I", "-m", "ensurepip", "--upgrade"],
+                cwd=directory,
+                deadline=deadline,
+                allow_network=False,
+                allow_subprocesses=True,
+            )
+            if completed.returncode != 0:
+                output = (completed.stdout + completed.stderr)[-1000:]
+                raise RuntimeError(f"ensurepip failed: {output}")
+        except Exception:
+            self.environment = None
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
+        return interpreter
+
     def execute(self, request: CommandRequest) -> subprocess.CompletedProcess[str]:
         return self._execute_process(
             list(request.args),
@@ -269,12 +331,24 @@ class ProcessRunner:
         )
 
     def close(self) -> None:
-        """Terminate every process this runner started."""
+        """Terminate every process this runner started and drop its environment."""
         self._closing.set()
         with self._active_lock:
             active = tuple(self._active_processes.values())
         for item in active:
             self._terminate_process_tree(item)
+        directory = self.environment
+        self.environment = None
+        if directory is not None:
+            try:
+                shutil.rmtree(directory)
+            except FileNotFoundError:
+                pass
+            try:
+                self._environment_root().rmdir()
+            except OSError:
+                # Another live/crashed environment still owns an entry.
+                pass
 
     @staticmethod
     def _sandbox_backend() -> tuple[str, str]:
@@ -829,3 +903,91 @@ class ProcessRunner:
             )
         except (OSError, subprocess.TimeoutExpired):
             process.kill()
+
+    @staticmethod
+    def _environment_root() -> Path:
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        return Path(tempfile.gettempdir()).resolve() / f"aset-quality-{uid}"
+
+    @classmethod
+    def _prepare_environment_root(cls) -> Path:
+        root = cls._environment_root()
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        metadata = root.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeError("quality environment root is not a real directory")
+        if hasattr(os, "getuid") and metadata.st_uid != os.getuid():
+            raise RuntimeError("quality environment root has a foreign owner")
+        if metadata.st_mode & 0o077:
+            root.chmod(0o700)
+        return root
+
+    @classmethod
+    def _scavenge_environments(cls) -> None:
+        """Remove crashed environments, but only below our private owned root.
+
+        A valid marker and a dead producer PID are both required. Unknown,
+        symlinked, or currently-live entries are deliberately left alone.
+        """
+        root = cls._prepare_environment_root()
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        for directory in root.glob("env-*"):
+            try:
+                metadata = directory.lstat()
+                if (
+                    stat.S_ISLNK(metadata.st_mode)
+                    or not stat.S_ISDIR(metadata.st_mode)
+                    or (hasattr(os, "getuid") and metadata.st_uid != uid)
+                ):
+                    continue
+                marker = directory / _ENVIRONMENT_MARKER
+                marker_metadata = marker.lstat()
+                if stat.S_ISLNK(marker_metadata.st_mode) or not stat.S_ISREG(
+                    marker_metadata.st_mode
+                ):
+                    continue
+                owner = json.loads(marker.read_text(encoding="utf-8"))
+                if not isinstance(owner, dict):
+                    continue
+                if owner != {
+                    "schema": _ENVIRONMENT_SCHEMA,
+                    "uid": uid,
+                    "pid": int(owner.get("pid", -1)),
+                }:
+                    continue
+                if cls._process_is_alive(int(owner["pid"])):
+                    continue
+                shutil.rmtree(directory)
+            except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+                continue
+
+    @staticmethod
+    def _process_is_alive(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def _base_interpreter(self) -> str:
+        """Use the system/base runtime, never an operator-home virtualenv."""
+        raw = getattr(sys, "_base_executable", None) or sys.executable
+        try:
+            executable = Path(raw).resolve(strict=True)
+            metadata = executable.lstat()
+        except OSError as exc:
+            raise RuntimeError("trusted base interpreter is unavailable") from exc
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or not os.access(executable, os.X_OK)
+            or _is_within(
+                executable,
+                _sensitive_path_roots(self.workspace, self.environment),
+            )
+        ):
+            raise RuntimeError("trusted base interpreter is unavailable")
+        return str(executable)

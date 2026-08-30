@@ -3,14 +3,9 @@ from __future__ import annotations
 import ast
 import atexit
 import importlib.metadata
-import json
-import os
 import re
-import shutil
-import stat
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -18,17 +13,12 @@ from pathlib import Path
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.contracts.models import ToolResult
 from engineering_team.mcp.runner import (
-    _VENV_BIN,
     CommandRequest,
     CommandRunner,
     ProcessRunner,
-    _is_within,
-    _sensitive_path_roots,
 )
 
 _DISTRIBUTION_NAME = "autonomous-engineering-team"
-_ENVIRONMENT_MARKER = ".aset-quality-owner"
-_ENVIRONMENT_SCHEMA = "aset-quality-v1"
 
 
 
@@ -98,74 +88,9 @@ class QualityMCP:
             )
         )
 
-    @staticmethod
-    def _environment_root() -> Path:
-        uid = os.getuid() if hasattr(os, "getuid") else 0
-        return Path(tempfile.gettempdir()).resolve() / f"aset-quality-{uid}"
 
-    @classmethod
-    def _prepare_environment_root(cls) -> Path:
-        root = cls._environment_root()
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        metadata = root.lstat()
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-            raise RuntimeError("quality environment root is not a real directory")
-        if hasattr(os, "getuid") and metadata.st_uid != os.getuid():
-            raise RuntimeError("quality environment root has a foreign owner")
-        if metadata.st_mode & 0o077:
-            root.chmod(0o700)
-        return root
 
-    @staticmethod
-    def _process_is_alive(pid: int) -> bool:
-        if pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
 
-    @classmethod
-    def _scavenge_environments(cls) -> None:
-        """Remove crashed environments, but only below our private owned root.
-
-        A valid marker and a dead producer PID are both required. Unknown,
-        symlinked, or currently-live entries are deliberately left alone.
-        """
-        root = cls._prepare_environment_root()
-        uid = os.getuid() if hasattr(os, "getuid") else 0
-        for directory in root.glob("env-*"):
-            try:
-                metadata = directory.lstat()
-                if (
-                    stat.S_ISLNK(metadata.st_mode)
-                    or not stat.S_ISDIR(metadata.st_mode)
-                    or (hasattr(os, "getuid") and metadata.st_uid != uid)
-                ):
-                    continue
-                marker = directory / _ENVIRONMENT_MARKER
-                marker_metadata = marker.lstat()
-                if stat.S_ISLNK(marker_metadata.st_mode) or not stat.S_ISREG(
-                    marker_metadata.st_mode
-                ):
-                    continue
-                owner = json.loads(marker.read_text(encoding="utf-8"))
-                if not isinstance(owner, dict):
-                    continue
-                if owner != {
-                    "schema": _ENVIRONMENT_SCHEMA,
-                    "uid": uid,
-                    "pid": int(owner.get("pid", -1)),
-                }:
-                    continue
-                if cls._process_is_alive(int(owner["pid"])):
-                    continue
-                shutil.rmtree(directory)
-            except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
-                continue
 
 
 
@@ -183,27 +108,9 @@ class QualityMCP:
             raise TimeoutError("quality operation deadline exceeded")
         return remaining
 
-    def _base_interpreter(self) -> str:
-        """Use the system/base runtime, never an operator-home virtualenv."""
-        raw = getattr(sys, "_base_executable", None) or sys.executable
-        try:
-            executable = Path(raw).resolve(strict=True)
-            metadata = executable.lstat()
-        except OSError as exc:
-            raise RuntimeError("trusted base interpreter is unavailable") from exc
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or not os.access(executable, os.X_OK)
-            or _is_within(
-                executable,
-                _sensitive_path_roots(self.root, self._environment),
-            )
-        ):
-            raise RuntimeError("trusted base interpreter is unavailable")
-        return str(executable)
 
     def _interpreter(self, deadline: float | None = None) -> str:
-        """Create one strict, ephemeral interpreter for this QualityMCP instance."""
+        """Get the interpreter for this instance, provisioning it once."""
         deadline = self._deadline() if deadline is None else deadline
         self._runner.require_available()
         if not self._environment_lock.acquire(timeout=self._remaining(deadline)):
@@ -213,86 +120,20 @@ class QualityMCP:
                 raise RuntimeError("quality environment is closed")
             if self._python is not None:
                 return self._python
-            self._scavenge_environments()
-            base = self._prepare_environment_root()
-            directory = Path(tempfile.mkdtemp(prefix="env-", dir=base))
-            self._environment = directory
-            try:
-                base_interpreter = self._base_interpreter()
-                uid = os.getuid() if hasattr(os, "getuid") else 0
-                (directory / _ENVIRONMENT_MARKER).write_text(
-                    json.dumps({
-                        "schema": _ENVIRONMENT_SCHEMA,
-                        "uid": uid,
-                        "pid": os.getpid(),
-                    }, separators=(",", ":")),
-                    encoding="utf-8",
-                )
-                created = self._execute_process(
-                    [
-                        base_interpreter, "-I", "-m", "venv", "--without-pip",
-                        str(directory),
-                    ],
-                    cwd=Path(base_interpreter).parent,
-                    deadline=deadline,
-                    allow_network=False,
-                )
-                if created.returncode != 0:
-                    raise RuntimeError(f"venv creation failed: {created.stderr[-1000:]}")
-                self._python = str(directory / _VENV_BIN / "python")
-                completed = self._execute_process(
-                    [self._python, "-I", "-m", "ensurepip", "--upgrade"],
-                    cwd=directory,
-                    deadline=deadline,
-                    allow_network=False,
-                    allow_subprocesses=True,
-                )
-                if completed.returncode != 0:
-                    output = (completed.stdout + completed.stderr)[-1000:]
-                    raise RuntimeError(f"ensurepip failed: {output}")
-            except Exception:
-                self._python = None
-                self._environment = None
-                shutil.rmtree(directory, ignore_errors=True)
-                raise
+            self._python = self._runner.prepare_environment(deadline)
             atexit.register(self.close)
             return self._python
         finally:
             self._environment_lock.release()
-
-
-
-
-
-
-
-
-
-
-
     def close(self) -> None:
-        """Terminate active process groups and remove the ephemeral environment."""
+        """Close the runner, which owns both the processes and the environment."""
         self._runner.close()
         with self._environment_lock:
             if self._closed:
                 return
             self._closed = True
-            self._runner.close()
-            directory = self._environment
-            self._environment = None
             self._python = None
             atexit.unregister(self.close)
-            if directory is not None:
-                try:
-                    shutil.rmtree(directory)
-                except FileNotFoundError:
-                    pass
-                try:
-                    self._environment_root().rmdir()
-                except OSError:
-                    # Another live/crashed environment still owns an entry.
-                    pass
-
     def _denied(self, role: AgentRole, tool: str) -> ToolResult:
         return ToolResult(
             tool_name=tool, allowed_role=role, status=ToolStatus.DENIED,

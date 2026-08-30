@@ -36,6 +36,10 @@ class RecordingRunner:
     def require_available(self) -> None:
         return None
 
+    def prepare_environment(self, deadline: float) -> str:
+        self.environment = Path("/recorded/env")
+        return "/recorded/env/bin/python"
+
     @property
     def closing(self) -> bool:
         return self.closed

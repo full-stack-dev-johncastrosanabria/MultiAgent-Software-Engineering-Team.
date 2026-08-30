@@ -22,8 +22,15 @@ from engineering_team.mcp.runner import (
 
 
 def _patch_executor(monkeypatch, callback) -> None:
+    """Intercept at the runner, which is where every command now converges.
+
+    Environment provisioning goes straight through the runner rather than back
+    up through QualityMCP, so patching the runner is what sees the whole
+    sequence: venv, ensurepip, installs and the tool itself.
+    """
+
     def execute(
-        quality,
+        runner,
         args,
         *,
         cwd,
@@ -37,11 +44,11 @@ def _patch_executor(monkeypatch, callback) -> None:
             deadline=deadline,
             allow_network=allow_network,
             allow_subprocesses=allow_subprocesses,
-            env=quality._runner._subprocess_environment(),
-            timeout=quality._remaining(deadline),
+            env=runner._subprocess_environment(),
+            timeout=max(0.0, deadline - time.monotonic()),
         )
 
-    monkeypatch.setattr(QualityMCP, "_execute_process", execute)
+    monkeypatch.setattr(ProcessRunner, "_execute_process", execute)
 
 
 def _base_python() -> str:
@@ -1445,7 +1452,7 @@ def test_startup_scavenges_only_dead_owned_quality_environments(
     tmp_path: Path, monkeypatch
 ) -> None:
     base = tmp_path / "quality-environments"
-    monkeypatch.setattr(QualityMCP, "_environment_root", staticmethod(lambda: base))
+    monkeypatch.setattr(ProcessRunner, "_environment_root", staticmethod(lambda: base))
     dead = base / "env-dead"
     foreign = base / "env-foreign"
     dead.mkdir(parents=True)
@@ -1460,7 +1467,7 @@ def test_startup_scavenges_only_dead_owned_quality_environments(
     )
     (foreign / ".aset-quality-owner").write_text("not-our-marker", encoding="utf-8")
 
-    QualityMCP(tmp_path)._scavenge_environments()
+    ProcessRunner(tmp_path)._scavenge_environments()
 
     assert not dead.exists()
     assert foreign.exists(), "el scavenger borro un directorio sin marcador valido"
