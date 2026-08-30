@@ -1,5 +1,4 @@
 import json
-import time
 
 import pytest
 
@@ -19,6 +18,7 @@ from engineering_team.models.context import build_context
 from engineering_team.observability.langfuse import TraceSession
 from engineering_team.repository_evidence import (
     MAX_ARCHITECTURE_READ_BYTES,
+    SECRET_MANIFEST_PLACEHOLDER,
     bounded_redacted_text,
     parse_repository_paths,
     safe_repository_path,
@@ -594,9 +594,10 @@ def test_kubernetes_secret_yaml_is_redacted_but_legitimate_yaml_remains_useful()
         "nested-password-value",
     ):
         assert secret not in serialized
-    assert "app-credentials" in serialized
-    assert "kind: Secret" in serialized
-    assert "[REDACTED]" in serialized
+    # Contrato nuevo: el manifiesto no se redacta, se excluye entero. Architecture
+    # no necesita el contenido de un Secret para razonar sobre arquitectura.
+    assert SECRET_MANIFEST_PLACEHOLDER in serialized
+    assert "app-credentials" not in serialized
 
     deployment = """apiVersion: apps/v1
 kind: Deployment
@@ -729,177 +730,116 @@ def test_architecture_bounds_and_redacts_all_evidence_before_state_and_trace() -
 _SECRET_VALUE = "LEAKED-SECRET-VALUE"
 
 
-def test_kubernetes_secret_redaction_survives_crlf_line_endings() -> None:
-    manifest = (
-        "apiVersion: v1\r\nkind: Secret\r\nmetadata:\r\n  name: app-credentials\r\n"
-        f"data:\r\n  tls.key: {_SECRET_VALUE}\r\n"
+def _excluded(manifest: str) -> str:
+    """Todo manifiesto Secret sale reemplazado, nunca redactado en el lugar."""
+    out = bounded_redacted_text(manifest, MAX_ARCHITECTURE_READ_BYTES)
+    assert _SECRET_VALUE not in out
+    assert SECRET_MANIFEST_PLACEHOLDER in out
+    return out
+
+
+# Los trece vectores que las rondas 6, 7 y 9 encontraron contra la redaccion.
+# Con exclusion la forma del YAML deja de importar: alcanza con detectar el kind.
+
+
+def test_secret_manifest_excluded_in_plain_block_style() -> None:
+    _excluded(
+        "apiVersion: v1\nkind: Secret\nmetadata:\n  name: app-credentials\n"
+        f"data:\n  tls.key: {_SECRET_VALUE}\n"
     )
 
-    redacted = bounded_redacted_text(manifest, MAX_ARCHITECTURE_READ_BYTES)
 
-    assert _SECRET_VALUE not in redacted
-    assert "[REDACTED]" in redacted
-
-
-def test_kubernetes_secret_redaction_covers_indented_list_manifests() -> None:
-    """La forma que emite `kubectl get secrets -o yaml`: Secret anidado bajo items."""
-    manifest = (
-        "apiVersion: v1\n"
-        "kind: List\n"
-        "items:\n"
-        "- apiVersion: v1\n"
-        "  kind: Secret\n"
-        "  metadata:\n"
-        "    name: app-credentials\n"
-        "  data:\n"
-        # Clave deliberadamente fuera de _SENSITIVE_NAME_MARKERS: si pasara por el
-        # fallback por nombre, la prueba no probaria la cobertura estructural.
-        f"    ca.crt: {_SECRET_VALUE}\n"
+def test_secret_manifest_excluded_with_crlf_line_endings() -> None:
+    _excluded(
+        "apiVersion: v1\r\nkind: Secret\r\nmetadata:\r\n  name: a\r\n"
+        f"data:\r\n  ca.crt: {_SECRET_VALUE}\r\n"
     )
 
-    redacted = bounded_redacted_text(manifest, MAX_ARCHITECTURE_READ_BYTES)
 
-    assert _SECRET_VALUE not in redacted
-    assert "[REDACTED]" in redacted
-
-
-def test_kubernetes_secret_redaction_covers_flow_style_data() -> None:
-    manifest = (
-        "apiVersion: v1\n"
-        "kind: Secret\n"
-        "metadata: {name: app-credentials}\n"
-        f"data: {{tls.key: {_SECRET_VALUE}, tls.crt: PUBLIC-CERT}}\n"
+def test_secret_manifest_excluded_when_indented_under_a_list() -> None:
+    _excluded(
+        "kind: List\nitems:\n- kind: Secret\n  metadata:\n    name: a\n"
+        f"  data:\n    ca.crt: {_SECRET_VALUE}\n"
     )
 
-    redacted = bounded_redacted_text(manifest, MAX_ARCHITECTURE_READ_BYTES)
 
-    assert _SECRET_VALUE not in redacted
-    assert "[REDACTED]" in redacted
+def test_secret_manifest_excluded_in_flow_style() -> None:
+    _excluded(f"kind: Secret\nmetadata: {{name: a}}\ndata: {{ca.crt: {_SECRET_VALUE}}}\n")
 
 
-def test_kubernetes_secret_redaction_covers_quoted_keys() -> None:
-    manifest = (
-        'apiVersion: v1\n'
-        '"kind": "Secret"\n'
-        '"metadata":\n'
-        '  "name": app-credentials\n'
-        '"data":\n'
-        f'  "token": {_SECRET_VALUE}\n'
+def test_secret_manifest_excluded_with_quoted_keys() -> None:
+    _excluded(f'"kind": "Secret"\n"data":\n  "ca.crt": {_SECRET_VALUE}\n')
+
+
+def test_secret_manifest_excluded_with_anchored_kind() -> None:
+    """Ronda 9: `kind: &k Secret` es YAML valido y el reconocimiento no lo veia."""
+    _excluded(f"kind: &k Secret\nmetadata:\n  name: a\ndata:\n  ca.crt: {_SECRET_VALUE}\n")
+
+
+def test_secret_manifest_excluded_with_inline_comment_on_data() -> None:
+    """Ronda 9 CRITICAL: un comentario inline en `data:` abria fuga total."""
+    _excluded(
+        "kind: Secret\nmetadata:\n  name: a\n"
+        f"data:  # base64-encoded values\n  password: {_SECRET_VALUE}\n"
     )
 
-    redacted = bounded_redacted_text(manifest, MAX_ARCHITECTURE_READ_BYTES)
 
-    assert _SECRET_VALUE not in redacted
-    assert "[REDACTED]" in redacted
-
-
-def test_kubernetes_secret_redaction_is_scoped_to_its_own_document() -> None:
-    """Un Secret en el archivo no debe blanquear el data: de un ConfigMap vecino."""
-    bundle = (
-        "apiVersion: v1\n"
-        "kind: Secret\n"
-        "metadata:\n"
-        "  name: app-credentials\n"
-        "data:\n"
-        f"  password: {_SECRET_VALUE}\n"
-        "---\n"
-        "apiVersion: v1\n"
-        "kind: ConfigMap\n"
-        "metadata:\n"
-        "  name: app-config\n"
-        "data:\n"
-        "  log_level: PUBLIC-CONFIG-VALUE\n"
+def test_secret_manifest_excluded_with_anchor_on_the_data_key() -> None:
+    _excluded(
+        "kind: Secret\nmetadata:\n  name: a\n"
+        f"data: &shared\n  password: {_SECRET_VALUE}\notherKey: *shared\n"
     )
 
-    redacted = bounded_redacted_text(bundle, MAX_ARCHITECTURE_READ_BYTES)
 
-    assert _SECRET_VALUE not in redacted
-    assert "PUBLIC-CONFIG-VALUE" in redacted
-
-
-# --- Hallazgos de la 7a revision independiente -------------------------------
-# Los tres comparten un principio: no hay que devolver texto sin redactar solo
-# porque la pasada estructural no vio nada.
+def test_secret_manifest_excluded_when_embedded_in_another_document() -> None:
+    """Ronda 7: un Secret renderizado dentro del data: de un ConfigMap."""
+    _excluded(
+        "kind: ConfigMap\ndata:\n  rendered.yaml: |\n    kind: Secret\n"
+        f"    data:\n      ca.crt: {_SECRET_VALUE}\n"
+    )
 
 
-def test_secret_redaction_bounds_yaml_alias_fan_out() -> None:
-    """Un DAG de alias no debe recorrerse como si fuera un arbol.
-
-    safe_load resuelve los alias a referencias COMPARTIDAS; sin memoizacion por
-    identidad, el mismo objeto se revisita una vez por arista entrante. 62
-    marcadores en ~440 bytes pasaban por debajo del guard y costaban ~6.8s.
-    """
-    levels, branch = 16, 3
-    lines = ["l0: &n0 [x, x, x]"]
-    for level in range(1, levels):
-        refs = ", ".join([f"*n{level - 1}"] * branch)
-        lines.append(f"l{level}: &n{level} [{refs}]")
-    lines += ["root:", "  kind: Secret", f"  data: *n{levels - 1}"]
-    bomb = "\n".join(lines) + "\n"
-
-    start = time.perf_counter()
-    bounded_redacted_text(bomb, MAX_ARCHITECTURE_READ_BYTES)
-    elapsed = time.perf_counter() - start
-
-    assert elapsed < 2.0, f"el saneador tardo {elapsed:.1f}s: fan-out sin acotar"
+def test_secret_manifest_excluded_alongside_a_malformed_sibling() -> None:
+    """Ronda 7: un hermano malformado degradaba todo al escaner debil."""
+    _excluded(
+        "kind: List\nitems:\n- kind: Secret\n"
+        f"  data:\n    ca.crt: {_SECRET_VALUE}\n---\nbad:\n\tkey: value\n"
+    )
 
 
-def test_secret_redaction_fails_closed_on_unparseable_helm_template() -> None:
-    """Las plantillas Helm no son YAML valido, asi que caen al fallback por
-    construccion. Con CRLF, el fallback heredado de la ronda 6 filtraba entero."""
+def test_secret_manifest_excluded_inside_an_unparseable_helm_template() -> None:
+    """Ronda 7: las plantillas Helm no son YAML valido y caian al fallback."""
     helm = (
-        "{{- if .Values.enabled }}\n"
-        "apiVersion: v1\n"
-        "kind: Secret\n"
-        "metadata:\n"
-        "  name: app-credentials\n"
-        "data:\n"
-        f"  ca.crt: {_SECRET_VALUE}\n"
-        "{{- end }}\n"
+        "{{- if .Values.enabled }}\nkind: Secret\nmetadata:\n  name: a\n"
+        f"data:\n  ca.crt: {_SECRET_VALUE}\n{{{{- end }}}}\n"
     )
 
-    for label, text in (("LF", helm), ("CRLF", helm.replace("\n", "\r\n"))):
-        redacted = bounded_redacted_text(text, MAX_ARCHITECTURE_READ_BYTES)
-        assert _SECRET_VALUE not in redacted, f"fuga con finales {label}"
+    _excluded(helm)
+    _excluded(helm.replace("\n", "\r\n"))
 
 
-def test_secret_redaction_covers_manifest_embedded_in_a_scalar() -> None:
-    """Un Secret renderizado dentro del data: de un ConfigMap: el documento
-    externo no es Secret, asi que la pasada estructural no lo ve."""
-    embedded = (
-        "apiVersion: v1\n"
-        "kind: ConfigMap\n"
-        "metadata:\n"
-        "  name: rendered\n"
-        "data:\n"
-        "  rendered-secret.yaml: |\n"
-        "    kind: Secret\n"
-        "    data:\n"
-        f"      ca.crt: {_SECRET_VALUE}\n"
+def test_secret_manifest_excluded_after_ordinary_large_padding() -> None:
+    """Ronda 9 CRITICAL: con contenido benigno grande el presupuesto se agotaba
+    antes de llegar al Secret y la busqueda incompleta se leia como 'no hay'."""
+    padding = "".join(
+        f"cm{index}: {{kind: ConfigMap, data: {{a: b}}}}\n" for index in range(1400)
+    )
+    _excluded(padding + f"late: {{kind: Secret, data: {{password: {_SECRET_VALUE}}}}}\n")
+
+
+def test_secret_detection_does_not_fire_on_the_bare_word() -> None:
+    """Excluir es agresivo, no indiscriminado: hace falta la forma `kind: Secret`."""
+    prose = "This module manages the app's Secret Service integration.\ndata:\n  key: value\n"
+
+    assert bounded_redacted_text(prose, MAX_ARCHITECTURE_READ_BYTES) == prose
+
+
+def test_non_secret_manifests_are_left_untouched() -> None:
+    deployment = (
+        "apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n"
+        "      containers:\n        - image: example/app:1.2.3\n"
     )
 
-    redacted = bounded_redacted_text(embedded, MAX_ARCHITECTURE_READ_BYTES)
-
-    assert _SECRET_VALUE not in redacted
-
-
-def test_secret_redaction_fallback_sees_list_item_secrets() -> None:
-    """Degradacion forzada: un hermano malformado manda todo al fallback, y alli
-    el Secret venia como item de lista (`- kind: Secret`), que el reconocimiento
-    no toleraba por el guion."""
-    combined = (
-        "kind: List\n"
-        "items:\n"
-        "- kind: Secret\n"
-        "  metadata:\n"
-        "    name: app-credentials\n"
-        "  data:\n"
-        f"    ca.crt: {_SECRET_VALUE}\n"
-        "---\n"
-        "bad:\n"
-        "\tkey: value\n"
+    assert "example/app:1.2.3" in bounded_redacted_text(
+        deployment, MAX_ARCHITECTURE_READ_BYTES
     )
-
-    redacted = bounded_redacted_text(combined, MAX_ARCHITECTURE_READ_BYTES)
-
-    assert _SECRET_VALUE not in redacted
