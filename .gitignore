@@ -32,3 +32,4 @@ AGENTS.md
 .ruff_cache/
 specs/
 scripts/handoff.py
+.codex/
