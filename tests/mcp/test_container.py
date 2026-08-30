@@ -25,6 +25,7 @@ from engineering_team.mcp.runner import CommandRequest, CommandRunner
 
 PINNED = "python@sha256:" + "0" * 64
 INTEGRATION_IMAGE = os.environ.get("ASET_CONTAINER_TEST_IMAGE", "")
+PYTHON_IMAGE = os.environ.get("ASET_CONTAINER_TEST_PYTHON_IMAGE", "")
 
 
 def _runner(workspace: Path, **kwargs) -> ContainerRunner:
@@ -150,6 +151,42 @@ def test_missing_runtime_reports_unavailable(tmp_path: Path) -> None:
         runner.require_available()
 
 
+def test_the_only_privileged_container_is_minimal(tmp_path: Path, monkeypatch) -> None:
+    """One root container exists, to hand over the volume. Keep it boxed in.
+
+    It runs before any project code and touches nothing but the volume it is
+    about to give away. If this test starts failing because the command grew, the
+    question to ask is why a privileged step needs more.
+    """
+    runner = _runner(tmp_path)
+    captured: list[list[str]] = []
+
+    def fake_quiet(args, *, timeout):
+        captured.append(list(args))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(runner, "_quiet", fake_quiet)
+    runner._ensure_volume()
+
+    privileged = [c for c in captured if "--user" in c and c[c.index("--user") + 1] == "0:0"]
+    assert len(privileged) == 1, "exactly one container may run as root"
+    command = privileged[0]
+    assert command[command.index("--network") + 1] == "none"
+    assert command[command.index("--cap-drop") + 1] == "ALL"
+    assert command[command.index("--cap-add") + 1] == "CHOWN"
+    assert command.count("--cap-add") == 1
+    assert command[command.index("--security-opt") + 1] == "no-new-privileges"
+    # The workspace is not mounted into it: it has no business there.
+    mounts = [command[i + 1] for i, a in enumerate(command) if a == "--mount"]
+    assert len(mounts) == 1
+    assert str(WORKSPACE_MOUNT) not in " ".join(mounts)
+    assert command[-3:] == [
+        "chown",
+        f"{os.getuid()}:{os.getgid()}",
+        str(ENVIRONMENT_MOUNT),
+    ]
+
+
 # -- integration: needs a real daemon and an image already pulled -----------
 
 _HAS_DOCKER = shutil.which("docker") is not None
@@ -164,6 +201,18 @@ _HAS_IMAGE = bool(INTEGRATION_IMAGE) and _HAS_DOCKER and (
 integration = pytest.mark.skipif(
     not _HAS_IMAGE,
     reason="set ASET_CONTAINER_TEST_IMAGE to a locally present image",
+)
+_HAS_PYTHON_IMAGE = bool(PYTHON_IMAGE) and _HAS_DOCKER and (
+    subprocess.run(
+        ["docker", "image", "inspect", PYTHON_IMAGE],
+        capture_output=True,
+        check=False,
+    ).returncode
+    == 0
+)
+python_integration = pytest.mark.skipif(
+    not _HAS_PYTHON_IMAGE,
+    reason="set ASET_CONTAINER_TEST_PYTHON_IMAGE to a locally present Python image",
 )
 
 
@@ -183,16 +232,28 @@ def test_real_container_runs_a_command_and_sees_the_workspace(tmp_path: Path) ->
 
 
 @integration
-def test_real_container_has_no_network_unless_asked(tmp_path: Path) -> None:
+def test_real_container_has_no_route_out_unless_asked(tmp_path: Path) -> None:
+    """Routing, not interface listing.
+
+    Under `--network none` the kernel still exposes tunnel and dummy devices in
+    /sys/class/net; none of them carry traffic. The routing table is what says
+    whether anything can leave, and it needs no tool in the image to read.
+    """
     runner = ContainerRunner(
         tmp_path, image=INTEGRATION_IMAGE, allow_unpinned_image=True
     )
     try:
-        completed = runner.execute(
-            _request(tmp_path, "sh", "-c", "ls /sys/class/net")
+        offline = runner.execute(_request(tmp_path, "cat", "/proc/net/route"))
+        assert offline.returncode == 0
+        assert offline.stdout.strip().count("\n") == 0, (
+            f"offline container has routes: {offline.stdout}"
         )
-        interfaces = completed.stdout.split()
-        assert interfaces == ["lo"], f"expected loopback only, got {interfaces}"
+
+        online = runner.execute(
+            _request(tmp_path, "cat", "/proc/net/route", allow_network=True)
+        )
+        assert online.returncode == 0
+        assert "eth0" in online.stdout, "install phase was given no route out"
     finally:
         runner.close()
 
@@ -247,5 +308,47 @@ def test_real_container_cannot_reach_the_host_filesystem(tmp_path: Path) -> None
             _request(tmp_path, "sh", "-c", f"ls {Path.home()} 2>&1 || true")
         )
         assert "No such file" in completed.stdout or completed.stdout.strip() == ""
+    finally:
+        runner.close()
+
+
+@python_integration
+def test_prepare_environment_builds_a_working_interpreter_in_the_container(
+    tmp_path: Path,
+) -> None:
+    """The environment is provisioned in the container's namespace, not the host's."""
+    runner = ContainerRunner(
+        tmp_path, image=PYTHON_IMAGE, allow_unpinned_image=True
+    )
+    try:
+        interpreter = runner.prepare_environment(time.monotonic() + 300)
+        assert interpreter == f"{ENVIRONMENT_MOUNT}/bin/python"
+        # Nothing was written to the host: the environment is a volume.
+        assert not (tmp_path / "bin").exists()
+        assert runner.environment == Path(ENVIRONMENT_MOUNT)
+
+        completed = runner.execute(
+            _request(tmp_path, interpreter, "-c", "import sys; print(sys.prefix)")
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.strip() == str(ENVIRONMENT_MOUNT)
+    finally:
+        runner.close()
+
+
+@python_integration
+def test_the_environment_survives_between_containers(tmp_path: Path) -> None:
+    """Each command is a new container; the volume is what persists."""
+    runner = ContainerRunner(
+        tmp_path, image=PYTHON_IMAGE, allow_unpinned_image=True
+    )
+    try:
+        interpreter = runner.prepare_environment(time.monotonic() + 300)
+        first = runner.execute(_request(tmp_path, interpreter, "-m", "pip", "--version"))
+        assert first.returncode == 0, first.stderr
+        second = runner.execute(
+            _request(tmp_path, interpreter, "-c", "print('still here')")
+        )
+        assert "still here" in second.stdout
     finally:
         runner.close()

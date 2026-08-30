@@ -244,6 +244,38 @@ class ContainerRunner:
         if created is None or created.returncode != 0:
             raise RuntimeError("quality container environment volume was not created")
         self._volume_created = True
+        self._hand_volume_to_the_unprivileged_user()
+
+    def _hand_volume_to_the_unprivileged_user(self) -> None:
+        """Give the run's volume to the user every other container runs as.
+
+        A fresh named volume is owned by root, so the unprivileged user the real
+        work runs as cannot create the environment inside it. This is the only
+        container that runs as root, and it is granted exactly one capability,
+        no network, and nothing but the volume it is about to hand over.
+        """
+        if not hasattr(os, "getuid"):
+            return
+        handed = self._quiet(
+            [
+                self.runtime, "run", "--rm",
+                "--user", "0:0",
+                "--network", "none",
+                "--cap-drop", "ALL",
+                "--cap-add", "CHOWN",
+                "--security-opt", "no-new-privileges",
+                "--mount",
+                f"type=volume,source={self._volume},target={ENVIRONMENT_MOUNT}",
+                self.image,
+                "chown", f"{os.getuid()}:{os.getgid()}", str(ENVIRONMENT_MOUNT),
+            ],
+            timeout=120,
+        )
+        if handed is None or handed.returncode != 0:
+            detail = "" if handed is None else handed.stderr[-500:]
+            raise RuntimeError(
+                f"quality container environment volume is not writable: {detail}"
+            )
 
     # -- execution ---------------------------------------------------------
 
