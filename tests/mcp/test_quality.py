@@ -8,13 +8,14 @@ from pathlib import Path
 
 import pytest
 
-import engineering_team.mcp.quality as quality_module
+import engineering_team.mcp.runner as runner_module
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.contracts.models import ToolResult
 from engineering_team.mcp.client import MCPQualityClient
-from engineering_team.mcp.quality import (
+from engineering_team.mcp.quality import QualityMCP
+from engineering_team.mcp.runner import (
     _VENV_BIN,
-    QualityMCP,
+    ProcessRunner,
     _BoundedOutput,
     _system_path_entries,
 )
@@ -36,7 +37,7 @@ def _patch_executor(monkeypatch, callback) -> None:
             deadline=deadline,
             allow_network=allow_network,
             allow_subprocesses=allow_subprocesses,
-            env=quality._subprocess_environment(),
+            env=quality._runner._subprocess_environment(),
             timeout=quality._remaining(deadline),
         )
 
@@ -871,7 +872,7 @@ def test_windows_termination_uses_recursive_forced_tree_kill(
     monkeypatch.setenv("SYSTEMROOT", str(tmp_path / "Windows"))
     monkeypatch.setattr(subprocess, "run", run)
 
-    QualityMCP._terminate_windows_tree(FakeProcess())
+    ProcessRunner._terminate_windows_tree(FakeProcess())
 
     assert calls[0][0][-4:] == ["/PID", "1234", "/T", "/F"]
     assert calls[0][1]["timeout"] == 1
@@ -887,7 +888,7 @@ def test_subprocess_path_never_inherits_the_operator_path(tmp_path: Path) -> Non
     quality = QualityMCP(tmp_path, timeout_seconds=10)
     try:
         quality._interpreter(time.monotonic() + 10)
-        environment = quality._subprocess_environment()
+        environment = quality._runner._subprocess_environment()
     finally:
         quality.close()
 
@@ -939,7 +940,7 @@ def test_drain_stream_owns_and_closes_its_descriptor() -> None:
     read_fd, write_fd = os.pipe()
     stream = os.fdopen(read_fd, "rb")
     output = _BoundedOutput()
-    reader = threading.Thread(target=QualityMCP._drain_stream, args=(stream, output))
+    reader = threading.Thread(target=ProcessRunner._drain_stream, args=(stream, output))
     reader.start()
     os.write(write_fd, b"owned")
     os.close(write_fd)
@@ -1033,10 +1034,10 @@ def test_sandbox_profile_enables_network_only_for_install_phase(tmp_path: Path) 
     quality._environment.mkdir()
 
     offline = "\n".join(
-        quality._sandbox_command(["python", "-V"], allow_network=False)
+        quality._runner._sandbox_command(["python", "-V"], allow_network=False)
     )
     installing = "\n".join(
-        quality._sandbox_command(
+        quality._runner._sandbox_command(
             ["python", "-m", "pip"],
             allow_network=True,
             allow_subprocesses=True,
@@ -1145,9 +1146,9 @@ def test_sanitized_path_keeps_legitimate_configured_toolchains(
     quality._environment = tmp_path / "environment"
     quality._environment.mkdir()
 
-    environment = quality._subprocess_environment()
+    environment = quality._runner._subprocess_environment()
     sandbox = "\n".join(
-        quality._sandbox_command(["tool", "--version"], allow_network=False)
+        quality._runner._sandbox_command(["tool", "--version"], allow_network=False)
     )
 
     entries = environment["PATH"].split(os.pathsep)
@@ -1190,7 +1191,7 @@ def test_system_path_excludes_home_workspace_environment_and_temporary_roots(
     quality = QualityMCP(workspace)
     quality._environment = environment
     profile = "\n".join(
-        quality._sandbox_command(["python", "-V"], allow_network=False)
+        quality._runner._sandbox_command(["python", "-V"], allow_network=False)
     )
     assert str(private_tools.resolve()) not in profile
     assert str(workspace_tools.resolve()) not in profile
@@ -1218,7 +1219,7 @@ def test_home_toolchain_path_requires_explicit_valid_opt_in(
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("ASET_QUALITY_TOOL_PATHS", str(tool_bin))
     monkeypatch.setattr(
-        quality_module,
+        runner_module,
         "_temporary_path_roots",
         lambda: (Path("/not-the-test-temp"),),
         raising=False,
@@ -1228,7 +1229,7 @@ def test_home_toolchain_path_requires_explicit_valid_opt_in(
     quality = QualityMCP(workspace)
     quality._environment = environment
     profile = "\n".join(
-        quality._sandbox_command(["tool", "--version"], allow_network=False)
+        quality._runner._sandbox_command(["tool", "--version"], allow_network=False)
     )
 
     assert str(tool_bin.resolve()) in entries
@@ -1251,7 +1252,7 @@ def test_home_toolchain_opt_in_rejects_unsafe_paths(
     elif kind == "workspace":
         configured = str(workspace)
         monkeypatch.setattr(
-            quality_module,
+            runner_module,
             "_temporary_path_roots",
             lambda: (Path("/not-the-test-temp"),),
             raising=False,
@@ -1275,14 +1276,14 @@ def test_linux_never_discovers_bubblewrap_from_untrusted_path(
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("PATH", str(fake.parent))
     monkeypatch.setattr(
-        quality_module,
+        runner_module,
         "_BUBBLEWRAP_CANDIDATES",
         (Path("/path/that/does/not/exist/bwrap"),),
         raising=False,
     )
 
     with pytest.raises(RuntimeError, match="sandbox is unavailable"):
-        QualityMCP._sandbox_backend()
+        ProcessRunner._sandbox_backend()
 
 
 def test_linux_bubblewrap_candidate_requires_trusted_system_metadata(
@@ -1294,25 +1295,25 @@ def test_linux_bubblewrap_candidate_requires_trusted_system_metadata(
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.setattr(
-        quality_module,
+        runner_module,
         "_BUBBLEWRAP_CANDIDATES",
         (fake,),
         raising=False,
     )
 
     with pytest.raises(RuntimeError, match="sandbox is unavailable"):
-        QualityMCP._sandbox_backend()
+        ProcessRunner._sandbox_backend()
 
     symlink = tmp_path / "bwrap-symlink"
     symlink.symlink_to("/bin/ls")
-    monkeypatch.setattr(quality_module, "_BUBBLEWRAP_CANDIDATES", (symlink,))
+    monkeypatch.setattr(runner_module, "_BUBBLEWRAP_CANDIDATES", (symlink,))
     with pytest.raises(RuntimeError, match="sandbox is unavailable"):
-        QualityMCP._sandbox_backend()
+        ProcessRunner._sandbox_backend()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX system metadata regression")
 def test_trusted_system_executable_accepts_root_owned_immutable_binary() -> None:
-    selected = QualityMCP._trusted_system_executable((Path("/bin/ls"),))
+    selected = ProcessRunner._trusted_system_executable((Path("/bin/ls"),))
 
     assert selected == Path("/bin/ls").resolve(strict=True)
 
@@ -1320,7 +1321,7 @@ def test_trusted_system_executable_accepts_root_owned_immutable_binary() -> None
 def test_linux_uses_bubblewrap_when_available(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(
-        QualityMCP,
+        ProcessRunner,
         "_trusted_system_executable",
         staticmethod(lambda _candidates: Path("/usr/bin/bwrap")),
     )
@@ -1328,7 +1329,7 @@ def test_linux_uses_bubblewrap_when_available(tmp_path: Path, monkeypatch) -> No
     quality._environment = tmp_path / "environment"
     quality._environment.mkdir()
 
-    command = quality._sandbox_command(["python", "-V"], allow_network=False)
+    command = quality._runner._sandbox_command(["python", "-V"], allow_network=False)
 
     assert command[0] == "/usr/bin/bwrap"
     assert "--unshare-all" in command
@@ -1351,14 +1352,14 @@ def test_linux_uses_bubblewrap_when_available(tmp_path: Path, monkeypatch) -> No
         "bubblewrap must never expose the operator home"
     )
 
-    installing = quality._sandbox_command(["python", "-m", "pip"], allow_network=True)
+    installing = quality._runner._sandbox_command(["python", "-m", "pip"], allow_network=True)
     assert "--share-net" in installing
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux regression")
 def test_real_linux_bubblewrap_blocks_host_write(tmp_path: Path) -> None:
     try:
-        QualityMCP._sandbox_backend()
+        ProcessRunner._sandbox_backend()
     except RuntimeError:
         pytest.skip("trusted system bubblewrap is unavailable")
     host_directory = tmp_path.parent / f"quality-linux-host-{tmp_path.name}"
@@ -1427,7 +1428,7 @@ def test_output_reader_is_cancelable_when_escaped_child_holds_pipe() -> None:
     output = _BoundedOutput()
     stop = threading.Event()
     reader = threading.Thread(
-        target=QualityMCP._drain_stream,
+        target=ProcessRunner._drain_stream,
         args=(stream, output, stop),
     )
     reader.start()
@@ -1470,7 +1471,7 @@ def test_unsupported_platform_fails_closed_without_starting_a_process(
 ) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(
-        quality_module,
+        runner_module,
         "_BUBBLEWRAP_CANDIDATES",
         (Path("/path/that/does/not/exist/bwrap"),),
     )
