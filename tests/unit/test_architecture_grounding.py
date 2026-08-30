@@ -494,11 +494,27 @@ def test_architecture_redaction_limits_input_before_json_parsing(monkeypatch) ->
 
 def test_architecture_redaction_does_not_use_dotall_pem_regex(monkeypatch) -> None:
     class RejectDotAllRegex:
+        """Deja pasar el escaneo hacia adelante y rechaza una sustitucion DOTALL.
+
+        Debe delegar `search`: el doble reemplaza al regex real, asi que sin eso
+        el test fallaria por AttributeError en vez de por lo que dice vigilar.
+        """
+
+        def __init__(self, real):
+            self._real = real
+
+        def search(self, value, pos=0):
+            return self._real.search(value, pos)
+
         def sub(self, replacement, value):
             raise AssertionError("DOTALL PEM substitution is not linear for unmatched BEGINs")
 
+    # Sin `raising=False`: si el simbolo se renombra, el test debe romperse fuerte
+    # en vez de crear un atributo nuevo que el codigo real nunca mira.
     monkeypatch.setattr(
-        repository_evidence, "_PEM_PRIVATE_KEY", RejectDotAllRegex(), raising=False
+        repository_evidence,
+        "_PEM_BEGIN",
+        RejectDotAllRegex(repository_evidence._PEM_BEGIN),
     )
     payload = ("-----BEGIN PRIVATE KEY-----\nunclosed-material\n" * 5_000)
 
@@ -843,3 +859,29 @@ def test_non_secret_manifests_are_left_untouched() -> None:
     assert "example/app:1.2.3" in bounded_redacted_text(
         deployment, MAX_ARCHITECTURE_READ_BYTES
     )
+
+
+def test_secret_manifest_excluded_when_kind_falls_past_the_raw_cap() -> None:
+    """Ronda 10 BLOQUEANTE: la deteccion corria DESPUES de truncar a 64 KiB, asi
+    que un `kind: Secret` mas alla del corte no se veia y el data: si filtraba.
+    YAML no impone orden de claves, asi que no hace falta nada adversarial."""
+    manifest = (
+        "apiVersion: v1\n"
+        f"data:\n  tls.key: {_SECRET_VALUE}\n"
+        + "# padding\n" * 9000
+        + "kind: Secret\n"
+    )
+    assert len(manifest.encode()) > 64 * 1024
+
+    _excluded(manifest)
+
+
+def test_secret_manifest_excluded_with_block_scalar_kind() -> None:
+    """`kind: |` seguido del valor en la linea siguiente."""
+    _excluded(f"kind: |\n  Secret\ndata:\n  ca.crt: {_SECRET_VALUE}\n")
+
+
+def test_secret_manifest_excluded_with_explicit_type_tag() -> None:
+    """`kind: !!str Secret` es YAML valido."""
+    _excluded(f"kind: !!str Secret\ndata:\n  ca.crt: {_SECRET_VALUE}\n")
+

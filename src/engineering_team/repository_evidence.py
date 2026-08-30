@@ -226,8 +226,6 @@ def bounded_utf8(value: str, limit: int = MAX_ARCHITECTURE_READ_BYTES) -> str:
     return encoded[:limit].decode("utf-8", errors="ignore")
 
 
-_K8S_SECRET_KIND = re.compile(r"""^kind:[ \t]*['"]?Secret['"]?[ \t]*$""", re.MULTILINE)
-_K8S_SECRET_BLOCK = re.compile(r"^(?:data|stringData):[ \t]*$")
 
 
 # `(?:-\s+)?` tolera el guion de item de lista: en un `kind: List` el Secret
@@ -243,8 +241,11 @@ SECRET_MANIFEST_PLACEHOLDER = "[EXCLUDED: Kubernetes Secret manifest]"
 # proveedor cloud. Por eso conviene errar hacia excluir, y por eso ya no hace
 # falta parsear YAML no confiable -lo que elimina de paso toda la superficie de
 # bombas de alias, agotamiento de presupuesto y fallos de parseo-.
+# `(?:[&!]\S+\s+|[|>][-+0-9]*\s+)*` cubre lo que YAML admite entre los dos puntos
+# y el valor: ancla (`&a`), tag explicito (`!!str`) y escalar de bloque (`|`, `>`).
 _SECRET_MANIFEST = re.compile(
-    r"""['"]?\bkind['"]?\s*:\s*(?:&\S+\s+)?['"]?Secret""", re.IGNORECASE
+    r"""['"]?\bkind['"]?\s*:\s*(?:[&!]\S+\s+|[|>][-+0-9]*\s+)*['"]?Secret""",
+    re.IGNORECASE,
 )
 
 
@@ -255,9 +256,11 @@ def is_secret_manifest(value: str) -> bool:
 
 def bounded_redacted_text(value: str, limit: int) -> str:
     """Redact credential-shaped assignments before retaining bounded evidence."""
-    raw = bounded_utf8(value, MAX_ARCHITECTURE_RAW_EVIDENCE_BYTES)
-    if is_secret_manifest(raw):
+    # Antes de recortar, no despues: YAML no impone orden de claves, asi que un
+    # `kind: Secret` puede caer mas alla del tope mientras su `data:` queda dentro.
+    if is_secret_manifest(value):
         return SECRET_MANIFEST_PLACEHOLDER
+    raw = bounded_utf8(value, MAX_ARCHITECTURE_RAW_EVIDENCE_BYTES)
     try:
         parsed = json.loads(raw)
     except (json.JSONDecodeError, RecursionError, TypeError):
