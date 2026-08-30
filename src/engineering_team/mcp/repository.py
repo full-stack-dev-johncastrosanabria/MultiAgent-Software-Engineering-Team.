@@ -1,4 +1,5 @@
 import difflib
+import subprocess
 from pathlib import Path
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
@@ -6,6 +7,39 @@ from engineering_team.contracts.models import ToolResult
 
 _READ_ROLES = {AgentRole.ARCHITECTURE, AgentRole.DEVELOPER}
 _WRITE_ROLES = {AgentRole.DEVELOPER}
+
+
+# Nunca son evidencia arquitectonica y dominan el arbol por volumen. `.git`
+# ademas guarda credenciales: sus remotos pueden llevarlas en la URL.
+_EXCLUDED_DIRECTORIES = frozenset({
+    ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", "dist", "build",
+})
+MAX_LISTED_PATHS = 2_000
+MAX_LISTING_BYTES = 256 * 1024
+
+
+def _git_visible_paths(root: Path) -> list[str] | None:
+    """Lo que git mostraria: trackeado mas no-trackeado, menos todo lo ignorado.
+
+    Delegar en git da la semantica exacta de .gitignore -incluidos los archivos
+    anidados y los patrones negados- sin reimplementarla, y evita recorrer los
+    arboles que el propio proyecto ya declaro desechables.
+    """
+    try:
+        completed = subprocess.run(
+            [
+                "git", "-C", str(root), "ls-files",
+                "--cached", "--others", "--exclude-standard", "-z",
+            ],
+            capture_output=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    decoded = completed.stdout.decode("utf-8", "replace")
+    return [entry for entry in decoded.split("\0") if entry]
 
 
 def _is_secret_path(path: Path) -> bool:
@@ -44,17 +78,47 @@ class RepositoryMCP:
             raise ValueError("outside workspace denied")
         return target
 
-    def _safe_files(self):
-        for path in self.root.rglob("*"):
+    def _candidate_paths(self):
+        """Rutas relativas a considerar, ya sin lo que el proyecto descarta."""
+        tracked = _git_visible_paths(self.root)
+        if tracked is not None:
+            for entry in tracked:
+                yield Path(entry)
+            return
+        # Sin repo git no hay exclusiones declaradas que consultar, pero podar los
+        # directorios pesados evita recorrerlos, no solo omitirlos del resultado.
+        stack = [self.root]
+        while stack:
+            current = stack.pop()
             try:
-                relative = path.relative_to(self.root)
+                entries = list(current.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    if entry.name not in _EXCLUDED_DIRECTORIES:
+                        stack.append(entry)
+                    continue
+                try:
+                    yield entry.relative_to(self.root)
+                except ValueError:
+                    continue
+
+    def _safe_files(self):
+        for relative in self._candidate_paths():
+            if any(part in _EXCLUDED_DIRECTORIES for part in relative.parts):
+                continue
+            if _is_secret_path(relative):
+                continue
+            path = self.root / relative
+            try:
                 resolved = path.resolve()
-                inside = resolved == self.root or self.root in resolved.parents
                 if (
                     path.is_symlink()
-                    or not inside
                     or not resolved.is_file()
-                    or _is_secret_path(relative)
+                    or (resolved != self.root and self.root not in resolved.parents)
                 ):
                     continue
                 yield path, relative
@@ -68,11 +132,27 @@ class RepositoryMCP:
             role,
             "list_files",
             ToolStatus.SUCCESS,
-            "\n".join(
-                str(relative)
-                for _, relative in self._safe_files()
-            ),
+            self._bounded_listing(),
         )
+
+    def _bounded_listing(self) -> str:
+        """Listado acotado: entra a estado y trazas, no puede crecer con el proyecto."""
+        listed: list[str] = []
+        used = 0
+        total = 0
+        for _, relative in self._safe_files():
+            total += 1
+            if len(listed) >= MAX_LISTED_PATHS:
+                continue
+            entry = str(relative)
+            cost = len(entry.encode("utf-8")) + 1
+            if used + cost > MAX_LISTING_BYTES:
+                continue
+            listed.append(entry)
+            used += cost
+        if total > len(listed):
+            listed.append(f"# truncated: {len(listed)} of {total} paths")
+        return "\n".join(listed)
 
     def read_file(self, role: AgentRole, relative: str) -> ToolResult:
         if role not in _READ_ROLES:
