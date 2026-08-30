@@ -120,6 +120,22 @@
       ],
       "confidence": 0.97,
       "recommended_fix": "Persistir cada decisión con iteration, status, reason, score y timestamp y proyectar la UI directamente desde esos eventos."
+    },
+    {
+      "severity": "critical",
+      "title": "El Developer puede vaciar archivos y no ve lo que escribio al remediar",
+      "mechanism": "El prompt le pide autorar el contenido completo de cada archivo cambiado, pero _FIELDS[DEVELOPER] no incluye implementation: no recibe el file_contents que produjo en el ciclo anterior. Cada remediacion reescribe desde cero en vez de reparar, y nada compara el contenido nuevo contra el previo. Medido sobre la corrida run-8e101cac (banca-demo, requerimiento: recuperacion de contrasena en banca/auth.py): 510 lineas pasaron a 358, 3 de 14 archivos quedaron por debajo de la mitad, y se borraron 15 simbolos en 4 archivos -la superficie de autenticacion completa (autenticar, cerrar_sesion, usuario_de_sesion, ErrorAutenticacion), el hash de contrasenas (hash_password, verificar_password) y el esquema de base (conectar, crear_esquema, inicializar, poblar_datos_demo)-. El conftest quedo importando encriptar_password, que no existe en el proyecto. Se tocaron 6 archivos cuando el requerimiento nombraba uno para escribir y tres para leer.",
+      "source_layer": "9. Answer shaping",
+      "root_cause": "El unico rol que escribe es el unico sin su propia salida previa en la proyeccion, y no existe ninguna comprobacion de que una reescritura conserve lo que el requerimiento no pidio cambiar. El dano se mide en simbolos, no en lineas ni en conteo de tests: se borraron 4 pruebas y se agregaron 5, asi que el total subio de 18 a 19 y un control por cantidad no habria visto nada.",
+      "evidence_refs": [
+        "src/engineering_team/models/context.py:29",
+        "src/engineering_team/llm/prompting.py:63",
+        "src/engineering_team/graph/stategraph.py:560",
+        "workspace/runs/_records/run-8e101cac-3977-43ee-8954-eddbbb5a4944.json",
+        "workspace/runs/run-8e101cac-3977-43ee-8954-eddbbb5a4944/banca/seguridad.py"
+      ],
+      "confidence": 0.99,
+      "recommended_fix": "Incluir implementation en la proyeccion del Developer para que remediar sea reparar. Rechazar de forma determinista toda reescritura que elimine simbolos publicos preexistentes -funciones, clases y tests- salvo que el requerimiento lo pida, comparando por AST y no por lineas ni por cantidad, y devolver ese motivo explicito en vez de dejar que el fallo aparezca como falta de cobertura."
     }
   ],
   "ordered_fix_plan": [
@@ -158,6 +174,12 @@
       "goal": "Persistir decisiones de revisión inmutables",
       "why_now": "La línea de tiempo no puede reconstruirse fielmente desde nombres de nodos.",
       "expected_effect": "Historial y UI consistentes con la ejecución real."
+    },
+    {
+      "order": 7,
+      "goal": "Evitar que el Developer destruya codigo y hacer que remediar sea reparar, que tenga definido que es lo que debe tocar y que no",
+      "why_now": "El aislamiento y la compuerta de evidencia contuvieron el daño, pero solo porque existian tests que fallaron al importar. Se borro el hash de contrasenas y la autenticacion entera en una tarea sobre contrasenas; en un archivo sin tests eso llega hasta el Apply.",
+      "expected_effect": "Reescrituras conservadoras, localizadas y ciclos de remediacion que converjan."
     }
   ]
 }
