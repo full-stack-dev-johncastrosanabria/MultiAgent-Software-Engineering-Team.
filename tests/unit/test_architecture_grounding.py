@@ -884,4 +884,3 @@ def test_secret_manifest_excluded_with_block_scalar_kind() -> None:
 def test_secret_manifest_excluded_with_explicit_type_tag() -> None:
     """`kind: !!str Secret` es YAML valido."""
     _excluded(f"kind: !!str Secret\ndata:\n  ca.crt: {_SECRET_VALUE}\n")
-
