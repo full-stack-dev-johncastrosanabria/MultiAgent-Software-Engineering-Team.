@@ -25,8 +25,15 @@ Monolito modular bajo `src/engineering_team/` mas un frontend Vite/React en
 `frontend/`. LangGraph es el unico orquestador; LangChain aporta `Document` y
 text splitting al RAG; Sentence Transformers genera embeddings y Chroma los
 persiste. Repository y Quality se exponen como MCP Servers reales y el grafo
-los consume con un MCP Client oficial por stdio. Python 3.10+, Pydantic,
-Ollama, Langfuse, pytest y FastAPI.
+los consume con un MCP Client oficial por stdio.
+
+QualityMCP separa tres cosas: los controles de calidad, el runner que los
+ejecuta y el perfil de cada componente. El runner en contenedor es la direccion
+del producto porque puede proveer el toolchain que un proyecto necesita, sin
+usar el interprete ni las dependencias del operador. Los perfiles actuales
+cubren Python, JVM/Maven, .NET, Node/TypeScript y Go. Python 3.10+, Pydantic,
+Ollama, Langfuse, pytest y FastAPI siguen siendo las dependencias de ASET, no
+una restriccion sobre los proyectos destino.
 
 | Capa | Modulo | Rol |
 |---|---|---|
@@ -37,6 +44,9 @@ Ollama, Langfuse, pytest y FastAPI.
 | Modelo cloud | `llm/cloud.py` | cadenas por rol, presupuesto y categorias de error HTTP |
 | Prompts | `llm/prompting.py`, `src/engineering_team/prompts/<rol>/` | compartidos por ambos runtimes |
 | MCP | `mcp/repository.py`, `mcp/quality.py`, `mcp/server.py`, `mcp/client.py` | puertos de minimo privilegio via stdio |
+| Calidad | `mcp/runner.py`, `mcp/container.py`, `stacks.py`, `components.py` | runner de proceso o contenedor, perfiles por componente y comandos de calidad |
+| Servicios | `services.py`, `topology.py` | Compose declarado o topologia derivada, aislados por corrida |
+| Entrega | `delivery.py` | rama `aset/` y pull request bajo confirmacion explicita |
 | RAG | `rag/loaders.py`, `rag/index.py`, `rag/retrievers.py` | indice Chroma persistente sobre `knowledge/` |
 | Guardrails | `guardrails/` | redaccion de secretos, validacion, timeouts, rutas |
 | Transporte | `run_api.py`, `project_api.py` | runs durables + WebSocket; selector de carpeta solo loopback |
@@ -61,6 +71,10 @@ ollama pull qwen3.5:4b
 ollama pull qwen3.5:9b
 ```
 
+Para ejecutar proyectos destino en contenedor, instale Docker Desktop (o Docker
+Engine en Linux) y confirme que `docker info` responde antes de configurar
+`QUALITY_RUNNER=container`.
+
 Windows:
 
 ```powershell
@@ -71,33 +85,37 @@ ollama pull qwen3.5:4b
 ollama pull qwen3.5:9b
 ```
 
-### Sandbox de QualityMCP
+### QualityMCP y contenedores
 
-La ejecucion segura de build, tests y scans esta soportada en **Darwin** con
-`sandbox-exec` y en **Linux + Bubblewrap** cuando `bwrap` existe en una ruta
-fija del sistema y pasa la validacion de ownership y permisos. En **Windows**,
-en otra plataforma o si falta el backend seguro, QualityMCP responde
-`UNAVAILABLE` (fail-closed): nunca instala ni ejecuta el proyecto en el
-interprete compartido.
-
-Las fases offline niegan `process-fork`. Solo las instalaciones pip, que pueden
-necesitar backends PEP 517, habilitan de forma declarada subprocesses y red bajo
-el mismo sandbox y deadline. En Linux todos los descendientes permanecen en el
-PID namespace de Bubblewrap.
-
-Por defecto el PATH no hereda directorios bajo HOME, el workspace ni temporales.
-Una herramienta self-contained ubicada bajo HOME se puede habilitar de forma
-explicita con una lista separada por el separador de PATH:
+La ruta recomendada para ejecutar build, tests y scans de un proyecto destino
+es Docker. Configure:
 
 ```sh
-ASET_QUALITY_TOOL_PATHS="$HOME/.local/aset-tools/bin"
+QUALITY_RUNNER=container
+# Opcional: fija una imagen; si se omite, ASET deriva una imagen Python del proyecto.
+QUALITY_CONTAINER_IMAGE=
 ```
 
-Cada entrada debe ser absoluta, existir, ser un directorio descendiente de HOME
-y quedar fuera del workspace, el venv efimero y roots temporales. Solo esos
-directorios reciben acceso de lectura; HOME nunca se monta completo. Toolchains
-con estado en HOME, como rustup/cargo, deben provisionarse dentro del workspace
-o del venv efimero en vez de usar el estado del operador.
+Con Docker Desktop en Windows, macOS o Linux, el mismo runner puede ejecutar el
+proyecto con su toolchain dentro de un contenedor. Para Python, ASET deriva la
+version a partir de sus pines o declaracion; FlaskApiProduct, por ejemplo, se
+ejecuto con Python 3.12 cuando el host tenia Python 3.14. Una imagen explicita
+es necesaria si no se puede derivar una compatible.
+
+El runner de proceso y sus sandbox de Darwin/Linux se conservan para
+compatibilidad local, pero no son la frontera estrategica ni dan soporte
+cross-platform. En particular, Windows debe usar el runner en contenedor.
+
+Si el proyecto declara `docker-compose.yml`, ASET levanta solo servicios con
+`image:` para la corrida, en una red interna y sin puertos del host. Si no lo
+declara, puede derivar Postgres, MySQL o MongoDB desde sus configuraciones;
+SQLite es correctamente un resultado sin servicios. Las imagenes de produccion
+del proyecto (`build:`) nunca se construyen para ejecutar QA.
+
+La arquitectura, los limites y lo que aun falta estan en
+[`docs/architecture/`](docs/architecture/README.md), especialmente los
+[ADRs](docs/architecture/decisions/README.md) y el
+[roadmap](docs/architecture/roadmap.md).
 
 ### Que agente usa modelo
 
@@ -129,6 +147,13 @@ ambos flags y levante Ollama.
 Langfuse live requiere `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` y
 `LANGFUSE_BASE_URL`; sin credenciales el adapter conserva una traza local
 correlacionada y el core continua.
+
+La entrega externa permanece desactivada por defecto (`DELIVERY_BACKEND=none`).
+El backend `gh` puede enviar una propuesta confirmada en una rama nueva bajo
+`aset/`, nunca escribe sobre la rama por defecto y abre un pull request separado.
+El backend `mcp` esta configurado pero aun rechaza la entrega de forma explicita;
+no lo use hasta que implemente la operacion de apertura. El token de GitHub se
+guarda solo en `.env`.
 
 ### Estrategia de modelos cloud, por agente
 
@@ -246,6 +271,11 @@ cd frontend && npm install && npm run dev -- --host 127.0.0.1 --port 5173
 Abra `http://127.0.0.1:5173`. Vite redirige `/api` y `/ws` hacia FastAPI en el
 puerto 8000. Las rutas de proyecto ingresadas en la UI se resuelven desde la
 raiz donde se inicio FastAPI.
+
+Hoy la UI trabaja sobre rutas locales. Su siguiente evolucion esta documentada
+en el roadmap: aceptar un enlace GitHub, mostrar el runner, perfiles y servicios
+seleccionados, pedir el cambio y presentar la rama, evidencia y pull request.
+No debe prometer una entrega externa que el backend no haya confirmado.
 
 Validaciones del frontend:
 

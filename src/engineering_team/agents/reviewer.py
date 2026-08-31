@@ -10,6 +10,7 @@ from engineering_team.contracts.enums import (
 from engineering_team.contracts.models import ReviewerDecision, ToolResult
 from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.models.context import ContextEnvelope
+from engineering_team.testing_evidence import describe_failures, failing_tests
 
 from .base import AgentBase
 from .testing import TEST_EVIDENCE_TOOLS
@@ -96,7 +97,16 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
             return ReviewerDecision(
                 status=ReviewerStatus.REJECTED, score=45,
                 subscores={item: (0 if item == "testing" else 75) for item in _DIMENSIONS},
-                problems=list(latest_test.failures), reason="failed tests require implementation remediation",
+                # A break and a not-yet-working feature are different news, and
+                # naming them the same is why three cycles went to the wrong one.
+                problems=(
+                    describe_failures(
+                        failing_tests(" ".join(latest_test.failures)),
+                        tuple(envelope.state_projection.get("baseline_tests") or ()),
+                    )
+                    or list(latest_test.failures)
+                ),
+                reason="failed tests require implementation remediation",
                 remediation_category=RemediationCategory.TESTING,
                 return_to=RouteTarget.DEVELOPER, confidence=1,
                 evidence_references=evidence,

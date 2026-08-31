@@ -28,6 +28,7 @@ from engineering_team.mcp.client import MCPQualityClient, MCPRepositoryClient
 from engineering_team.observability.langfuse import LangfuseTracer
 from engineering_team.rag import build_retriever
 from engineering_team.run_events import EventForwardingTrace
+from engineering_team.testing_evidence import passing_tests
 
 
 def _default_test_paths(changed_files: list[str]) -> list[str] | None:
@@ -109,6 +110,10 @@ def execute_on_project(
             trace=trace,
             test_paths=resolved_test_paths,
         )
+        # Before anything is written, record what already passes. A failure and
+        # a break are different news, and after the first write there is no way
+        # left to tell them apart.
+        baseline = baseline_tests(quality_mcp)
         state: dict[str, Any] | None = None
         for streamed_state in graph.stream({
             "run_id": run_id,
@@ -118,12 +123,33 @@ def execute_on_project(
                 "authorized": authorize_writes,
                 "project_path": str(project_root),
             },
+            "baseline_tests": list(baseline),
         }, stream_mode="values"):
             state = streamed_state
         if state is None:
             raise RuntimeError("workflow completed without a terminal state")
     duration = time.perf_counter() - started
     return state, trace, duration, cloud_first
+
+
+
+def baseline_tests(quality_mcp: Any) -> tuple[str, ...]:
+    """Which tests pass on the untouched project.
+
+    Asked once, before the first write, and never treated as required: a project
+    whose suite cannot run yields no baseline, and no baseline means nothing is
+    later called a regression. Claiming otherwise would send the Developer after
+    a break that never happened.
+    """
+    from engineering_team.contracts.enums import AgentRole
+
+    try:
+        result = quality_mcp.run_tests(AgentRole.TESTING, ["-v"])
+    except (OSError, RuntimeError, TimeoutError, ValueError):
+        # A baseline is a convenience, never a precondition: a project whose
+        # suite will not start simply has no past to compare against.
+        return ()
+    return passing_tests(getattr(result, "output_summary", "") or "")
 
 
 def run_on_project(

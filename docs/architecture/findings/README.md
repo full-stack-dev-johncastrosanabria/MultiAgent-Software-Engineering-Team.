@@ -18,6 +18,7 @@ index says where each one stands.
 | 10 | critical | The ephemeral environment installs only projects that ship a pyproject.toml | **fixed** — a project that declares its dependencies in requirements.txt gets them, and the installable manifests are tied to the ones detection recognises |
 | 9 | critical | The cloud-context guardrail blocks any project that reads environment variables | **fixed** — `.env` is matched as a file reference and not as a substring of `os.environ` |
 | 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — a byte budget replaced the file count, and the prompt now states how much evidence was withheld |
+| 13 | high | Reviewer does not distinguish a regression from a new failing test | **in progress** — capture the pre-change passing tests, then state regressions before new failures in the Developer feedback |
 
 ## Two things worth remembering
 
@@ -59,3 +60,12 @@ the Developer re-reads the original files and sees no trace of its own work.
 four tests and added five, so the total rose from 18 to 19. Anything checking
 test counts would have reported an improvement. Only comparing symbols showed the
 fifteen that vanished.
+
+**Finding 13 was found by the same real Flask run, but is not the same defect as
+finding 7.** The Developer preserved the implementation this time. Its new tests
+instead leaked products into the shared fixture and broke
+`test_get_products_empty` and `test_filter_products_by_price`, which had passed
+before the change. Reviewer reported one undifferentiated list of failures, so
+the Developer had no signal that it had broken existing behaviour. The remedy is
+to record passing test identifiers before the first write and label failures as
+`REGRESSION` or `NEW FAILURE`; without a baseline it must claim neither.

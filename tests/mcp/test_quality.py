@@ -1505,14 +1505,14 @@ def test_windows_quality_backend_fails_closed(tmp_path: Path, monkeypatch) -> No
     assert quality._environment is None
 
 
-def test_quality_platform_and_home_toolchain_contract_is_documented() -> None:
+def test_quality_container_contract_is_documented() -> None:
     readme = (Path(__file__).parents[2] / "README.md").read_text(encoding="utf-8")
 
     assert "QualityMCP" in readme
-    assert "Darwin" in readme
-    assert "Linux + Bubblewrap" in readme
-    assert "Windows" in readme and "UNAVAILABLE" in readme
-    assert "ASET_QUALITY_TOOL_PATHS" in readme
+    assert "QUALITY_RUNNER=container" in readme
+    assert "Docker Desktop" in readme
+    assert "Windows debe usar el runner en contenedor" in readme
+    assert "runner de proceso" in readme
 
 
 def test_ruff_config_stays_inside_the_sandboxed_project(tmp_path: Path) -> None:

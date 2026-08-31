@@ -36,4 +36,29 @@ RAG ingestion uses LangChain Document and RecursiveCharacterTextSplitter as a
 small integration layer before Sentence Transformers and persistent Chroma.
 Tool execution crosses the official MCP stdio protocol through
 `MCPRepositoryClient`/`MCPQualityClient` into independently exposed Repository
-and Quality MCP Server surfaces; bounded backends retain sandbox and allowlists.
+and Quality MCP Server surfaces. Quality is divided deliberately: the quality
+operations are independent from the runner that executes them, and a stack
+profile supplies the commands and image for one component rather than assuming a
+repository is Python. The active profiles are Python, JVM/Maven, .NET,
+Node/TypeScript and Go.
+
+The container runner is the product boundary for target-project commands. It
+can provide the toolchain the target declares, which an operator process cannot:
+FlaskApiProduct was verified with Python 3.12 in a container while the operator
+used Python 3.14. The process runner and its Darwin/Linux sandbox remain for
+local compatibility; Windows uses Docker rather than a separate process sandbox.
+The selected runner and image are passed as explicit MCP server arguments, not
+inherited environment variables.
+
+`ServiceStack` gives a run its own infrastructure lifetime. A declared Compose
+file is primary; ASET starts only `image:` services, removes host ports and
+makes declared networks internal. When no Compose exists, topology inference can
+derive PostgreSQL, MySQL or MongoDB from project configuration; SQLite yields no
+service. A startup or readiness failure is `INFRASTRUCTURE_ERROR`, not evidence
+that the target code is defective.
+
+Delivery is separate from Apply. A confirmed proposal can be placed on a new
+`aset/` branch and opened as a pull request; the default branch is never a
+delivery target. The UI still accepts local paths today. GitHub URLs, runner and
+service visibility, and reviewed PR presentation are the next frontend
+capability, tracked in the roadmap rather than implied by the current UI.

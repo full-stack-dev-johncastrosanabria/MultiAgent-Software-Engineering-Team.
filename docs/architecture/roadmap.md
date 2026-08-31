@@ -18,12 +18,16 @@ result is *delivered*, not applied, so the human stays the one who merges.
 ## Where it stands
 
 Working: a single LangGraph orchestrator over six roles, deterministic routing,
-evidence gates that reject work no test demonstrates, an ephemeral environment
-per project, and a container runner whose boundary is verified against a real
-daemon. Every command a target project runs is isolated.
+evidence gates that reject work no test demonstrates, a container runner whose
+boundary is verified against a real daemon, profiles for Python, JVM, .NET,
+Node and Go, and services isolated per run. The runner can select the Python
+version a project needs rather than reusing the operator's interpreter.
 
-Not working: everything about being pointed at a project that is not Python and
-does not already run on this laptop.
+Still to prove as one product flow: a real code-change pull request after all
+gates pass, the declared Compose path against Kafka, non-Python remediation in
+a target repository, and the large multi-component case. The UI still accepts a
+local path only; it does not yet let a user choose a GitHub repository or review
+delivery evidence in one place.
 
 ## The evidence
 
@@ -136,9 +140,8 @@ on SQLite. Two artefacts come out — the run's, closed and with the project
 redirected off `localhost` by the variables its framework documents, and the
 developer's, with ports where their configuration already looks and credentials
 parameterised so no plaintext secret is proposed into anyone's history. Opening
-the pull request is
-[ADR 6](decisions/0006-github-origin-pull-request-delivery.md) and is not
-implemented.*
+the pull request is covered by
+[ADR 6](decisions/0006-github-origin-pull-request-delivery.md).*
 
 ### 5. GitHub as origin, pull request as delivery
 [ADR 6](decisions/0006-github-origin-pull-request-delivery.md). Cloning is the run copy — `create_run_copy` already copies a directory into
@@ -186,25 +189,49 @@ payload is a deliberate compromise, not a limit of the design: raising it costs
 context on every architecture call, and the honest way to move it is to measure
 what coverage actually buys on a large repository rather than to guess upward.*
 
+### 8. Frontend as a delivery control
+
+The UI has to grow from a local-run launcher into a truthful delivery surface:
+accept a GitHub repository URL, ask for the requested change, show the selected
+runner, profiles and service topology, and present the resulting branch,
+evidence and pull request. It must show uncertainty and infrastructure failures
+as such; a button must never imply that code was pushed or a PR opened when the
+backend only produced a proposal.
+
+*Status: planned. This follows the real code-change PR proof, so the frontend
+binds to stable backend evidence instead of creating a second workflow.*
+
 ## Proving sequence
 
 Each repository is chosen for what it forces, and the order is chosen so that
 nothing is built before something proves it is needed.
 
-**1. FlaskApiProduct** — Python and SQLite, no services at all. The shortest path
-to a real pull request end to end: clone, dependencies, change, tests, PR. It
-exercises capabilities 1 and 5 without needing the service layer to exist.
+**1. FlaskApiProduct** — complete the first real code-change pull request. The
+runner, dependencies and Python version now work; the immediate gate is to make
+the Reviewer distinguish a regression from a new failing test so the Developer
+can repair fixture isolation instead of retrying blindly.
 
-**2. PruebaNuevosIngresosBackend** — ships compose. The service layer arrives by
-reading the project's own declaration rather than inferring one, and it brings
-Kafka, so the axis is born as services rather than as databases. Exercises 3 and 4.
+**2. PruebaNuevosIngresosBackend** — validate declared Compose against the
+actual Java services, Postgres and Kafka. This proves that the project-owned
+topology, healthchecks and run-scoped cleanup work through the workflow rather
+than only in a focused service test.
 
-**3. Banking or NorthgateTollPlaza** — the topology has to be inferred. The hard
-case, attempted only once the easy one works. Both add a non-Python backend, so
-capability 2 gets its second and third profile here.
+**3. Banking or NorthgateTollPlaza** — validate non-Python profiles and inferred
+topology in a real target. Banking exercises .NET plus Postgres; Northgate adds
+Java, MongoDB and a frontend. Both prove that the profile is a component property
+rather than a repository assumption.
 
-**4. BusinessAI-Analytics** — last. Seven services and 388 files; it requires
-capability 7 first, and it is the real test of capability 6.
+**4. BusinessAI-Analytics** — last. Seven services and 388 files make it the
+real test of evidence per component and the Architecture reading budget. It runs
+only after the first three steps produce useful, unambiguous evidence.
+
+**5. Measure the Architecture budget** — use the large repositories to compare
+coverage, withheld evidence and routing outcomes before increasing the 16 KB
+budget. The target is a measured trade-off, not a larger arbitrary constant.
+
+**6. Frontend delivery control** — after the backend flow is proven, accept a
+GitHub URL and requested change in the UI, then expose the selected execution
+plan, live evidence, branch and pull request without weakening confirmation.
 
 ## What one real run taught
 
@@ -214,26 +241,27 @@ missed, all of the same shape: the system failed for a reason unrelated to the
 work and reported it as though it were the work.
 
 The cloud guardrail refused every project whose code reads an environment
-variable, because `os.environ` contains the four characters `.env`. The ephemeral
+variable, because `os.environ` contains the four characters `.env`. The
 environment installed nothing for a project declaring dependencies in
 requirements.txt, and the resulting ModuleNotFoundError was routed to the
-Developer three times. And the environment builds on the operator's interpreter,
-so a project pinned to dependencies that stop at Python 3.12 cannot be built on a
-machine running 3.14 at all. That last one is now legible rather than fixed: the
-run reports an interpreter mismatch instead of a compiler error, and reads a
-project's declared requirement where there is one. Two of three real Python
-projects declare nothing, so reading declarations was never going to be enough.
-Providing the interpreter a project needs is what remains, and it is what the
-container runner was chosen for.
+Developer three times. Finally, the operator's Python 3.14 could not install a
+dependency pinned for Python 3.12. All three are now fixed: the guardrail matches
+the file name rather than an identifier, requirements.txt is installed, and the
+container image is derived from supported wheel tags. The corrected run used
+Python 3.12 and executed 62 FlaskApiProduct tests.
 
 The Developer's output was correct throughout: the endpoint it wrote satisfies
-all six points of the requirement. Nothing in the run was ever approved, which is
-the gates working — but every rejection was about the environment.
+all six points of the requirement. The remaining rejection exposed a different
+class of problem: data made by new tests leaked into old tests. Without a
+pre-change baseline, Reviewer said only "failed tests" and hid the distinction
+between a regression and a new test that still fails. That repair is the next
+Flask gate and is recorded as finding 13.
 
 ## What is deliberately not here
 
-Windows support arrives with the container runner rather than as its own effort;
-the process sandbox's fail-closed refusal is a temporary stance, not a policy.
+Windows support arrives through Docker Desktop and the container runner rather
+than as its own process-sandbox effort. The process runner remains a local
+compatibility option, not the cross-platform product boundary.
 
 Performance is not a capability yet. Nothing here is fast, and making it fast
 before it is correct would be optimizing a shape that is still moving.

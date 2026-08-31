@@ -35,6 +35,14 @@ class EngineeringState(StrictModel):
     implementation: ImplementationResult | None = None
     security_review: SecurityReview | None = None
     test_results: list[TestResult] = Field(default_factory=list)
+    baseline_tests: list[str] = Field(default_factory=list)
+    """Tests that passed before anything in this run was changed.
+
+    Without it a failure cannot be told apart from a break. Empty means the past
+    is unknown, which is not the same as nothing having broken -- one real run
+    spent three remediation cycles on new behaviour while two tests it had
+    quietly broken went unmentioned.
+    """
     review: ReviewerDecision | None = None
     review_history: list[ReviewerDecision] = Field(default_factory=list)
     """Every reviewer decision, in the order they were taken.

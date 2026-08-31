@@ -208,6 +208,22 @@
       ],
       "confidence": "high",
       "recommended_fix": "Pasar --runner e --image como argumentos del servidor, y afirmar en un test que el SDK no reenvia el entorno para que el supuesto no vuelva en silencio."
+    },
+    {
+      "severity": "high",
+      "title": "Reviewer no distingue una regresion de un fallo nuevo",
+      "mechanism": "Reviewer recibe solo los fallos de la iteracion actual y los reenvia como una lista plana. Cuando las pruebas nuevas dejan datos en un fixture compartido, una prueba preexistente que antes pasaba aparece igual que una prueba nueva que aun no funciona. En FlaskApiProduct, las pruebas del endpoint de stock bajo dejaron productos para test_get_products_empty y test_filter_products_by_price; el Developer recibio tres veces 'failed tests' sin saber que habia roto comportamiento existente.",
+      "source_layer": "4. Review feedback and test evidence",
+      "root_cause": "Despues de la primera escritura no existe evidencia para separar el estado anterior del nuevo. Contar tests o mirar solo la salida final tampoco lo resuelve: ambos casos son FAIL, pero piden acciones distintas. Sin esa distincion el lazo de remediacion puede insistir sobre el feature y no reparar el aislamiento de su fixture.",
+      "evidence_refs": [
+        "src/engineering_team/agents/reviewer.py",
+        "src/engineering_team/apply_run.py",
+        "src/engineering_team/testing_evidence.py",
+        "tests/unit/test_regression_reporting.py",
+        "evaluation/reports/e2e-flask-container.json"
+      ],
+      "confidence": "high",
+      "recommended_fix": "Ejecutar una linea base antes de la primera escritura y guardar solo los identificadores que pasaron. Al revisar, clasificar cada fallo actual como REGRESSION si estaba en la linea base o NEW FAILURE si no lo estaba; no etiquetar una regresion cuando no hay baseline. Incluir ambas listas, en ese orden, en el mensaje al Developer."
     }
   ],
   "ordered_fix_plan": [
@@ -282,6 +298,12 @@
       "goal": "Que la configuracion llegue al proceso que actua sobre ella",
       "why_now": "Sin esto, elegir el runner en contenedor no tiene efecto y el sistema miente sobre su propia configuracion.",
       "expected_effect": "Un runner configurado es el runner que corre."
+    },
+    {
+      "order": 13,
+      "goal": "Distinguir una regresion de un fallo nuevo en la remediacion",
+      "why_now": "El Developer no puede reparar una prueba preexistente que rompio si Reviewer la presenta como un fallo generico del cambio solicitado.",
+      "expected_effect": "Los ciclos de remediacion priorizan restaurar comportamiento previamente verificado y hacen visible el aislamiento deficiente de fixtures."
     }
   ]
 }

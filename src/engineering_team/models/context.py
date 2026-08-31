@@ -52,6 +52,7 @@ _FIELDS: dict[AgentRole, tuple[str, ...]] = {
         "implementation",
         "security_review",
         "test_results",
+        "baseline_tests",
         "model_usage",
         "errors",
         "iteration",
