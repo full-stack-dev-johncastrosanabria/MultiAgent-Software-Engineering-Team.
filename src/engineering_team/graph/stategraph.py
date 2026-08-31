@@ -55,6 +55,7 @@ class WorkflowState(TypedDict, total=False):
     implementation: object
     security_review: object
     test_results: list
+    baseline_tests: list
     review: object
     rag_evidence: list
     tool_results: list

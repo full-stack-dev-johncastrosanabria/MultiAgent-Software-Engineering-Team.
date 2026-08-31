@@ -137,3 +137,10 @@ def test_the_new_failures_are_reported_separately() -> None:
 def test_without_a_baseline_nothing_is_claimed_about_the_past() -> None:
     decision = _decide(_state(()))
     assert not any("REGRESSION" in p for p in decision.problems)
+
+
+def test_langgraph_schema_keeps_the_test_baseline() -> None:
+    """A field missing from WorkflowState is silently dropped at graph entry."""
+    from engineering_team.graph.stategraph import WorkflowState
+
+    assert "baseline_tests" in WorkflowState.__annotations__
