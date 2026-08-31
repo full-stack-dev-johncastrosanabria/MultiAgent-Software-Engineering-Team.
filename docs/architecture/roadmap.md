@@ -207,9 +207,11 @@ Each repository is chosen for what it forces, and the order is chosen so that
 nothing is built before something proves it is needed.
 
 **1. FlaskApiProduct** — complete the first real code-change pull request. The
-runner, dependencies and Python version now work; the immediate gate is to make
-the Reviewer distinguish a regression from a new failing test so the Developer
-can repair fixture isolation instead of retrying blindly.
+runner, dependencies and Python version now work. The Flask retry has proved
+that Reviewer distinguishes regressions from new failures; its next gate is the
+same request on a clean branch after Apply was taught to authorize the inspected
+products route as well as its explicitly named test. Only a green run produces
+the first code-change pull request.
 
 **2. PruebaNuevosIngresosBackend** — validate declared Compose against the
 actual Java services, Postgres and Kafka. This proves that the project-owned
@@ -250,12 +252,14 @@ the file name rather than an identifier, requirements.txt is installed, and the
 container image is derived from supported wheel tags. The corrected run used
 Python 3.12 and executed 62 FlaskApiProduct tests.
 
-The Developer's output was correct throughout: the endpoint it wrote satisfies
-all six points of the requirement. The remaining rejection exposed a different
-class of problem: data made by new tests leaked into old tests. Without a
-pre-change baseline, Reviewer said only "failed tests" and hid the distinction
-between a regression and a new test that still fails. That repair is the next
-Flask gate and is recorded as finding 13.
+The first retry proved finding 13's repair: Reviewer reported
+`test_get_products_empty` and `test_filter_products_by_price` as `REGRESSION`
+before the new endpoint failures. It then exposed finding 14: Apply had allowed
+only `tests/test_products.py`, because that was the only literal file path in
+the request. Developer could create tests but could not change the inspected
+products route. Apply now adds one relevant, successfully inspected source file
+only when every explicit target is a test. The next clean run must prove that the
+endpoint and isolated fixtures converge before any branch is pushed.
 
 ## What is deliberately not here
 

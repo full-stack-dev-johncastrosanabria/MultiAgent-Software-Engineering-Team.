@@ -224,6 +224,20 @@
       ],
       "confidence": "high",
       "recommended_fix": "Ejecutar una linea base antes de la primera escritura y guardar solo los identificadores que pasaron. Al revisar, clasificar cada fallo actual como REGRESSION si estaba en la linea base o NEW FAILURE si no lo estaba; no etiquetar una regresion cuando no hay baseline. Incluir ambas listas, en ese orden, en el mensaje al Developer."
+    },
+    {
+      "severity": "high",
+      "title": "Apply autoriza solo las rutas literales del requerimiento",
+      "mechanism": "El candidato determinista de Apply toma las rutas que el requerimiento nombra como su allowlist completa. En la segunda corrida de FlaskApiProduct el requerimiento incluia tests/test_products.py, pero no app/routes/products.py. Repository MCP ya habia leido ambas; aun asi Developer solo podia escribir las pruebas y no el endpoint que debian verificar.",
+      "source_layer": "3. Developer Apply candidate",
+      "root_cause": "La restriccion de no inventar rutas se aplicaba sin distinguir una ruta de prueba de su implementacion. Eso evita escrituras arbitrarias, pero tambien hace imposible implementar una capacidad cuando una especificacion de pruebas nombra solo su archivo de pruebas.",
+      "evidence_refs": [
+        "src/engineering_team/agents/developer.py",
+        "tests/unit/test_developer_agent.py",
+        "evaluation/reports/e2e-flask-container-retry.json"
+      ],
+      "confidence": "high",
+      "recommended_fix": "Cuando todos los objetivos explicitos son pruebas, agregar como maximo una ruta fuente ya leida con exito por Repository MCP y con relevancia positiva respecto a requisito, especificacion y propuesta de Architecture. No aceptar rutas inventadas ni ampliar una solicitud que ya nombra una fuente."
     }
   ],
   "ordered_fix_plan": [
@@ -304,6 +318,12 @@
       "goal": "Distinguir una regresion de un fallo nuevo en la remediacion",
       "why_now": "El Developer no puede reparar una prueba preexistente que rompio si Reviewer la presenta como un fallo generico del cambio solicitado.",
       "expected_effect": "Los ciclos de remediacion priorizan restaurar comportamiento previamente verificado y hacen visible el aislamiento deficiente de fixtures."
+    },
+    {
+      "order": 14,
+      "goal": "Autorizar fuente inspeccionada junto a una prueba explicitamente solicitada",
+      "why_now": "Una correccion bien diagnosticada sigue sin poder aplicarse si la ruta de implementacion no aparece literalmente en el requerimiento.",
+      "expected_effect": "Developer puede modificar el endpoint que Repository MCP ya fundamento, sin poder expandir arbitrariamente el alcance de escritura."
     }
   ]
 }

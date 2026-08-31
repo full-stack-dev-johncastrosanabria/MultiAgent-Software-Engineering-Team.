@@ -100,6 +100,52 @@ def test_requested_targets_adds_a_constant_test_when_requirement_requires_one() 
     assert targets == ["calculadora/__init__.py", "tests/test_version.py"]
 
 
+def test_apply_adds_one_relevant_inspected_source_when_only_a_test_is_named() -> None:
+    """A feature request must not authorize only its test by accident.
+
+    FlaskApiProduct named ``tests/test_products.py`` in the test specification.
+    Apply consequently forbade the endpoint file even though Repository MCP had
+    inspected it, so the model could only write failing tests.
+    """
+    specification = ProductSpecification(
+        objective="Add the low-stock products endpoint",
+        actors=["Catalog user"],
+        business_rules=["filter products by a stock threshold"],
+        constraints=[],
+        acceptance_criteria=["GET /api/products/low-stock returns matching products"],
+        nfrs=[], ambiguities=[], assumptions=[],
+        source_requirement="Add a low-stock endpoint and tests/test_products.py coverage",
+    )
+    architecture = ArchitectureProposal(
+        components=["products route"], apis=["GET /api/products/low-stock"],
+        data_changes=[], integrations=[], dependencies=[],
+        decisions=["extend the products route"], risks=[], impact="bounded route change",
+    )
+    state = EngineeringState(
+        run_id="apply-source", requirement=specification.source_requirement,
+        specification=specification, architecture=architecture,
+        repository_context={"apply_changes": True},
+        tool_results=[
+            ToolResult(
+                tool_name="read_file", allowed_role=AgentRole.DEVELOPER,
+                status=ToolStatus.SUCCESS, input_summary="path=app/routes/products.py",
+                output_summary="@bp.route('/api/products')\ndef get_products(): pass\n",
+                duration_ms=1, evidence_reference="mcp://repository/read_file",
+            ),
+            ToolResult(
+                tool_name="read_file", allowed_role=AgentRole.DEVELOPER,
+                status=ToolStatus.SUCCESS, input_summary="path=tests/test_products.py",
+                output_summary="def test_get_products_empty(): pass\n",
+                duration_ms=1, evidence_reference="mcp://repository/read_file",
+            ),
+        ],
+    )
+
+    result = DeveloperAgent().execute(build_context(AgentRole.DEVELOPER, state, "Developer"))
+
+    assert result.changed_files == ["app/routes/products.py", "tests/test_products.py"]
+
+
 def test_developer_selects_inspected_transaction_module_not_first_listed_paths() -> None:
     specification = ProductSpecification(
         objective="Return the latest five transactions for the authorized owner",

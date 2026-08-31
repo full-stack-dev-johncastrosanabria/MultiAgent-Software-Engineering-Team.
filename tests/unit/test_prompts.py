@@ -90,7 +90,8 @@ def test_apply_schema_constrains_paths_and_facts_but_leaves_code_to_the_model():
     assert contents["properties"]["app.py"] == {"type": "string"}
 
 
-def test_developer_remediation_prompt_carries_the_code_it_authored():
+@pytest.mark.parametrize("action_mode", ["PROPOSED", "APPLIED"])
+def test_developer_remediation_prompt_carries_the_code_it_authored(action_mode: str):
     """Finding 7: in PROPOSED mode nothing reaches the workspace between cycles.
 
     The write-back in stategraph only runs for ActionMode.APPLIED, so on a
@@ -123,11 +124,13 @@ def test_developer_remediation_prompt_carries_the_code_it_authored():
     envelope = build_context(AgentRole.DEVELOPER, state, "remediate")
 
     _, user = build_role_prompts(
-        AgentRole.DEVELOPER, envelope, {}, {"action_mode": "PROPOSED"}
+        AgentRole.DEVELOPER, envelope, {}, {"action_mode": action_mode}
     )
 
     assert authored in user, "the Developer cannot repair code it cannot see"
     assert "banca/auth.py" in user
+    if action_mode == "APPLIED":
+        assert "Untrusted repository files" in user
 
 
 def test_only_the_developer_is_shown_previously_authored_code():

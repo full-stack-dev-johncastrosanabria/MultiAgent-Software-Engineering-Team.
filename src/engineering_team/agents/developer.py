@@ -1,5 +1,5 @@
 import re
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
 from engineering_team.contracts.enums import ActionMode, ToolStatus
@@ -50,6 +50,58 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
         if constant and re.search(r"\btests?/", requirement, flags=re.IGNORECASE):
             targets.append(f"tests/test_{constant.group(1).lower()}.py")
         return list(dict.fromkeys(targets))
+
+    @classmethod
+    def apply_targets(
+        cls,
+        explicit: list[str],
+        repository_results: list[Any],
+        specification: Any,
+        architecture: Any,
+        requirement: str,
+    ) -> list[str]:
+        """Expand a test-only request with one inspected implementation file.
+
+        Apply mode intentionally does not let a model invent writable paths. A
+        test specification often names its test file but not the source it
+        verifies, however. In that shape, restricting the candidate to the test
+        file makes an implementation impossible. The extra path is therefore
+        selected deterministically from successful Repository reads, never from
+        model text, and only when it has a positive relevance score.
+        """
+        if not explicit or any(not cls._is_test_path(path) for path in explicit):
+            return explicit
+        terms = cls.relevance_terms(specification, architecture, requirement)
+        candidates: list[tuple[int, str]] = []
+        for item in repository_results:
+            if (
+                item.status is not ToolStatus.SUCCESS
+                or item.tool_name not in {"read_file", "get_file_content"}
+                or not item.input_summary.startswith("path=")
+            ):
+                continue
+            path = item.input_summary[5:].replace("\\", "/")
+            suffix = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+            if (
+                path in explicit
+                or cls._is_test_path(path)
+                or suffix not in cls._TARGET_EXTENSIONS
+                or not cls._safe_path(path)
+            ):
+                continue
+            haystack = f"{path}\n{item.output_summary}".lower()
+            score = sum(haystack.count(term.lower()) for term in terms if term)
+            if score:
+                candidates.append((score, path))
+        if not candidates:
+            return explicit
+        _, source = min(candidates, key=lambda candidate: (-candidate[0], candidate[1]))
+        return [source, *explicit]
+
+    @staticmethod
+    def _is_test_path(path: str) -> bool:
+        normalized = path.replace("\\", "/")
+        return normalized.startswith(("test/", "tests/")) or Path(normalized).name.startswith("test_")
 
     @classmethod
     def relevance_terms(cls, specification: Any, architecture: Any, requirement: str) -> list[str]:
@@ -173,6 +225,13 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
         if repository_context.get("apply_changes"):
             requested = self.requested_targets(
                 str(envelope.state_projection.get("requirement", ""))
+            )
+            requested = self.apply_targets(
+                requested,
+                repository_results,
+                specification,
+                architecture,
+                str(envelope.state_projection.get("requirement", "")),
             )
             if requested:
                 return self._apply_candidate(

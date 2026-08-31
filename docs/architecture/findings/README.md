@@ -12,13 +12,14 @@ index says where each one stands.
 | 4 | high | Repository MCP indexes ignored artefacts without limit | **fixed** — `6fe08e4` |
 | 5 | medium | Telemetry confuses primary execution with fallback | **fixed** — the cloud runtime reports a fallback only when it is one, and the local runtime records the reason it is given instead of accepting and dropping it |
 | 6 | medium | Visible history reconstructs past decisions from the latest revision | **fixed** — the state records every reviewer decision, and the report shows each cycle its own; where no history exists it says nothing rather than borrowing |
-| 7 | critical | The Developer can empty files and cannot see what it wrote | **fixed** — the projection now carries `implementation`, and the prompt renders the previously authored code, because a projected value alone is collapsed to "present" |
+| 7 | critical | The Developer can empty files and cannot see what it wrote | **fixed** — the projection carries `implementation`, and the prompt retains the previously authored code in both proposal and Apply modes; a projected value alone is otherwise only "present" |
 | 12 | high | Configuration never reaches the MCP server that acts on it | **fixed** — the runner and image travel as explicit arguments; the SDK forwards only five environment variables and a test now says so |
 | 11 | high | The ephemeral environment imposes the operator's Python on the project | **fixed** — the container image follows the interpreter derived from the project's pins, verified against FlaskApiProduct: 32 seconds, Python 3.12, every dependency from a wheel, 62 tests passing. Previously **partly fixed** — the failure now says so: an install that fell back to a source build is reported as INFRASTRUCTURE_ERROR naming the interpreter, instead of a wall of ninja output read as a code defect. Declared requirements are read where a project states one. Actually *providing* a different interpreter still needs a version-matched container image |
 | 10 | critical | The ephemeral environment installs only projects that ship a pyproject.toml | **fixed** — a project that declares its dependencies in requirements.txt gets them, and the installable manifests are tied to the ones detection recognises |
 | 9 | critical | The cloud-context guardrail blocks any project that reads environment variables | **fixed** — `.env` is matched as a file reference and not as a substring of `os.environ` |
 | 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — a byte budget replaced the file count, and the prompt now states how much evidence was withheld |
-| 13 | high | Reviewer does not distinguish a regression from a new failing test | **in progress** — capture the pre-change passing tests, then state regressions before new failures in the Developer feedback |
+| 13 | high | Reviewer does not distinguish a regression from a new failing test | **fixed** — `a82ec93`, `9ad580e`; the Flask retry labelled the two formerly passing tests as `REGRESSION` before the new endpoint failures |
+| 14 | high | Apply authorizes only file paths named literally in the requirement | **fixed** — a test-only request now adds at most one successful, relevant source file already inspected by Repository MCP; the model still cannot invent paths |
 
 ## Two things worth remembering
 
@@ -69,3 +70,12 @@ before the change. Reviewer reported one undifferentiated list of failures, so
 the Developer had no signal that it had broken existing behaviour. The remedy is
 to record passing test identifiers before the first write and label failures as
 `REGRESSION` or `NEW FAILURE`; without a baseline it must claim neither.
+
+**Finding 14 was exposed by the corrected Flask retry.** Once Reviewer labelled
+the broken old tests correctly, Developer still changed only
+`tests/test_products.py`: Apply had treated the test path written in the request
+as the complete write allowlist, even though Repository MCP had read the products
+route. That makes a feature impossible whenever its requirement names its test
+but not its implementation. The repair is deliberately narrow: only a test-only
+allowlist may gain one source file, and that file must have been successfully
+read and score positively against the specification and Architecture proposal.
