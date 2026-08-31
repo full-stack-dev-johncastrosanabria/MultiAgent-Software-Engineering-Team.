@@ -9,7 +9,7 @@ never filled with a placeholder.
 """
 
 from engineering_team.contracts.enums import ToolStatus
-from engineering_team.contracts.models import TestResult
+from engineering_team.contracts.models import TestResult, ToolResult
 from engineering_team.models.context import ContextEnvelope
 
 from .base import AgentBase
@@ -85,7 +85,22 @@ class TestingAgent(AgentBase[TestResult]):
             item for item in envelope.tool_results if item.tool_name in TEST_EVIDENCE_TOOLS
         ]
         latest = run_tests[-1] if run_tests else None
-        status = latest.status if latest is not None else ToolStatus.SUCCESS
+        # The verdict is the latest result of every component (ADR 4), not the
+        # single last result. Reading only the last hid a failing component behind
+        # a later passing one; reading every result would resurrect failures that
+        # a remediation cycle already fixed, because tool_results accumulates
+        # across iterations. Keyed by evidence reference, which is the component
+        # when there is one and a single bucket when there is not.
+        current: dict[str, ToolResult] = {}
+        for item in run_tests:
+            current[item.evidence_reference or item.tool_name] = item
+        components = list(current.values())
+        failed = [item for item in components if item.status is not ToolStatus.SUCCESS]
+        if failed:
+            # The first failure's own status, so DENIED stays distinct from FAIL.
+            status = failed[0].status
+        else:
+            status = latest.status if latest is not None else ToolStatus.SUCCESS
 
         specification = envelope.state_projection.get("specification")
         criteria: list[str] = []
@@ -104,7 +119,13 @@ class TestingAgent(AgentBase[TestResult]):
 
         # 2. What the run actually executed, named by the evidence it produced.
         executed = [item.evidence_reference or item.tool_name for item in run_tests]
-        summary = _normalise(latest.output_summary) if latest is not None else ""
+        summary = _normalise(
+            " ".join(
+                item.output_summary
+                for item in components
+                if item.status is ToolStatus.SUCCESS
+            )
+        )
 
         # 3. Which required dimension each piece of evidence demonstrates.
         coverage: dict[str, list[str]] = {name: [] for name in sorted(required)}
@@ -127,8 +148,15 @@ class TestingAgent(AgentBase[TestResult]):
         gaps = sorted(name for name, evidence in coverage.items() if not evidence)
 
         failures: list[str] = []
-        if latest is not None and status is not ToolStatus.SUCCESS:
-            failures.append(latest.output_summary)
+        for item in failed:
+            # Name the component: an aggregate verdict nobody can trace back to a
+            # component is not something a remediation cycle can act on.
+            reference = item.evidence_reference or item.tool_name
+            failures.append(
+                f"{reference}: {item.output_summary}"
+                if len(components) > 1
+                else item.output_summary
+            )
         # Gaps are reported as findings, not as a verdict: `status` still comes from the
         # suite's own result. Missing evidence and a test that ran and failed are
         # different facts, and the reviewer weighs them differently.
@@ -141,7 +169,11 @@ class TestingAgent(AgentBase[TestResult]):
             proposed_tests=sorted(required),
             generated_tests=[],
             executed_tests=executed or ["no run_tests evidence recorded"],
-            actual_results=[latest.output_summary] if latest is not None else ["no suite executed"],
+            actual_results=(
+                [item.output_summary for item in components]
+                if components
+                else ["no suite executed"]
+            ),
             status=status,
             failures=failures,
             coverage_mapping=coverage,

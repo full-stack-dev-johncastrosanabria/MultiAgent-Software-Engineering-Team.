@@ -67,11 +67,16 @@ class QualityMCP:
         runner: CommandRunner | None = None,
         settings: Settings | None = None,
         profile: StackProfile | None = None,
+        component: str = "",
     ) -> None:
         self.root = Path(root).resolve()
         # Which ecosystem's commands to run. Python stays the default so every
         # existing caller keeps the behaviour it had before profiles existed.
         self.profile = profile or PROFILES["python"]
+        # Which component these results describe. Empty for a single-component
+        # run, which leaves evidence_reference unset exactly as before: the gates
+        # group by it, and an unset reference is one bucket.
+        self.component = component
         self.timeout_seconds = float(timeout_seconds)
         self._last: dict[str, ToolResult] = {}
         self._project_prepared = False
@@ -170,10 +175,16 @@ class QualityMCP:
             self._closed = True
             self._python = None
             atexit.unregister(self.close)
+
+    def _evidence_reference(self, tool: str) -> str | None:
+        """Identify the component a result came from, when there is one."""
+        return f"mcp://quality/{tool}#{self.component}" if self.component else None
+
     def _denied(self, role: AgentRole, tool: str) -> ToolResult:
         return ToolResult(
             tool_name=tool, allowed_role=role, status=ToolStatus.DENIED,
             input_summary="denied", output_summary="", duration_ms=0, error="role denied",
+            evidence_reference=self._evidence_reference(tool),
         )
 
     def _unavailable(
@@ -187,6 +198,7 @@ class QualityMCP:
             output_summary="",
             duration_ms=int((time.perf_counter() - started) * 1000),
             error=f"isolated environment unavailable: {type(exc).__name__}: {exc}",
+            evidence_reference=self._evidence_reference(tool),
         )
         self._last[tool] = result
         return result
@@ -318,6 +330,7 @@ class QualityMCP:
             input_summary="safe",
             output_summary=output,
             duration_ms=int((time.perf_counter() - started) * 1000),
+            evidence_reference=self._evidence_reference(tool),
         )
         self._last[tool] = result
         return result

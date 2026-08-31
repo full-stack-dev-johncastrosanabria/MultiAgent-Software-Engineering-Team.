@@ -7,7 +7,7 @@ from engineering_team.contracts.enums import (
     SecurityStatus,
     ToolStatus,
 )
-from engineering_team.contracts.models import ReviewerDecision
+from engineering_team.contracts.models import ReviewerDecision, ToolResult
 from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.models.context import ContextEnvelope
 
@@ -78,8 +78,22 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
             test_evidence_problems.append("no interpreted test result is available")
         if not run_tests:
             test_evidence_problems.append("no real run_tests execution is recorded")
-        elif run_tests[-1].status is not ToolStatus.SUCCESS:
-            test_evidence_problems.append("the latest run_tests execution did not succeed")
+        else:
+            # The latest result of every component, not the last result overall:
+            # tool_results accumulates across remediation cycles, so a failure a
+            # later cycle fixed must not keep counting.
+            current: dict[str, ToolResult] = {}
+            for item in run_tests:
+                current[item.evidence_reference or item.tool_name] = item
+            unsuccessful = [
+                reference
+                for reference, item in current.items()
+                if item.status is not ToolStatus.SUCCESS
+            ]
+            test_evidence_problems.extend(
+                f"a run_tests execution did not succeed: {reference}"
+                for reference in unsuccessful
+            )
         if latest_test is not None:
             executed_evidence = set(latest_test.executed_tests)
             recorded_evidence = {

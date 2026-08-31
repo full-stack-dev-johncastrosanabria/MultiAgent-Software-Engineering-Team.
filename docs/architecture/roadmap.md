@@ -128,10 +128,16 @@ request are reviewable by construction, and git provides what the hashes were fo
 *Status: not started.*
 
 ### 6. Evidence per component
-A run over BusinessAI-Analytics produces results for seven services. The gates
-read one set of results today.
+A run over BusinessAI-Analytics produces results for ten components. The gates
+read the latest result of each, keyed by the evidence reference a QualityMCP
+stamps when it is given a component name.
 
-*Status: not started. Depends on 2.*
+*Status: done. Both gates previously read `run_tests[-1]`, so a failing component
+disappeared the moment a later one passed. Reading every result instead was wrong
+in the other direction: `tool_results` accumulates across remediation cycles, and
+a failure a later cycle had already fixed kept counting — five workflow tests
+caught that. The verdict is now the latest result per component, which for a
+single-component run is exactly the previous behaviour.*
 
 ### 7. Read limits that can be widened
 [Finding 8](findings/README.md). Not a runner concern, but it blocks the largest
