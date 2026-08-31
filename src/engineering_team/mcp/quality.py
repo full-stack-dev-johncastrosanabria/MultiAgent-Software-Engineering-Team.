@@ -14,6 +14,11 @@ from typing import Any
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole, ErrorCode, ToolStatus
 from engineering_team.contracts.models import ToolResult
+from engineering_team.interpreter import (
+    describe_install_failure,
+    pinned_requirements,
+    python_requirement,
+)
 from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.runner import (
     CommandRequest,
@@ -670,8 +675,44 @@ class QualityMCP:
         )
         if completed.status is ToolStatus.SUCCESS:
             return None
+        # Say what actually went wrong. A wheel-less dependency compiled from
+        # source produces a wall of ninja output, and reporting that verbatim
+        # sends the operator -- and the Reviewer -- after the project's code.
+        text = requirements.read_text(encoding="utf-8", errors="replace")
+        explanation = describe_install_failure(
+            completed.output_summary + (completed.error or ""),
+            interpreter=self._environment_version(),
+            requirement=python_requirement(self._declaration_sources()),
+            pins=pinned_requirements(text),
+        )
+        if explanation is not None:
+            completed = completed.model_copy(update={
+                "status": ToolStatus.UNAVAILABLE,
+                "error": f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: {explanation}",
+            })
         self._project_result = completed
         return self._operation_failure(completed, role, tool)
+
+    def _environment_version(self) -> tuple[int, int]:
+        """The interpreter the ephemeral environment was actually built from."""
+        return (sys.version_info.major, sys.version_info.minor)
+
+    def _declaration_sources(self) -> dict[str, str]:
+        """The few files where a project states which Python it needs."""
+        sources: dict[str, str] = {}
+        for name in (
+            "pyproject.toml", "setup.py", "setup.cfg", ".python-version",
+            "Dockerfile", "backend/Dockerfile",
+        ):
+            candidate = self.root / name
+            if candidate.is_file():
+                try:
+                    sources[name] = candidate.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    continue
+        return sources
 
     def _static(
         self, role: AgentRole, tool: str, allowed: set[AgentRole], output: str

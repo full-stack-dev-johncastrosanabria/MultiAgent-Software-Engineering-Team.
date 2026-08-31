@@ -219,7 +219,12 @@ environment installed nothing for a project declaring dependencies in
 requirements.txt, and the resulting ModuleNotFoundError was routed to the
 Developer three times. And the environment builds on the operator's interpreter,
 so a project pinned to dependencies that stop at Python 3.12 cannot be built on a
-machine running 3.14 at all.
+machine running 3.14 at all. That last one is now legible rather than fixed: the
+run reports an interpreter mismatch instead of a compiler error, and reads a
+project's declared requirement where there is one. Two of three real Python
+projects declare nothing, so reading declarations was never going to be enough.
+Providing the interpreter a project needs is what remains, and it is what the
+container runner was chosen for.
 
 The Developer's output was correct throughout: the endpoint it wrote satisfies
 all six points of the requirement. Nothing in the run was ever approved, which is

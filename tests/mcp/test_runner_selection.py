@@ -278,3 +278,67 @@ def test_a_project_with_no_manifest_at_all_still_runs(tmp_path: Path) -> None:
     recorder = _Recorder(tmp_path)
     QualityMCP(tmp_path, runner=recorder).run_tests(AgentRole.TESTING)
     assert recorder.commands, "the suite should still have been attempted"
+
+
+# -- finding 11: the failure has to name the interpreter ---------------------
+
+
+class _FailingInstall(_Recorder):
+    """A runner whose dependency install dies the way pandas did."""
+
+    def execute(self, request):
+        import subprocess
+
+        self.commands.append(list(request.args))
+        if "install" in request.args and "-r" in request.args:
+            return subprocess.CompletedProcess(
+                list(request.args), 1, "",
+                "Building wheels for collected packages: pandas\n"
+                "[42/151] Compiling Cython source ...\n"
+                "ninja: build stopped: subcommand failed.\n"
+                "error: metadata-generation-failed\n",
+            )
+        return subprocess.CompletedProcess(list(request.args), 0, "ok", "")
+
+
+def test_a_wheel_less_dependency_reports_the_interpreter_not_the_compiler(
+    tmp_path: Path,
+) -> None:
+    """What the operator saw was `ninja: build stopped`, reported as a security
+    tool failure. What they needed was the Python version and the pin."""
+    from engineering_team.contracts.enums import AgentRole, ToolStatus
+
+    (tmp_path / "requirements.txt").write_text(
+        "flask==3.0.0\npandas==2.1.4\n", encoding="utf-8"
+    )
+    runner = _FailingInstall(tmp_path)
+    result = QualityMCP(tmp_path, runner=runner).run_tests(AgentRole.TESTING)
+
+    assert result.status is not ToolStatus.SUCCESS
+    detail = (result.error or "") + result.output_summary
+    assert "pandas==2.1.4" in detail, detail[:300]
+    assert "interpreter mismatch" in detail.lower(), detail[:300]
+    assert "INFRASTRUCTURE_ERROR" in detail
+
+
+def test_an_ordinary_install_failure_is_not_relabelled(tmp_path: Path) -> None:
+    """Only the shape that means a missing wheel gets the interpreter story."""
+    from engineering_team.contracts.enums import AgentRole
+
+    class _PlainFailure(_Recorder):
+        def execute(self, request):
+            import subprocess
+
+            self.commands.append(list(request.args))
+            if "install" in request.args and "-r" in request.args:
+                return subprocess.CompletedProcess(
+                    list(request.args), 1, "",
+                    "ERROR: Could not find a version that satisfies nope==9\n",
+                )
+            return subprocess.CompletedProcess(list(request.args), 0, "ok", "")
+
+    (tmp_path / "requirements.txt").write_text("nope==9\n", encoding="utf-8")
+    result = QualityMCP(tmp_path, runner=_PlainFailure(tmp_path)).run_tests(
+        AgentRole.TESTING
+    )
+    assert "interpreter mismatch" not in ((result.error or "") + result.output_summary).lower()
