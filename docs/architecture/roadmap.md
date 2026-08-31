@@ -121,7 +121,24 @@ The missing topology is itself a deliverable: a derived compose that makes a
 project run without `brew services` is a genuinely useful pull request, and it
 does not change a line of the project's code.
 
-*Status: not started.*
+*Status: done, both halves. Where a repository ships a compose file that file is
+the topology: verified against PruebaNuevosIngresosBackend, whose Postgres, Kafka
+and init container come up healthy in eight seconds on a run-scoped internal
+network, reachable by the names it gave them, with no port on the host and no
+route out.*
+
+*Where none exists the topology is derived from the connection strings the
+project already declares, and the project's own file always wins. All five
+repositories without one were verified: Postgres for Banking, Postgres and
+MongoDB for NorthgateTollPlaza, MySQL for InterviewCleanApi and
+BusinessAI-Analytics, and correctly nothing at all for FlaskApiProduct, which is
+on SQLite. Two artefacts come out — the run's, closed and with the project
+redirected off `localhost` by the variables its framework documents, and the
+developer's, with ports where their configuration already looks and credentials
+parameterised so no plaintext secret is proposed into anyone's history. Opening
+the pull request is
+[ADR 6](decisions/0006-github-origin-pull-request-delivery.md) and is not
+implemented.*
 
 ### 5. GitHub as origin, pull request as delivery
 [ADR 6](decisions/0006-github-origin-pull-request-delivery.md). Cloning is the run copy — `create_run_copy` already copies a directory into

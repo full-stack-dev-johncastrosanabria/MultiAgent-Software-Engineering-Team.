@@ -28,6 +28,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from engineering_team.contracts.enums import ErrorCode
+from engineering_team.topology import (
+    DELIVERY,
+    RUN,
+    Dependency,
+    derive_compose,
+    environment_overrides,
+    environment_variables_example,
+    extract_dependencies,
+)
 
 # The order compose itself resolves them in; the canonical name wins.
 COMPOSE_FILENAMES = (
@@ -166,6 +175,38 @@ def override_document(
 
 
 _PROJECT_NAME = re.compile(r"[^a-z0-9-]+")
+# Where connection strings live, per ecosystem. Bounded on purpose: a repository
+# is walked once and a runaway tree must not turn discovery into a crawl.
+_CONFIG_GLOBS = (
+    "**/application.yml", "**/application.yaml", "**/application.properties",
+    "**/appsettings.json", "**/config.py",
+)
+_MAX_CONFIG_FILES = 40
+_MAX_CONFIG_BYTES = 256 * 1024
+_SKIP_DIRECTORIES = frozenset({
+    "node_modules", "target", "bin", "obj", ".venv", "venv", "dist", "build",
+    ".git", "__pycache__",
+})
+
+
+def configuration_sources(root: Path) -> dict[str, str]:
+    """Read the files a project states its connections in."""
+    sources: dict[str, str] = {}
+    for pattern in _CONFIG_GLOBS:
+        for path in sorted(root.glob(pattern)):
+            if len(sources) >= _MAX_CONFIG_FILES:
+                return sources
+            if any(part in _SKIP_DIRECTORIES for part in path.parts):
+                continue
+            try:
+                if path.stat().st_size > _MAX_CONFIG_BYTES:
+                    continue
+                sources[str(path.relative_to(root))] = path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                continue
+    return sources
 
 
 class ServiceStack:
@@ -185,17 +226,59 @@ class ServiceStack:
         self._services: tuple[str, ...] = ()
         self._networks: tuple[str, ...] = ("default",)
         self._network: str | None = None
+        self._dependencies: tuple[Dependency, ...] = ()
+        self._derived_file: Path | None = None
         self._override: Path | None = None
         self._running = False
         if self._compose_file is not None:
             model = read_compose_model(self._compose_file)
             self._services = classify_services(model).infrastructure
             self._networks = network_names(model)
+        else:
+            # Only when the project declares nothing. A file it wrote itself
+            # always wins: inferring over it would be guessing at something its
+            # authors already answered.
+            self._dependencies = extract_dependencies(
+                configuration_sources(self.root)
+            )
+            if self._dependencies:
+                self._derived_file = self._write_derived()
+                self._compose_file = self._derived_file
+                self._services = tuple(
+                    sorted({d.engine for d in self._dependencies})
+                )
 
     @property
     def declared(self) -> bool:
         """Whether the project declares its own topology."""
-        return self._compose_file is not None
+        return self._compose_file is not None and self._derived_file is None
+
+    @property
+    def derived(self) -> bool:
+        """Whether the topology had to be inferred from connection strings."""
+        return self._derived_file is not None
+
+    def environment_for(self, stack: str) -> tuple[tuple[str, str], ...]:
+        """Point a component at the services instead of at localhost."""
+        return environment_overrides(self._dependencies, stack)
+
+    def delivery_artifacts(self) -> tuple[str, str]:
+        """The compose and .env.example a developer would receive.
+
+        Different from what the run uses: ports on localhost, where this
+        project's own configuration already looks, and credentials as variables
+        so no plaintext secret is proposed into anyone's history.
+        """
+        return (
+            derive_compose(self._dependencies, mode=DELIVERY),
+            environment_variables_example(self._dependencies),
+        )
+
+    def _write_derived(self) -> Path:
+        descriptor, name = tempfile.mkstemp(suffix="-aset-derived.yml", text=True)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as writer:
+            writer.write(derive_compose(self._dependencies, mode=RUN))
+        return Path(name)
 
     @property
     def services(self) -> tuple[str, ...]:
@@ -243,6 +326,8 @@ class ServiceStack:
         if self._override is not None:
             self._override.unlink(missing_ok=True)
             self._override = None
+        if self._derived_file is not None:
+            self._derived_file.unlink(missing_ok=True)
 
     def _discover_network(self) -> str | None:
         """Ask a running service which network it is on."""

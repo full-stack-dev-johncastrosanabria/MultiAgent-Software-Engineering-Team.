@@ -179,3 +179,82 @@ def test_a_command_reaches_the_projects_database_and_nothing_else(tmp_path: Path
             runner.close()
     finally:
         stack.down()
+
+
+# -- when the project declares nothing (capability 4B) ------------------------
+
+
+SPRING = """spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/derived_db}
+    username: ${DB_USER:appuser}
+    password: ${DB_PASSWORD:apppass}
+"""
+SQLITE_ONLY = "SQLALCHEMY_DATABASE_URI = 'sqlite:///local.db'\n"
+
+
+def _spring_project(tmp_path: Path) -> Path:
+    resources = tmp_path / "svc" / "src" / "main" / "resources"
+    resources.mkdir(parents=True)
+    (resources / "application.yml").write_text(SPRING, encoding="utf-8")
+    return tmp_path
+
+
+def test_a_project_without_compose_derives_one(tmp_path: Path) -> None:
+    stack = ServiceStack(_spring_project(tmp_path), run_id="derived")
+    assert stack.declared is False, "the project declares nothing"
+    assert stack.derived is True
+    assert stack.services == ("postgres",)
+
+
+def test_a_project_needing_nothing_derives_nothing(tmp_path: Path) -> None:
+    """SQLite is a library. Inferring no services is the right answer."""
+    (tmp_path / "config.py").write_text(SQLITE_ONLY, encoding="utf-8")
+    stack = ServiceStack(tmp_path, run_id="none")
+    assert stack.services == ()
+    assert stack.derived is False
+
+
+def test_a_declared_compose_is_never_overridden_by_inference(tmp_path: Path) -> None:
+    """The project's own file wins; guessing over it would be presumptuous."""
+    _spring_project(tmp_path)
+    (tmp_path / "docker-compose.yml").write_text(
+        MINIMAL.format(image=BASE), encoding="utf-8"
+    )
+    stack = ServiceStack(tmp_path, run_id="declared")
+    assert stack.declared is True
+    assert stack.derived is False
+    assert stack.services == ("cache",)
+
+
+def test_the_run_is_redirected_off_localhost(tmp_path: Path) -> None:
+    """Inside the run `localhost` is the command's own container."""
+    stack = ServiceStack(_spring_project(tmp_path), run_id="redirect")
+    overrides = dict(stack.environment_for("jvm"))
+    assert overrides["SPRING_DATASOURCE_URL"] == (
+        "jdbc:postgresql://postgres:5432/derived_db"
+    )
+
+
+def test_the_delivery_artifacts_are_available_for_a_pull_request(tmp_path: Path) -> None:
+    """What a developer would receive: ports on localhost, no plaintext secret."""
+    stack = ServiceStack(_spring_project(tmp_path), run_id="deliver")
+    compose, example = stack.delivery_artifacts()
+    assert "5432:5432" in compose
+    assert "apppass" not in compose, "the delivery artifact must not carry a password"
+    assert "change-me" in example
+
+
+@needs_docker
+def test_derived_services_really_start(tmp_path: Path) -> None:
+    if subprocess.run(
+        ["docker", "image", "inspect", "postgres:17-alpine"],
+        capture_output=True, check=False,
+    ).returncode:
+        pytest.skip("needs postgres pulled")
+    stack = ServiceStack(_spring_project(tmp_path), run_id="derived-up")
+    try:
+        stack.up(time.monotonic() + 300)
+        assert stack.network
+    finally:
+        stack.down()

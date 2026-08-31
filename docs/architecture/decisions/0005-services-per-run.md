@@ -105,3 +105,28 @@ A container can be given only one network at start, and a command may need both
 the project's internal service network and a route to the registry. The runner
 therefore creates the container, attaches the second network when the command
 declares it needs one, and starts it — `docker run` cannot express this.
+
+## Deriving a topology, and what that measured
+
+Where a project declares nothing, its connection strings are read and a topology
+is derived. Reading is extraction rather than parsing: a regex finds
+`jdbc:postgresql://host:port/name` in YAML, properties files and JSON alike, and
+keeps pyyaml out of the dependency list.
+
+Three things only a real repository showed.
+
+A configuration file may quote a connection string inside a comment.
+NorthgateTollPlaza explains a framework quirk by naming the default
+`mongodb://localhost/test`, and an extractor that reads prose invents a service
+the project does not use. Whole-line comments are dropped before scanning.
+
+One service per engine, not one per database: two databases behind the same
+Postgres are one container.
+
+A derived file needs healthchecks, and forgetting them fails silently. Compose's
+`--wait` waits for running rather than ready without one, so a derived Postgres
+reported up in a second and refused the connection that followed. This ADR
+already said readiness is a health check and never a delay; the derived rendering
+had to be made to honour that too. The probes are also asserted to contain no
+character that would break the document they are written into, after a Mongo
+probe with double quotes produced a file compose refused to parse.
