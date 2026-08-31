@@ -147,7 +147,16 @@ Delivery inverts more cleanly than it looks: today Apply writes to the source
 tree after human confirmation, with hashes and restore. A branch and a pull
 request are reviewable by construction, and git provides what the hashes were for.
 
-*Status: not started.*
+*Status: done for the infrastructure proposal. Cloning is the run copy, and work
+leaves as a branch under `aset/` plus a pull request. Nothing is pushed without an
+explicit confirmation, the default branch is never a target, and no force exists
+anywhere in the path: a second delivery builds on the branch it made. Verified by
+opening a real pull request on NorthgateTollPlaza, which had no compose file and
+whose test.sh told the reader to install Postgres and MongoDB by hand.*
+
+*Code-change pull requests are not enabled. Finding 7 is the reason: a rewrite
+that empties files is contained today because nothing is applied, and that
+containment is the thing a delivery path removes.*
 
 ### 6. Evidence per component
 A run over BusinessAI-Analytics produces results for ten components. The gates

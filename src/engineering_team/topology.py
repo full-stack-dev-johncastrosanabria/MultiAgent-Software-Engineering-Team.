@@ -90,6 +90,21 @@ ENGINES: dict[str, Engine] = {
         jdbc_scheme="mysql",
         healthcheck="mysqladmin ping -h 127.0.0.1 --silent",
     ),
+    "mssql": Engine(
+        image=(
+            "mcr.microsoft.com/mssql/server@sha256:"
+            "ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89"
+        ),
+        port=1433,
+        service="mssql",
+        # Published for linux/amd64 only: on Apple Silicon this is emulation, for
+        # a service that starts on every run. Postgres and MySQL publish arm64,
+        # so parity between the engines should not be promised.
+        environment=(("ACCEPT_EULA", "Y"), ("MSSQL_SA_PASSWORD", "{password}")),
+        init_directory=None,
+        jdbc_scheme="sqlserver",
+        healthcheck="/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P $MSSQL_SA_PASSWORD -Q 'SELECT 1'",
+    ),
     "mongo": Engine(
         image=(
             "mongo@sha256:"
@@ -160,6 +175,19 @@ def _credentials(text: str) -> tuple[str, str]:
     return user, password
 
 
+def _dotnet_engine(pairs: dict[str, str]) -> str:
+    """Which engine a .NET connection string means."""
+    if "host" in pairs:
+        return "postgres"
+    port = (pairs.get("port") or "").strip()
+    server = pairs.get("server", "")
+    if port == "1433" or ",1433" in server:
+        return "mssql"
+    if port == "5432":
+        return "postgres"
+    return "mysql"
+
+
 def extract_dependencies(sources: dict[str, str]) -> tuple[Dependency, ...]:
     """Find the services a project's configuration expects to reach.
 
@@ -189,7 +217,11 @@ def extract_dependencies(sources: dict[str, str]) -> tuple[Dependency, ...]:
                 engine, Dependency(engine, port, database, user, password)
             )
         if "host" in pairs or "server" in pairs:
-            engine = "postgres" if "host" in pairs else "mysql"
+            # A .NET connection string does not name its engine. `Host=` is the
+            # Npgsql spelling; `Server=` is shared by MySQL and SQL Server, and
+            # only the port separates them. `Data Source=` is SQLite -- a file,
+            # so no service at all -- and is deliberately not matched above.
+            engine = _dotnet_engine(pairs)
             database = pairs.get("database") or pairs.get("initialcatalog") or ""
             if database:
                 found.setdefault(
@@ -246,8 +278,15 @@ def derive_compose(
                             password=dependency.password or "aset",
                         )
                     )
+        # In delivery mode the credentials are variables, so the probe has to
+        # read the container's own environment rather than the value inferred
+        # today: a developer who changes POSTGRES_USER in their .env would
+        # otherwise have a service that never reports healthy. `$$` is how a
+        # literal `$` survives compose's own interpolation.
         probe = engine.healthcheck.format(
-            database=dependency.database, user=dependency.user or "aset"
+            database=dependency.database,
+            user="$$POSTGRES_USER" if mode == DELIVERY and dependency.engine == "postgres"
+            else (dependency.user or "aset"),
         )
         lines += [
             "    healthcheck:",

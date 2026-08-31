@@ -267,3 +267,48 @@ def test_a_derived_document_is_accepted_by_compose(tmp_path) -> None:
         capture_output=True, text=True, check=False,
     )
     assert completed.returncode == 0, completed.stderr[-500:]
+
+
+# -- .NET connection strings do not name their engine ------------------------
+
+
+def test_sqlite_in_a_dotnet_connection_string_needs_no_service() -> None:
+    """PropFlow writes `Data Source=propflow.db`, which is a file, not a server."""
+    found = extract_dependencies(
+        {"appsettings.json": '{"ConnectionStrings":{"DefaultConnection":"Data Source=propflow.db"}}'}
+    )
+    assert found == ()
+
+
+def test_sql_server_is_not_mistaken_for_mysql() -> None:
+    """Both spell the key `Server=`; only the port tells them apart."""
+    found = extract_dependencies(
+        {"appsettings.json":
+         '{"ConnectionStrings":{"Default":"Server=localhost,1433;Database=Shop;User Id=sa;Password=x"}}'}
+    )
+    assert [item.engine for item in found] == ["mssql"]
+
+
+def test_mysql_is_still_recognised_by_its_port() -> None:
+    found = extract_dependencies(
+        {"appsettings.json":
+         '{"ConnectionStrings":{"Default":"server=localhost;port=3306;database=D;user=root;password=x"}}'}
+    )
+    assert [item.engine for item in found] == ["mysql"]
+
+
+def test_no_engine_carries_a_placeholder_digest() -> None:
+    """A digest of zeros looks pinned and resolves to nothing."""
+    from engineering_team.topology import ENGINES
+
+    for name, engine in ENGINES.items():
+        digest = engine.image.split("@sha256:")[-1]
+        assert len(digest) == 64, name
+        assert set(digest) != {"0"}, f"{name} carries a placeholder digest"
+
+
+def test_the_delivery_probe_reads_the_variable_it_parameterised() -> None:
+    """Otherwise changing POSTGRES_USER in .env yields a never-healthy service."""
+    document = derive_compose((_postgres(),), mode="delivery")
+    assert "$$POSTGRES_USER" in document
+    assert derive_compose((_postgres(),), mode="run").count("$$") == 0

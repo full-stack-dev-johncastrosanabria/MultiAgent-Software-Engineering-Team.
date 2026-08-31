@@ -62,3 +62,24 @@ for, so this capability depends on it rather than merely benefiting from it.
 
 Rate limits and authentication become operational concerns the local filesystem
 never had, including what happens to a half-finished run when a token expires.
+
+## What the first real pull request measured
+
+It deleted fifteen lines. The project already had a `.env.example` documenting a
+JWT secret the file itself says has no default and fails at startup without, and
+the proposal wrote over it.
+
+Adding to a file and replacing it are different acts, and nothing here should be
+able to do the second by accident. A proposal now separates the two: files it
+creates, which are refused if the project already tracks them, and files it
+extends, which keep what was there. The check is against the base branch and not
+the working tree, because a second delivery legitimately rewrites the file the
+first one added — what must never be replaced is the project's own.
+
+Two smaller things came from the same run. `--force` was removed entirely: if the
+branch already exists on the remote, the delivery builds on it, so an ordinary
+push suffices and a tool writing into someone else's repository cannot discard
+history at all. And the secret check had to learn the difference between a
+credential and a placeholder — `POSTGRES_PASSWORD: ${VAR}` and
+`DB_PASSWORD=change-me` are what these artefacts are *for*, and refusing them
+would have refused the delivery the check exists to protect.
