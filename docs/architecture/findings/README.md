@@ -19,7 +19,7 @@ index says where each one stands.
 | 9 | critical | The cloud-context guardrail blocks any project that reads environment variables | **fixed** — `.env` is matched as a file reference and not as a substring of `os.environ` |
 | 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — a byte budget replaced the file count, and the prompt now states how much evidence was withheld |
 | 13 | high | Reviewer does not distinguish a regression from a new failing test | **fixed** — `a82ec93`, `9ad580e`; the Flask retry labelled the two formerly passing tests as `REGRESSION` before the new endpoint failures |
-| 14 | high | Apply authorizes only file paths named literally in the requirement | **fixed** — a test-only request now adds at most one successful, relevant source file already inspected by Repository MCP; the model still cannot invent paths |
+| 14 | high | Apply authorizes only file paths named literally in the requirement | **in progress** — the first repair works for a test-only allowlist; the Flask retry proved an auxiliary `CHANGELOG.md` can still suppress the relevant inspected source |
 
 ## Two things worth remembering
 
@@ -79,3 +79,8 @@ route. That makes a feature impossible whenever its requirement names its test
 but not its implementation. The repair is deliberately narrow: only a test-only
 allowlist may gain one source file, and that file must have been successfully
 read and score positively against the specification and Architecture proposal.
+Its first repair exposed one more boundary: `CHANGELOG.md` appeared beside the
+test in the deterministic candidate, which made the allowlist no longer
+literally test-only and again suppressed the products route. Auxiliary
+documentation must not count as an implementation target when deciding whether
+a source file is still missing.

@@ -24,6 +24,7 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
         "yaml", "yml", "toml", "txt", "cfg", "ini", "sql", "html", "css",
         "c", "cpp", "h", "hpp", "rs", "kt", "swift",
     }
+    _SOURCE_EXTENSIONS: ClassVar[set[str]] = _TARGET_EXTENSIONS - {"md", "txt"}
 
     @classmethod
     def requested_targets(cls, requirement: str) -> list[str]:
@@ -69,9 +70,18 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
         selected deterministically from successful Repository reads, never from
         model text, and only when it has a positive relevance score.
         """
-        if not explicit or any(not cls._is_test_path(path) for path in explicit):
+        if not explicit or not any(cls._is_test_path(path) for path in explicit):
             return explicit
-        terms = cls.relevance_terms(specification, architecture, requirement)
+        if any(cls._is_source_path(path) for path in explicit):
+            return explicit
+        terms = [
+            *cls.relevance_terms(specification, architecture, requirement),
+            *(
+                Path(path).stem.removeprefix("test_")
+                for path in explicit
+                if cls._is_test_path(path)
+            ),
+        ]
         candidates: list[tuple[int, str]] = []
         for item in repository_results:
             if (
@@ -102,6 +112,11 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
     def _is_test_path(path: str) -> bool:
         normalized = path.replace("\\", "/")
         return normalized.startswith(("test/", "tests/")) or Path(normalized).name.startswith("test_")
+
+    @classmethod
+    def _is_source_path(cls, path: str) -> bool:
+        suffix = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        return not cls._is_test_path(path) and suffix in cls._SOURCE_EXTENSIONS
 
     @classmethod
     def relevance_terms(cls, specification: Any, architecture: Any, requirement: str) -> list[str]:

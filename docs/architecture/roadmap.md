@@ -210,7 +210,10 @@ nothing is built before something proves it is needed.
 runner, dependencies and Python version now work. The Flask retry has proved
 that Reviewer distinguishes regressions from new failures; its next gate is the
 same request on a clean branch after Apply was taught to authorize the inspected
-products route as well as its explicitly named test. Only a green run produces
+products route as well as its explicitly named test. The first repair exposed
+an auxiliary `CHANGELOG.md` target that still suppressed the route, so the next
+clean run verifies that documentation does not count as the implementation.
+Only a green run produces
 the first code-change pull request.
 
 **2. PruebaNuevosIngresosBackend** — validate declared Compose against the
@@ -258,8 +261,10 @@ before the new endpoint failures. It then exposed finding 14: Apply had allowed
 only `tests/test_products.py`, because that was the only literal file path in
 the request. Developer could create tests but could not change the inspected
 products route. Apply now adds one relevant, successfully inspected source file
-only when every explicit target is a test. The next clean run must prove that the
-endpoint and isolated fixtures converge before any branch is pushed.
+when no source target exists. The first repair treated auxiliary documentation
+as a source target, so `CHANGELOG.md` still blocked the route. The next clean
+run must prove that the endpoint and isolated fixtures converge before any branch
+is pushed.
 
 ## What is deliberately not here
 

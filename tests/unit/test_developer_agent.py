@@ -146,6 +146,35 @@ def test_apply_adds_one_relevant_inspected_source_when_only_a_test_is_named() ->
     assert result.changed_files == ["app/routes/products.py", "tests/test_products.py"]
 
 
+def test_apply_adds_source_when_test_request_also_contains_auxiliary_documentation() -> None:
+    """A changelog must not prevent the route behind a named test from changing."""
+    specification = ProductSpecification(
+        objective="Add the low-stock products endpoint",
+        actors=[], business_rules=[], constraints=[], acceptance_criteria=[],
+        nfrs=[], ambiguities=[], assumptions=[],
+        source_requirement="Add tests/test_products.py coverage",
+    )
+    architecture = ArchitectureProposal(
+        components=[], apis=[], data_changes=[], integrations=[], dependencies=[],
+        decisions=[], risks=[], impact="bounded route change",
+    )
+    requested = DeveloperAgent.apply_targets(
+        ["CHANGELOG.md", "tests/test_products.py"],
+        [
+            ToolResult(
+                tool_name="read_file", allowed_role=AgentRole.DEVELOPER,
+                status=ToolStatus.SUCCESS, input_summary="path=app/routes/products.py",
+                output_summary="def get_products(): pass\n", duration_ms=1,
+            ),
+        ],
+        specification,
+        architecture,
+        specification.source_requirement,
+    )
+
+    assert requested == ["app/routes/products.py", "CHANGELOG.md", "tests/test_products.py"]
+
+
 def test_developer_selects_inspected_transaction_module_not_first_listed_paths() -> None:
     specification = ProductSpecification(
         objective="Return the latest five transactions for the authorized owner",

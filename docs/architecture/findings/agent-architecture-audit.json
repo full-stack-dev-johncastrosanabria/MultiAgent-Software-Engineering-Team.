@@ -230,14 +230,14 @@
       "title": "Apply autoriza solo las rutas literales del requerimiento",
       "mechanism": "El candidato determinista de Apply toma las rutas que el requerimiento nombra como su allowlist completa. En la segunda corrida de FlaskApiProduct el requerimiento incluia tests/test_products.py, pero no app/routes/products.py. Repository MCP ya habia leido ambas; aun asi Developer solo podia escribir las pruebas y no el endpoint que debian verificar.",
       "source_layer": "3. Developer Apply candidate",
-      "root_cause": "La restriccion de no inventar rutas se aplicaba sin distinguir una ruta de prueba de su implementacion. Eso evita escrituras arbitrarias, pero tambien hace imposible implementar una capacidad cuando una especificacion de pruebas nombra solo su archivo de pruebas.",
+      "root_cause": "La restriccion de no inventar rutas se aplicaba sin distinguir una ruta de prueba de su implementacion. Eso evita escrituras arbitrarias, pero tambien hace imposible implementar una capacidad cuando una especificacion de pruebas nombra solo su archivo de pruebas. La primera correccion trato cualquier objetivo no-test como una implementacion; la corrida siguiente mostro que un CHANGELOG auxiliar volvía a bloquear la ruta fuente.",
       "evidence_refs": [
         "src/engineering_team/agents/developer.py",
         "tests/unit/test_developer_agent.py",
         "evaluation/reports/e2e-flask-container-retry.json"
       ],
       "confidence": "high",
-      "recommended_fix": "Cuando todos los objetivos explicitos son pruebas, agregar como maximo una ruta fuente ya leida con exito por Repository MCP y con relevancia positiva respecto a requisito, especificacion y propuesta de Architecture. No aceptar rutas inventadas ni ampliar una solicitud que ya nombra una fuente."
+      "recommended_fix": "Cuando no hay ninguna ruta fuente entre los objetivos, pero si hay una prueba, agregar como maximo una ruta fuente ya leida con exito por Repository MCP y con relevancia positiva respecto a requisito, especificacion y propuesta de Architecture. Documentacion auxiliar no satisface esa condicion. No aceptar rutas inventadas ni ampliar una solicitud que ya nombra una fuente."
     }
   ],
   "ordered_fix_plan": [
