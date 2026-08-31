@@ -17,7 +17,9 @@ from engineering_team.contracts.models import ToolResult
 from engineering_team.interpreter import (
     describe_install_failure,
     pinned_requirements,
+    python_image,
     python_requirement,
+    select_interpreter,
 )
 from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.runner import (
@@ -45,11 +47,18 @@ _DISTRIBUTION_NAME = "autonomous-engineering-team"
 
 
 
-def build_runner(root: Path, settings: Settings) -> CommandRunner:
+def build_runner(
+    root: Path, settings: Settings, *, interpreter: Any = None
+) -> CommandRunner:
     """Pick the boundary named by configuration, or refuse to guess.
 
     There is no fallback. A misconfigured runner is a configuration error the
     operator has to see, not something to paper over with the other backend.
+
+    When containers are chosen and no image is named, the image follows the
+    project rather than the operator: an interpreter derived from what the
+    project's pins publish, which is the whole point of ADR 2 and the answer to
+    finding 11. An operator who names an image means it, and is not overridden.
     """
     choice = settings.quality_runner
     if choice == "process":
@@ -57,9 +66,13 @@ def build_runner(root: Path, settings: Settings) -> CommandRunner:
     if choice == "container":
         image = settings.quality_container_image
         if not image:
-            raise ValueError(
-                "quality_container_image is required when quality_runner is 'container'"
-            )
+            chosen = (interpreter or select_interpreter)(root)
+            if chosen is None:
+                raise ValueError(
+                    "no container image is configured and none could be derived "
+                    "from this project; set quality_container_image"
+                )
+            image = python_image(chosen)
         return ContainerRunner(root, image=image)
     raise ValueError(f"unknown quality_runner: {choice!r}")
 
@@ -612,13 +625,17 @@ class QualityMCP:
                 # declared and the tests cannot import anything without them.
                 self._project_prepared = True
                 return self._install_requirements(role, tool, requirements, deadline)
+            # Relative names, not absolute paths. Both runners execute with
+            # cwd set to the project root, and an absolute host path inside a
+            # container names a file that is not there -- measured as "Could
+            # not open requirements file: /private/tmp/.../requirements.txt".
             lock = self.root / "requirements.lock"
             constraints = self.root / "constraints.txt"
             if lock.is_file():
                 commands = [
                     [
                         "install", "--no-input", "--require-hashes",
-                        "--no-build-isolation", "-r", str(lock),
+                        "--no-build-isolation", "-r", lock.name,
                     ],
                     [
                         "install", "--no-input", "--no-deps",
@@ -629,7 +646,7 @@ class QualityMCP:
                 commands = [
                     [
                         "install", "--no-input", "--no-build-isolation",
-                        "--constraint", str(constraints), ".",
+                        "--constraint", constraints.name, ".",
                     ]
                 ]
             else:
@@ -670,7 +687,7 @@ class QualityMCP:
         """
         completed = self._run_python(
             role, tool, "pip",
-            ["install", "--no-input", "-r", str(requirements)],
+            ["install", "--no-input", "-r", requirements.name],
             {role}, deadline, cwd=self.root, allow_network=True,
         )
         if completed.status is ToolStatus.SUCCESS:

@@ -342,3 +342,43 @@ def test_an_ordinary_install_failure_is_not_relabelled(tmp_path: Path) -> None:
         AgentRole.TESTING
     )
     assert "interpreter mismatch" not in ((result.error or "") + result.output_summary).lower()
+
+
+# -- the runner carries the interpreter the project needs --------------------
+
+
+def test_the_container_image_follows_the_project_not_the_operator(tmp_path: Path) -> None:
+    """FlaskApiProduct needs 3.12; the operator runs 3.14. Building the
+    environment from the host is what made pip compile pandas from source."""
+    from engineering_team.config import Settings
+    from engineering_team.interpreter import PYTHON_IMAGES
+    from engineering_team.mcp.quality import build_runner
+
+    (tmp_path / "requirements.txt").write_text("pandas==2.1.4\n", encoding="utf-8")
+    settings = Settings(quality_runner="container")
+    runner = build_runner(
+        tmp_path, settings, interpreter=lambda _root: (3, 12)
+    )
+    assert runner.image == PYTHON_IMAGES[(3, 12)]
+
+
+def test_an_explicit_image_is_never_overridden(tmp_path: Path) -> None:
+    """An operator who names an image means it."""
+    from engineering_team.config import Settings
+    from engineering_team.mcp.quality import build_runner
+
+    pinned = "python@sha256:" + "b" * 64
+    settings = Settings(quality_runner="container", quality_container_image=pinned)
+    runner = build_runner(tmp_path, settings, interpreter=lambda _root: (3, 12))
+    assert runner.image == pinned
+
+
+def test_no_derivable_interpreter_still_needs_an_image(tmp_path: Path) -> None:
+    """Refusing beats silently choosing one the project never asked for."""
+    from engineering_team.config import Settings
+    from engineering_team.delivery import DeliveryRefused
+    from engineering_team.mcp.quality import build_runner
+
+    settings = Settings(quality_runner="container")
+    with pytest.raises((ValueError, DeliveryRefused), match="image"):
+        build_runner(tmp_path, settings, interpreter=lambda _root: None)

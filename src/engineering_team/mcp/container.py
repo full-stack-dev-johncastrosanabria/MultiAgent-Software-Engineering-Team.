@@ -253,6 +253,14 @@ class ContainerRunner:
 
     def _container_path(self, path: Path) -> PurePosixPath:
         """Translate a host path under the workspace to its path in the container."""
+        # A path that is already a container path needs no translation. The
+        # environment volume is mounted at a fixed location and commands run
+        # with cwd set to it -- scan_dependencies does -- so treating it as a
+        # host path refused a command that was perfectly well formed.
+        raw = PurePosixPath(str(path).replace("\\", "/"))
+        for mount in (WORKSPACE_MOUNT, ENVIRONMENT_MOUNT):
+            if raw == mount or mount in raw.parents:
+                return raw
         resolved = Path(path).resolve()
         workspace = Path(self.workspace).resolve()
         if resolved == workspace:

@@ -352,3 +352,60 @@ def test_the_environment_survives_between_containers(tmp_path: Path) -> None:
         assert "still here" in second.stdout
     finally:
         runner.close()
+
+
+def test_no_command_carries_a_host_path_into_the_container(tmp_path: Path) -> None:
+    """Measured: `pip install -r /private/tmp/.../requirements.txt` reached a
+    container where that path does not exist. The workspace is mounted at
+    /aset/workspace, and a command that names the host has already lost."""
+    from engineering_team.config import Settings
+    from engineering_team.contracts.enums import AgentRole
+    from engineering_team.mcp.quality import QualityMCP
+
+    (tmp_path / "requirements.txt").write_text("flask==3.0.0\n", encoding="utf-8")
+
+    seen: list[list[str]] = []
+
+    class _Capture(ContainerRunner):
+        def execute(self, request):
+            import subprocess
+
+            seen.append(list(request.args))
+            return subprocess.CompletedProcess(list(request.args), 0, "ok", "")
+
+        def require_available(self) -> None:
+            return None
+
+        def prepare_environment(self, deadline: float) -> str:
+            return "/aset/env/bin/python"
+
+    runner = _Capture(tmp_path, image=PINNED)
+    QualityMCP(tmp_path, runner=runner, settings=Settings()).run_tests(
+        AgentRole.TESTING
+    )
+
+    host = str(tmp_path)
+    offenders = [c for c in seen if any(host in part for part in c)]
+    assert not offenders, f"host path inside a container command: {offenders[:1]}"
+
+
+def test_a_path_already_inside_the_container_is_left_alone(tmp_path: Path) -> None:
+    """`scan_dependencies` runs with cwd set to the environment, which is a
+    container path already. Translating it as a host path refused the command:
+    "path is outside the mounted workspace: /aset/env"."""
+    runner = _runner(tmp_path)
+    for inside in (ENVIRONMENT_MOUNT, ENVIRONMENT_MOUNT / "lib", WORKSPACE_MOUNT):
+        command = runner._container_command(
+            "c1", _request(Path(str(inside)), "true")
+        )
+        assert command[command.index("--workdir") + 1] == str(inside)
+
+
+def test_a_host_path_outside_both_mounts_is_still_refused(tmp_path: Path) -> None:
+    """The boundary still holds for paths that are neither."""
+    outside = tmp_path.parent / "elsewhere"
+    outside.mkdir(exist_ok=True)
+    (tmp_path / "inside").mkdir()
+    runner = _runner(tmp_path / "inside")
+    with pytest.raises(ValueError, match="outside the mounted workspace"):
+        runner._container_command("c1", _request(outside, "true"))

@@ -573,7 +573,9 @@ def test_quality_prefers_hashed_lock_and_installs_project_without_deps(
 
     try:
         pip_installs = [call for call in calls if "pip" in call and "install" in call]
-        assert ["--require-hashes", "--no-build-isolation", "-r", str(lock)] == (
+        # The name, not the path: both runners set cwd to the project root, and
+        # an absolute host path names nothing inside a container.
+        assert ["--require-hashes", "--no-build-isolation", "-r", lock.name] == (
             pip_installs[0][-4:]
         )
         assert pip_installs[1][-4:] == [
