@@ -9,6 +9,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole
 from engineering_team.contracts.models import ToolResult
 from engineering_team.mcp.quality import QualityMCP
@@ -75,8 +76,15 @@ def build_repository_server(root: str | Path) -> MCPServer:
     return server
 
 
-def build_quality_server(root: str | Path, timeout_seconds: float = 60) -> MCPServer:
-    backend = QualityMCP(root, timeout_seconds=timeout_seconds)
+def build_quality_server(
+    root: str | Path,
+    timeout_seconds: float = 60,
+    *,
+    settings: Settings | None = None,
+) -> MCPServer:
+    backend = QualityMCP(
+        root, timeout_seconds=timeout_seconds, settings=settings or Settings()
+    )
     server = MCPServer(name="engineering-team-quality", log_level="ERROR")
 
     @server.tool()

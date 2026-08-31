@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     max_local_repairs: int = Field(default=1, ge=0)
     max_cloud_escalations_per_agent: int = Field(default=1, ge=0)
     max_cloud_escalations_per_run: int = Field(default=3, ge=0)
+    # Which boundary target-project commands execute behind. Deliberately not
+    # auto-detected: a runner that varies silently by machine would isolate the
+    # same run differently depending on whether a daemon happened to be up, and
+    # nothing would say so -- the failure finding 5 describes for telemetry.
+    quality_runner: str = "process"
+    quality_container_image: str = ""
     ollama_base_url: str = "http://localhost:11434"
     llm_timeout_seconds: float = Field(default=60, gt=0)
     cloud_role_timeout_seconds: float = Field(default=120, gt=0)

@@ -10,13 +10,16 @@ import threading
 import time
 from pathlib import Path
 
+from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.contracts.models import ToolResult
+from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.runner import (
     CommandRequest,
     CommandRunner,
     ProcessRunner,
 )
+from engineering_team.stacks import INTERPRETER, PROFILES, StackProfile
 
 _DISTRIBUTION_NAME = "autonomous-engineering-team"
 
@@ -35,6 +38,26 @@ _DISTRIBUTION_NAME = "autonomous-engineering-team"
 
 
 
+
+def build_runner(root: Path, settings: Settings) -> CommandRunner:
+    """Pick the boundary named by configuration, or refuse to guess.
+
+    There is no fallback. A misconfigured runner is a configuration error the
+    operator has to see, not something to paper over with the other backend.
+    """
+    choice = settings.quality_runner
+    if choice == "process":
+        return ProcessRunner(root)
+    if choice == "container":
+        image = settings.quality_container_image
+        if not image:
+            raise ValueError(
+                "quality_container_image is required when quality_runner is 'container'"
+            )
+        return ContainerRunner(root, image=image)
+    raise ValueError(f"unknown quality_runner: {choice!r}")
+
+
 class QualityMCP:
     def __init__(
         self,
@@ -42,15 +65,26 @@ class QualityMCP:
         *,
         timeout_seconds: float = 60,
         runner: CommandRunner | None = None,
+        settings: Settings | None = None,
+        profile: StackProfile | None = None,
     ) -> None:
         self.root = Path(root).resolve()
+        # Which ecosystem's commands to run. Python stays the default so every
+        # existing caller keeps the behaviour it had before profiles existed.
+        self.profile = profile or PROFILES["python"]
         self.timeout_seconds = float(timeout_seconds)
         self._last: dict[str, ToolResult] = {}
         self._project_prepared = False
         self._project_result: ToolResult | None = None
         self._prepared_tools: set[str] = set()
         self._python: str | None = None
-        self._runner: CommandRunner = runner or ProcessRunner(self.root)
+        # An explicitly supplied runner always wins. Without settings the process
+        # sandbox is used, so constructing a QualityMCP directly does not depend on
+        # whatever .env happens to hold on this machine.
+        self._runner: CommandRunner = runner or (
+            build_runner(self.root, settings) if settings is not None
+            else ProcessRunner(self.root)
+        )
         self._environment_lock = threading.RLock()
         self._mutation_lock = threading.Lock()
         self._closed = False
@@ -190,6 +224,47 @@ class QualityMCP:
             cwd=cwd or self.root,
             started=started,
             allow_network=allow_network,
+        )
+
+
+    def _run_profile(
+        self,
+        role: AgentRole,
+        tool: str,
+        phase: str,
+        extra: list[str],
+        allowed: set[AgentRole],
+        deadline: float,
+        *,
+        cwd: Path | None = None,
+        allow_network: bool = False,
+    ) -> ToolResult:
+        """Run one phase of the component's profile.
+
+        Only a template that names an interpreter provisions one: `mvn test` is
+        the command, and building a virtual environment for it would be work
+        nobody asked for.
+        """
+        if role not in allowed:
+            return self._denied(role, tool)
+        started = time.perf_counter()
+        template = getattr(self.profile, f"{phase}_template")
+        if template is None:
+            return self._operation_failure(
+                role, tool,
+                f"the {self.profile.name} profile defines no {phase} command",
+                started,
+            )
+        interpreter = ""
+        if INTERPRETER in template:
+            try:
+                interpreter = self._interpreter(deadline)
+            except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
+                return self._unavailable(role, tool, exc, started)
+        command = getattr(self.profile, f"{phase}_command")(interpreter)
+        return self._run(
+            role, tool, [*command, *extra], allowed, deadline,
+            cwd=cwd or self.root, started=started, allow_network=allow_network,
         )
 
     def _run(
@@ -527,16 +602,25 @@ class QualityMCP:
         if role not in allowed:
             return self._denied(role, "run_tests")
         deadline = self._deadline()
-        prepared = self._prepare_project(role, "run_tests", allowed, deadline)
-        if prepared is not None:
-            return prepared
-        prepared = self._prepare_quality_tools(
-            role, "run_tests", ("pytest",), allowed, deadline
-        )
-        if prepared is not None:
-            return prepared
-        return self._run_python(
-            role, "run_tests", "pytest", paths or [], allowed, deadline
+        # Installing the project and its test tool with pip is Python's answer to
+        # a question Maven and dotnet resolve on their own.
+        if self.profile.name == "python":
+            prepared = self._prepare_project(role, "run_tests", allowed, deadline)
+            if prepared is not None:
+                return prepared
+            prepared = self._prepare_quality_tools(
+                role, "run_tests", ("pytest",), allowed, deadline
+            )
+            if prepared is not None:
+                return prepared
+        elif self.profile.install_template is not None:
+            installed = self._run_profile(
+                role, "run_tests", "install", [], allowed, deadline, allow_network=True
+            )
+            if installed.status is not ToolStatus.SUCCESS:
+                return installed
+        return self._run_profile(
+            role, "run_tests", "test", paths or [], allowed, deadline
         )
 
     def get_test_results(self, role: AgentRole) -> ToolResult:
@@ -545,8 +629,8 @@ class QualityMCP:
         )
 
     def run_build(self, role: AgentRole) -> ToolResult:
-        return self._run_python(
-            role, "run_build", "compileall", ["."],
+        return self._run_profile(
+            role, "run_build", "build", [],
             {AgentRole.DEVELOPER, AgentRole.TESTING}, self._deadline(),
         )
 
@@ -560,16 +644,17 @@ class QualityMCP:
         if role not in allowed:
             return self._denied(role, "run_linter")
         deadline = self._deadline()
-        prepared = self._prepare_quality_tools(
-            role, "run_linter", ("ruff",), allowed, deadline
-        )
-        if prepared is not None:
-            return prepared
-        return self._run_python(
-            role, "run_linter", "ruff",
-            ["check", ".", *self._ruff_configuration()],
-            allowed, deadline,
-        )
+        extra: list[str] = []
+        if self.profile.name == "python":
+            prepared = self._prepare_quality_tools(
+                role, "run_linter", ("ruff",), allowed, deadline
+            )
+            if prepared is not None:
+                return prepared
+            # Ruff resolves configuration by walking up the tree; scoping it to
+            # this project is what keeps a nested one from reading outside.
+            extra = self._ruff_configuration()
+        return self._run_profile(role, "run_linter", "lint", extra, allowed, deadline)
 
     def scan_dependencies(self, role: AgentRole) -> ToolResult:
         allowed = {AgentRole.SECURITY}
