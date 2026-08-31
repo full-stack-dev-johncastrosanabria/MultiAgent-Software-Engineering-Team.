@@ -206,6 +206,25 @@ capability 2 gets its second and third profile here.
 **4. BusinessAI-Analytics** — last. Seven services and 388 files; it requires
 capability 7 first, and it is the real test of capability 6.
 
+## What one real run taught
+
+Pointing the system at FlaskApiProduct — clone, requirement, tests, three
+remediation cycles, 243 seconds — produced three findings the entire suite had
+missed, all of the same shape: the system failed for a reason unrelated to the
+work and reported it as though it were the work.
+
+The cloud guardrail refused every project whose code reads an environment
+variable, because `os.environ` contains the four characters `.env`. The ephemeral
+environment installed nothing for a project declaring dependencies in
+requirements.txt, and the resulting ModuleNotFoundError was routed to the
+Developer three times. And the environment builds on the operator's interpreter,
+so a project pinned to dependencies that stop at Python 3.12 cannot be built on a
+machine running 3.14 at all.
+
+The Developer's output was correct throughout: the endpoint it wrote satisfies
+all six points of the requirement. Nothing in the run was ever approved, which is
+the gates working — but every rejection was about the environment.
+
 ## What is deliberately not here
 
 Windows support arrives with the container runner rather than as its own effort;

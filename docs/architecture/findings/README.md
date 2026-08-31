@@ -13,9 +13,25 @@ index says where each one stands.
 | 5 | medium | Telemetry confuses primary execution with fallback | **fixed** — the cloud runtime reports a fallback only when it is one, and the local runtime records the reason it is given instead of accepting and dropping it |
 | 6 | medium | Visible history reconstructs past decisions from the latest revision | **fixed** — the state records every reviewer decision, and the report shows each cycle its own; where no history exists it says nothing rather than borrowing |
 | 7 | critical | The Developer can empty files and cannot see what it wrote | **fixed** — the projection now carries `implementation`, and the prompt renders the previously authored code, because a projected value alone is collapsed to "present" |
+| 11 | high | The ephemeral environment imposes the operator's Python on the project | **open** — the container runner is the answer ADR 2 already chose, but the stack profile pins one image and a project pins its own range |
+| 10 | critical | The ephemeral environment installs only projects that ship a pyproject.toml | **fixed** — a project that declares its dependencies in requirements.txt gets them, and the installable manifests are tied to the ones detection recognises |
+| 9 | critical | The cloud-context guardrail blocks any project that reads environment variables | **fixed** — `.env` is matched as a file reference and not as a substring of `os.environ` |
 | 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — a byte budget replaced the file count, and the prompt now states how much evidence was withheld |
 
 ## Two things worth remembering
+
+**Findings 9 and 10 were both invisible to the whole test suite, and both were
+found in the same run.** They share a shape: the system refused or failed for a
+reason that had nothing to do with the work, and reported it as though it did.
+Nine blocked the Developer with a message about secrets over a comment; ten let
+the tests run without the project's dependencies and called the resulting
+ModuleNotFoundError a code defect, looping the Developer three times over it.
+
+**Finding 9 was invisible to the whole test suite.** Every fixture in this
+project is written by this project, and none of them reads configuration from the
+environment in the text that travels to a provider. It took pointing the system at
+somebody else's repository, for real, to find that the Developer stage could not
+run at all against most Python projects.
 
 **Finding 5 was found because the record contradicted itself.** The trace beside
 each cloud attempt already said "primary" or "fallback" correctly; only the

@@ -59,6 +59,13 @@ def build_runner(root: Path, settings: Settings) -> CommandRunner:
     raise ValueError(f"unknown quality_runner: {choice!r}")
 
 
+# How a Python project declares what it needs. Detection already treats all of
+# these as a Python component; installation knowing a narrower set is what left
+# an environment empty and attributed the resulting ModuleNotFoundError to the
+# code under test.
+PROJECT_MANIFESTS = ("pyproject.toml", "setup.py", "requirements.txt")
+
+
 class QualityMCP:
     def __init__(
         self,
@@ -590,9 +597,16 @@ class QualityMCP:
                 if self._project_result is None:
                     return None
                 return self._operation_failure(self._project_result, role, tool)
-            if not (self.root / "pyproject.toml").is_file():
+            installable = self.root / "pyproject.toml"
+            requirements = self.root / "requirements.txt"
+            if not installable.is_file() and not (self.root / "setup.py").is_file():
+                if not requirements.is_file():
+                    self._project_prepared = True
+                    return None
+                # No build backend to install *from*, but the dependencies are
+                # declared and the tests cannot import anything without them.
                 self._project_prepared = True
-                return None
+                return self._install_requirements(role, tool, requirements, deadline)
             lock = self.root / "requirements.lock"
             constraints = self.root / "constraints.txt"
             if lock.is_file():
@@ -637,6 +651,27 @@ class QualityMCP:
             return self._operation_failure(self._project_result, role, tool)
         finally:
             self._mutation_lock.release()
+
+
+    def _install_requirements(
+        self, role: AgentRole, tool: str, requirements: Path, deadline: float
+    ) -> ToolResult | None:
+        """Install a project that declares dependencies but ships no backend.
+
+        The overwhelmingly common shape of a Python application: a
+        requirements.txt and no packaging metadata. Nothing is installed *as* a
+        package, only what it says it needs, and the network is open for this
+        phase alone.
+        """
+        completed = self._run_python(
+            role, tool, "pip",
+            ["install", "--no-input", "-r", str(requirements)],
+            {role}, deadline, cwd=self.root, allow_network=True,
+        )
+        if completed.status is ToolStatus.SUCCESS:
+            return None
+        self._project_result = completed
+        return self._operation_failure(completed, role, tool)
 
     def _static(
         self, role: AgentRole, tool: str, allowed: set[AgentRole], output: str

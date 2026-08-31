@@ -152,6 +152,48 @@
       ],
       "confidence": "high",
       "recommended_fix": "Tres piezas, en orden. (1) Decirle al agente que fue truncado: pasarle cuantas rutas relevantes se descartaron, para que pueda declarar cobertura insuficiente en vez de disenar a ciegas. (2) Dejar que pida archivos por nombre dentro de un presupuesto de bytes, en vez de un tope fijo de conteo -4 archivos de 40 lineas y 4 de 4.000 no son la misma evidencia-. (3) Variar los terminos en remediacion usando la retroalimentacion del Reviewer, para que un reintento no repita la lectura anterior."
+    },
+    {
+      "severity": "critical",
+      "title": "El guardrail de contexto cloud bloquea cualquier proyecto que lea variables de entorno",
+      "mechanism": "require_safe_cloud_context rechaza el texto si contiene la subcadena '.env'. `os.environ` la contiene: '.environ' empieza por '.env'. Como el prompt del Developer incluye contenido del repositorio, cualquier modulo que lea su configuracion del entorno -- que es como se hace en Python -- hace que la etapa muera con ValueError('sensitive content is not allowed in cloud context'), un mensaje que no tiene nada que ver con la causa. Medido sobre FlaskApiProduct: cuatro ocurrencias de os.environ en config.py, mas run.py y CHANGELOG.md, y la corrida completa se detuvo en Developer sin producir nada.",
+      "source_layer": "7. Guardrails",
+      "root_cause": "El control busca una referencia a un archivo de secretos y la implementa como una busqueda de subcadena. '.env' como texto libre aparece dentro de identificadores legitimos; como referencia a archivo va seguida de fin de palabra. La diferencia entre las dos lecturas es la diferencia entre un control util y uno que impide todo trabajo.",
+      "evidence_refs": [
+        "src/engineering_team/guardrails/secrets.py:160",
+        "workspace/runs/_records/run-f332fa76-0900-4b45-83bb-f226ba8773bc.json",
+        "tests/unit/test_cloud_context_guard.py"
+      ],
+      "confidence": "high",
+      "recommended_fix": "Anclar la coincidencia a un limite de palabra. `\\.env\\b` sigue atrapando .env, .env.example y /app/.env, y deja pasar os.environ. Solo una corrida real sobre un repositorio ajeno lo expone: ningun fixture del proyecto lee variables de entorno en el contenido que viaja."
+    },
+    {
+      "severity": "critical",
+      "title": "El entorno efimero solo instala proyectos que traen pyproject.toml",
+      "mechanism": "_prepare_project sale temprano si no existe pyproject.toml, dejando el entorno sin las dependencias del proyecto. Un proyecto que declara lo suyo en requirements.txt -la forma mas comun en Python- recibe un entorno vacio, cada prueba muere con ModuleNotFoundError y el Reviewer lo lee como codigo defectuoso. Medido sobre FlaskApiProduct: 'No module named flask' al cargar conftest, tres ciclos de remediacion contra un problema que no estaba en el codigo, y HUMAN_REVIEW_REQUIRED al final. El endpoint que el Developer escribio era correcto en los seis puntos del requerimiento.",
+      "source_layer": "5. Environment provisioning",
+      "root_cause": "components.py ya trata requirements.txt y setup.py como manifiestos de un componente Python; la instalacion conocia un conjunto mas chico. Detectar y poder ejecutar dejaron de coincidir, y la diferencia se manifiesta como un fallo de pruebas en vez de como lo que es.",
+      "evidence_refs": [
+        "src/engineering_team/mcp/quality.py:593",
+        "src/engineering_team/components.py:37",
+        "evaluation/reports/e2e-flask.json"
+      ],
+      "confidence": "high",
+      "recommended_fix": "Instalar desde requirements.txt cuando no hay backend de construccion, y atar la lista de manifiestos instalables a la que usa la deteccion para que no puedan divergir otra vez."
+    },
+    {
+      "severity": "high",
+      "title": "El entorno efimero impone al proyecto el Python del operador",
+      "mechanism": "El venv se construye con sys._base_executable, o sea la version que corre la maquina del operador. Un proyecto que fija dependencias soportadas hasta 3.12 no puede instalarse en una maquina con 3.14: pip no encuentra wheel, cae a compilar desde fuente y falla. Medido sobre FlaskApiProduct con pandas==2.1.4, que publica cp39-cp312 y ningun cp314; el interprete base era 3.14.7. El error llega como 'security validation tool did not pass' desde scan_dependencies, que no dice nada de versiones de interprete.",
+      "source_layer": "5. Environment provisioning",
+      "root_cause": "Un proyecto declara que Python soporta; el runner de proceso no puede darselo porque solo tiene el del host. Es exactamente lo que la ADR 2 anticipo al elegir contenedores: el aislamiento no alcanza si no puede proveer tambien el toolchain. El perfil de stack fija una sola imagen de Python, asi que tampoco resuelve por si solo un proyecto que necesita otra version.",
+      "evidence_refs": [
+        "src/engineering_team/mcp/runner.py:988",
+        "src/engineering_team/stacks.py",
+        "docs/architecture/decisions/0002-container-runner.md"
+      ],
+      "confidence": "high",
+      "recommended_fix": "Derivar la version de Python del proyecto (requires-python, clasificadores, .python-version, o el rango que sus pines soportan) y elegir la imagen del perfil en consecuencia. Sin eso, el runner de contenedor mejora el aislamiento pero repite el problema con una version distinta."
     }
   ],
   "ordered_fix_plan": [
@@ -202,6 +244,24 @@
       "goal": "Limite de lectura declarado y ampliable para Architecture",
       "why_now": "El ciclo de remediacion reintenta con los mismos 4 archivos, asi que un diseno mal fundamentado no puede corregirse por reintento.",
       "expected_effect": "Architecture puede declarar cobertura insuficiente y ampliar su lectura, en vez de disenar sobre el 2-24% del proyecto sin saberlo."
+    },
+    {
+      "order": 9,
+      "goal": "Guardrail de contexto cloud que distinga un archivo de un identificador",
+      "why_now": "Sin esto el sistema no puede procesar practicamente ningun repositorio Python real.",
+      "expected_effect": "El Developer puede ejecutar sobre proyectos que leen su configuracion del entorno."
+    },
+    {
+      "order": 10,
+      "goal": "Instalar las dependencias que el proyecto declara, en la forma en que las declara",
+      "why_now": "Sin esto la mayoria de los proyectos Python reales fallan sus pruebas por un motivo que no es su codigo.",
+      "expected_effect": "Las pruebas corren contra las dependencias del proyecto y el veredicto habla del codigo."
+    },
+    {
+      "order": 11,
+      "goal": "Elegir el interprete que el proyecto soporta, no el del operador",
+      "why_now": "Un proyecto con pines de hace dos anos no se puede construir en una maquina moderna, y el error no dice por que.",
+      "expected_effect": "Las dependencias se instalan desde wheels y la fase de pruebas habla del codigo."
     }
   ]
 }

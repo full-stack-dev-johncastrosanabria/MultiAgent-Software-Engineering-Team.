@@ -117,6 +117,9 @@ def _without_documented_parameters(text: str) -> str:
     return _DOC_PARAM.sub(mask, text)
 
 
+_ENV_FILE = re.compile(r"\.env\b", re.IGNORECASE)
+
+
 def _scan_text(text: str) -> str:
     text = _without_plain_string_annotations(text)
     text = re.sub(
@@ -145,9 +148,29 @@ def redact_secrets(value: str, known_values: Iterable[str] = ()) -> str:
     )
 
 
+def _names_a_credential_file(name: str) -> bool:
+    """Imported lazily: repository_evidence depends on this module, not the other
+    way round, and a top-level import would close the cycle."""
+    from engineering_team.repository_evidence import is_credential_path
+
+    return is_credential_path(name)
+
+
 def require_safe_cloud_context(value: Any) -> None:
     if isinstance(value, dict):
         if any(str(key).lower() in _SENSITIVE_KEYS for key in value):
+            raise ValueError("sensitive content is not allowed in cloud context")
+        # A structure that names a credential file *and* carries content is
+        # presenting that file's contents. Structural, not textual: prose that
+        # mentions .env is a project explaining itself, while {"file": ".env",
+        # "content": ...} is the file itself. Unreachable through the repository
+        # ports, which never read such a path, and kept as the layer beneath them.
+        named = next(
+            (str(value[k]) for k in ("file", "path", "filename") if k in value), ""
+        )
+        if named and _names_a_credential_file(named) and any(
+            k in value for k in ("content", "contents", "body", "text")
+        ):
             raise ValueError("sensitive content is not allowed in cloud context")
         for item in value.values():
             require_safe_cloud_context(item)
@@ -157,7 +180,18 @@ def require_safe_cloud_context(value: Any) -> None:
             require_safe_cloud_context(item)
         return
     text = str(value)
-    if ".env" in text.lower() or re.search(
-        r"(?i)(api[_-]?key|access[_-]?token|password|secret)\s*[=:]\s*[^\s,]+", _scan_text(text)
+    # Checks content, not filenames. Mentioning a .env file is not a secret: a
+    # comment saying where configuration comes from, a .gitignore entry, a setup
+    # document explaining it. Measured against a real repository that mention
+    # appeared in five files, and `os.environ` matched too because `.environ`
+    # begins with `.env` -- the Developer stage could not run at all.
+    #
+    # The contents of such a file never reach a prompt, and not because of this
+    # check: `safe_repository_path` admits only an allowlist of source suffixes,
+    # and `is_credential_path` excludes .env by name on top of that. Refusing the
+    # mention as well bought nothing and cost every project that has one.
+    if re.search(
+        r"(?i)(api[_-]?key|access[_-]?token|password|secret)\s*[=:]\s*[^\s,]+",
+        _scan_text(text),
     ):
         raise ValueError("sensitive content is not allowed in cloud context")

@@ -234,3 +234,47 @@ def test_a_project_with_no_services_is_unaffected(tmp_path: Path) -> None:
     recorder = _Recorder(tmp_path)
     QualityMCP(tmp_path, runner=recorder, services=stack).run_tests(AgentRole.TESTING)
     assert recorder.commands, "the tests should still have run"
+
+
+# -- finding 10: a project declares its dependencies somewhere ---------------
+
+
+def _pip_installs(commands: list[list[str]]) -> list[list[str]]:
+    return [c for c in commands if "pip" in " ".join(c) and "install" in c]
+
+
+def test_a_project_with_only_requirements_txt_gets_its_dependencies(tmp_path: Path) -> None:
+    """Measured against FlaskApiProduct: no pyproject.toml, so the environment
+    was left empty, every test died with ModuleNotFoundError: No module named
+    'flask', and the Reviewer looped the Developer three times over a problem
+    that had nothing to do with the code."""
+    from engineering_team.contracts.enums import AgentRole
+
+    (tmp_path / "requirements.txt").write_text("flask==3.0.0\n", encoding="utf-8")
+    recorder = _Recorder(tmp_path)
+    QualityMCP(tmp_path, runner=recorder).run_tests(AgentRole.TESTING)
+
+    installs = _pip_installs(recorder.commands)
+    assert installs, "the project's dependencies were never installed"
+    assert any("requirements.txt" in " ".join(c) for c in installs), installs
+
+
+def test_detection_and_installation_agree_about_what_a_python_project_is() -> None:
+    """components.py already treats requirements.txt as a Python manifest.
+    Installation knowing a narrower set is how the gap appeared."""
+    from engineering_team.components import _MANIFEST_NAMES
+    from engineering_team.mcp.quality import PROJECT_MANIFESTS
+
+    python_manifests = {
+        name for name, stack in _MANIFEST_NAMES.items() if stack == "python"
+    }
+    assert python_manifests <= set(PROJECT_MANIFESTS)
+
+
+def test_a_project_with_no_manifest_at_all_still_runs(tmp_path: Path) -> None:
+    """Nothing to install is not a failure."""
+    from engineering_team.contracts.enums import AgentRole
+
+    recorder = _Recorder(tmp_path)
+    QualityMCP(tmp_path, runner=recorder).run_tests(AgentRole.TESTING)
+    assert recorder.commands, "the suite should still have been attempted"
