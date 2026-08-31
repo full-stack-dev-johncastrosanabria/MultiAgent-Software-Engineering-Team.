@@ -337,6 +337,7 @@ def test_architecture_searches_repeated_domain_terms_before_generic_request_word
 
     assert "stock" in terms[:3]
     assert terms.index("stock") < terms.index("productos")
+    assert "low_stock" in terms[:3]
 
 
 def test_architecture_prompt_contains_bounded_untrusted_repository_and_rag_blocks() -> None:

@@ -47,10 +47,17 @@ class ArchitectureAgent(AgentBase[ArchitectureProposal]):
             " ".join(getattr(specification, "acceptance_criteria", [])),
         ]
         terms = []
+        route_aliases: set[str] = set()
         for token in re.findall(r"[A-Za-z_][A-Za-z0-9_-]*", " ".join(values).lower()):
             normalized = token.strip("_-")
             if len(normalized) >= 4 and normalized not in cls._STOP_WORDS:
                 terms.append(normalized)
+                # A product requirement normally spells an HTTP route with a
+                # hyphen, while implementation symbols use underscores.
+                if "-" in normalized:
+                    alias = normalized.replace("-", "_")
+                    terms.append(alias)
+                    route_aliases.add(alias)
         first_seen = {term: index for index, term in enumerate(terms)}
         frequency = {term: terms.count(term) for term in first_seen}
         # The graph can issue only three bounded searches. A repeated domain term
@@ -58,7 +65,9 @@ class ArchitectureAgent(AgentBase[ArchitectureProposal]):
         # requirement, and it reaches supporting modules whose path has no API name.
         return sorted(
             first_seen,
-            key=lambda term: (-frequency[term], -len(term), first_seen[term]),
+            key=lambda term: (
+                -int(term in route_aliases), -frequency[term], -len(term), first_seen[term],
+            ),
         )
 
     @staticmethod
