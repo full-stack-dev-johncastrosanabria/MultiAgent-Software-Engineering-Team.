@@ -17,10 +17,10 @@ index says where each one stands.
 | 11 | high | The ephemeral environment imposes the operator's Python on the project | **fixed** — the container image follows the interpreter derived from the project's pins, verified against FlaskApiProduct: 32 seconds, Python 3.12, every dependency from a wheel, 62 tests passing. Previously **partly fixed** — the failure now says so: an install that fell back to a source build is reported as INFRASTRUCTURE_ERROR naming the interpreter, instead of a wall of ninja output read as a code defect. Declared requirements are read where a project states one. Actually *providing* a different interpreter still needs a version-matched container image |
 | 10 | critical | The ephemeral environment installs only projects that ship a pyproject.toml | **fixed** — a project that declares its dependencies in requirements.txt gets them, and the installable manifests are tied to the ones detection recognises |
 | 9 | critical | The cloud-context guardrail blocks any project that reads environment variables | **fixed** — `.env` is matched as a file reference and not as a substring of `os.environ` |
-| 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — a byte budget replaced the file count, and the prompt now states how much evidence was withheld |
+| 8 | high | Architecture designs from four files and cannot ask for a fifth | **in progress** — a byte budget replaced the file count, but a real Flask run found a second defect: the state divided that budget into zero-byte reads and the candidate consumed four paths in reverse relevance order. The correction is unit-validated; the next Flask run must prove it against the actual inventory module |
 | 13 | high | Reviewer does not distinguish a regression from a new failing test | **fixed** — `a82ec93`, `9ad580e`; the Flask retry labelled the two formerly passing tests as `REGRESSION` before the new endpoint failures |
-| 14 | high | Apply authorizes only file paths named literally in the requirement | **in progress** — the second repair makes the orchestrator select and reread the relevant source even with an auxiliary `CHANGELOG.md`; it awaits the third clean Flask run |
-| 15 | high | Cold Quality provisioning expires before a real project reaches tests | **in progress** — Quality used the same 120-second budget as ordinary MCP calls, leaving roughly 115 seconds for the first dependency install. `QUALITY_TIMEOUT_SECONDS` now supplies a separate bounded 600-second budget; it awaits the next clean Flask external run |
+| 14 | high | Apply authorizes only file paths named literally in the requirement | **fixed** — the fourth Flask run wrote the inspected `app/routes/products.py` together with `tests/test_products.py`, without expanding the scope to the auxiliary `CHANGELOG.md` |
+| 15 | high | Cold Quality provisioning expires before a real project reaches tests | **fixed** — with the separate bounded 600-second Quality budget, the fourth Flask run reached Security, Testing and Reviewer; its later failure was functional, not an install timeout |
 
 ## Two things worth remembering
 
@@ -98,3 +98,15 @@ that Flask code is wrong. Quality now has its own configurable, finite
 `QUALITY_TIMEOUT_SECONDS` budget (600 seconds by default); repository MCP and
 model calls retain their existing shorter budgets. A fourth clean external run
 must reach Testing and Reviewer before findings 14 and 15 can close.
+
+**Finding 8 needed a second external validation.** The third Flask attempt
+showed 24 Architecture reads but no useful source content reached the candidate:
+the per-item division became zero, and its remaining four-path loop traversed
+the least relevant reads first. `inventory_analytics.py`, which already defined
+the low-stock query, was discovered but not used; Developer invented a method
+on `Product` and the endpoint returned 500. The repair applies the water-filled
+16 KiB budget before evidence enters state, keeps ranked order through prompt
+and candidate construction, prioritizes repeated domain terms such as `stock`
+over generic request verbs, and measures sufficiency from visible source slices
+rather than from files merely fetched. Unit regressions use seven 2.4 KiB files
+and prove the seventh relevant boundary reaches the proposal.

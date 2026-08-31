@@ -151,7 +151,8 @@
         "src/engineering_team/graph/routers.py:22"
       ],
       "confidence": "high",
-      "recommended_fix": "Tres piezas, en orden. (1) Decirle al agente que fue truncado: pasarle cuantas rutas relevantes se descartaron, para que pueda declarar cobertura insuficiente en vez de disenar a ciegas. (2) Dejar que pida archivos por nombre dentro de un presupuesto de bytes, en vez de un tope fijo de conteo -4 archivos de 40 lineas y 4 de 4.000 no son la misma evidencia-. (3) Variar los terminos en remediacion usando la retroalimentacion del Reviewer, para que un reintento no repita la lectura anterior."
+      "recommended_fix": "Tres piezas, en orden. (1) Decirle al agente que fue truncado: pasarle cuantas rutas relevantes se descartaron, para que pueda declarar cobertura insuficiente en vez de disenar a ciegas. (2) Dejar que pida archivos por nombre dentro de un presupuesto de bytes, en vez de un tope fijo de conteo -4 archivos de 40 lineas y 4 de 4.000 no son la misma evidencia-. (3) Variar los terminos en remediacion usando la retroalimentacion del Reviewer, para que un reintento no repita la lectura anterior.",
+      "validation": "La cuarta corrida de FlaskApiProduct revelo una segunda implementacion incompleta: se leian 24 rutas, pero el reparto previo producia slices de cero y el candidato recorria cuatro lecturas en orden inverso. La correccion reparte el presupuesto antes de persistir evidencia, conserva el ranking y calcula suficiencia sobre slices visibles; una regresion prueba que la septima frontera relevante alcanza la propuesta."
     },
     {
       "severity": "critical",

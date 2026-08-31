@@ -5,7 +5,15 @@ from typing import Any, ClassVar
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.contracts.models import ArchitectureProposal
 from engineering_team.models.context import ContextEnvelope
-from engineering_team.repository_evidence import bounded_utf8, result_path
+from engineering_team.repository_evidence import (
+    ARCHITECTURE_ENVELOPE_BYTES,
+    MAX_ARCHITECTURE_READ_BYTES,
+    MAX_ARCHITECTURE_READ_CANDIDATES,
+    MIN_ARCHITECTURE_SLICE_BYTES,
+    bounded_redacted_text,
+    budgeted_slices,
+    result_path,
+)
 
 from .base import AgentBase
 
@@ -43,7 +51,15 @@ class ArchitectureAgent(AgentBase[ArchitectureProposal]):
             normalized = token.strip("_-")
             if len(normalized) >= 4 and normalized not in cls._STOP_WORDS:
                 terms.append(normalized)
-        return list(dict.fromkeys(terms))
+        first_seen = {term: index for index, term in enumerate(terms)}
+        frequency = {term: terms.count(term) for term in first_seen}
+        # The graph can issue only three bounded searches. A repeated domain term
+        # such as "stock" is a better discriminator than the opening verb of a
+        # requirement, and it reaches supporting modules whose path has no API name.
+        return sorted(
+            first_seen,
+            key=lambda term: (-frequency[term], -len(term), first_seen[term]),
+        )
 
     @staticmethod
     def rank_paths(paths: list[str], search_hits: list[str], terms: list[str]) -> list[str]:
@@ -86,20 +102,30 @@ class ArchitectureAgent(AgentBase[ArchitectureProposal]):
 
     def execute(self, envelope: ContextEnvelope) -> ArchitectureProposal:
         latest_reads: dict[str, Any] = {}
-        for item in reversed(envelope.tool_results):
+        for item in envelope.tool_results:
             if (
                 item.status is ToolStatus.SUCCESS
                 and item.allowed_role is AgentRole.ARCHITECTURE
                 and item.tool_name in {"read_file", "get_file_content"}
                 and (path := result_path(item.input_summary))
-                and path not in latest_reads
             ):
+                latest_reads.pop(path, None)
                 latest_reads[path] = item
 
         inspected: dict[str, str] = {}
         read_sources: list[str] = []
-        for path, item in list(latest_reads.items())[:4]:
-            inspected[path] = bounded_utf8(item.output_summary)
+        reads = list(latest_reads.items())[-MAX_ARCHITECTURE_READ_CANDIDATES:]
+        sizes = [len(item.output_summary.encode("utf-8")) for _, item in reads]
+        slices, _ = budgeted_slices(
+            sizes,
+            MAX_ARCHITECTURE_READ_BYTES,
+            minimum=MIN_ARCHITECTURE_SLICE_BYTES,
+            overhead=ARCHITECTURE_ENVELOPE_BYTES,
+        )
+        for (path, item), budget in zip(reads, slices, strict=False):
+            if budget <= 0:
+                continue
+            inspected[path] = bounded_redacted_text(item.output_summary, budget)
             read_sources.append(self._read_reference(item, path))
 
         rag_sources = [item.chunk_id for item in envelope.rag_evidence]

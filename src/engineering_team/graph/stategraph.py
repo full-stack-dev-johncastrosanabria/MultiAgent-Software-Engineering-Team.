@@ -27,13 +27,16 @@ from engineering_team.contracts.state import EngineeringState
 from engineering_team.guardrails.validation import require_explicit_destructive_authorization
 from engineering_team.models.context import build_context
 from engineering_team.repository_evidence import (
+    ARCHITECTURE_ENVELOPE_BYTES,
     MAX_ARCHITECTURE_RAG_ITEMS,
     MAX_ARCHITECTURE_READ_BYTES,
     MAX_ARCHITECTURE_READ_CANDIDATES,
     MAX_ARCHITECTURE_SEARCH_BYTES,
+    MIN_ARCHITECTURE_SLICE_BYTES,
     assess_evidence_sufficiency,
     bounded_rag_evidence,
     bounded_redacted_text,
+    budgeted_slices,
     parse_repository_paths,
     summarize_path_tool_result,
 )
@@ -222,6 +225,7 @@ def build_engineering_graph(
             architecture_rag = list(rag_evidence)
             architecture_read_results: list[tuple[str, Any]] = []
             architecture_coverage: Any = None
+            architecture_ranked_count = 0
             architecture_retrieval_ran = False
             developer_apply_targets: list[str] = []
             if retriever is not None and role in {
@@ -295,11 +299,7 @@ def build_engineering_graph(
                     # Measured here, from what was actually fetched against what
                     # ranking said was worth fetching. The stage does not get to
                     # report on itself.
-                    architecture_coverage = assess_evidence_sufficiency(
-                        read=len(architecture_read_results),
-                        ranked=len(ranked),
-                        omitted=max(0, len(ranked) - len(architecture_read_results)),
-                    )
+                    architecture_ranked_count = len(ranked)
                 elif role is AgentRole.DEVELOPER and result.status is ToolStatus.SUCCESS:
                     listed_paths = [
                         line.strip().replace("\\", "/")
@@ -357,20 +357,46 @@ def build_engineering_graph(
                         seen_chunks.add(item.chunk_id)
                     if len(unique_rag) == MAX_ARCHITECTURE_RAG_ITEMS:
                         break
-                evidence_count = len(unique_rag) + len(architecture_read_results)
-                content_budget = (
-                    max(0, MAX_ARCHITECTURE_READ_BYTES // evidence_count - 1024)
-                    if evidence_count else 0
+                # The prompt applies this same water-filled budget when rendering.
+                # Count only files that can actually receive a useful slice as
+                # evidence; fetching 24 files whose content is then dropped is not
+                # architecture grounding.
+                evidence_sizes = [
+                    min(len(raw_read.output_summary.encode("utf-8")), MAX_ARCHITECTURE_READ_BYTES)
+                    for _, raw_read in architecture_read_results
+                ]
+                evidence_sizes.extend(
+                    min(len(item.fragment.encode("utf-8")), MAX_ARCHITECTURE_READ_BYTES)
+                    for item in unique_rag
+                )
+                slices, _ = budgeted_slices(
+                    evidence_sizes,
+                    MAX_ARCHITECTURE_READ_BYTES,
+                    minimum=MIN_ARCHITECTURE_SLICE_BYTES,
+                    overhead=ARCHITECTURE_ENVELOPE_BYTES,
+                )
+                read_slices = slices[:len(architecture_read_results)]
+                rag_slices = slices[len(architecture_read_results):]
+                visible_reads = sum(slice_size > 0 for slice_size in read_slices)
+                architecture_coverage = assess_evidence_sufficiency(
+                    read=visible_reads,
+                    ranked=architecture_ranked_count,
+                    omitted=max(0, architecture_ranked_count - visible_reads),
                 )
                 rag_evidence = [
-                    bounded_rag_evidence(item, content_budget)
-                    for item in unique_rag
+                    bounded_rag_evidence(item, budget)
+                    for item, budget in zip(unique_rag, rag_slices, strict=False)
+                    if budget > 0
                 ]
-                for path, raw_read in architecture_read_results:
+                for (path, raw_read), budget in zip(
+                    architecture_read_results, read_slices, strict=False
+                ):
+                    if budget <= 0:
+                        continue
                     read = raw_read.model_copy(update={
                         "input_summary": f"path={path}",
                         "output_summary": bounded_redacted_text(
-                            raw_read.output_summary, content_budget
+                            raw_read.output_summary, budget
                         ),
                         "error": (
                             bounded_redacted_text(raw_read.error, 2 * 1024)

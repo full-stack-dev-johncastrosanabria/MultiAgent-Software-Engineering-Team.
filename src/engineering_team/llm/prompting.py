@@ -19,6 +19,7 @@ from engineering_team.repository_evidence import (
     ARCHITECTURE_ENVELOPE_BYTES,
     MAX_ARCHITECTURE_RAG_ITEMS,
     MAX_ARCHITECTURE_READ_BYTES,
+    MAX_ARCHITECTURE_READ_CANDIDATES,
     MAX_DEVELOPER_PRIOR_BYTES,
     MIN_ARCHITECTURE_SLICE_BYTES,
     bounded_rag_evidence,
@@ -174,17 +175,22 @@ def build_role_prompts(
     elif role is AgentRole.ARCHITECTURE:
         architecture_reads = []
         seen_paths: set[str] = set()
-        for item in reversed(envelope.tool_results):
+        for item in envelope.tool_results:
             path = result_path(item.input_summary)
             if (
                 item.status is ToolStatus.SUCCESS
                 and item.allowed_role is AgentRole.ARCHITECTURE
                 and item.tool_name in {"read_file", "get_file_content"}
                 and path
-                and path not in seen_paths
             ):
+                if path in seen_paths:
+                    architecture_reads = [
+                        prior for prior in architecture_reads
+                        if result_path(prior.input_summary) != path
+                    ]
                 architecture_reads.append(item)
                 seen_paths.add(path)
+        architecture_reads = architecture_reads[-MAX_ARCHITECTURE_READ_CANDIDATES:]
         architecture_rag = envelope.rag_evidence[:MAX_ARCHITECTURE_RAG_ITEMS]
         # A fixed file count spent the same budget on four short files as on four
         # long ones. Splitting by size lets a repository of small modules arrive
