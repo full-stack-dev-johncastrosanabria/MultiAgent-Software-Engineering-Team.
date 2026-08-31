@@ -96,7 +96,9 @@ def execute_on_project(
     started = time.perf_counter()
     with (
         MCPRepositoryClient(project_root, timeout_seconds=120) as repository_mcp,
-        MCPQualityClient(project_root, timeout_seconds=120) as quality_mcp,
+        MCPQualityClient(
+            project_root, timeout_seconds=120, settings=settings
+        ) as quality_mcp,
     ):
         graph = build_engineering_graph(
             repository_mcp=repository_mcp,

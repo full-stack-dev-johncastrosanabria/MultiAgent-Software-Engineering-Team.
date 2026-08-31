@@ -122,16 +122,33 @@ def build_quality_server(
     return server
 
 
+def settings_from_arguments(*, runner: str, image: str) -> Settings:
+    """Settings for a server told what to be, rather than left to infer it.
+
+    The file-based settings still load, so everything else behaves as it does in
+    the parent; only the choices that must not be lost are overridden.
+    """
+    return Settings(quality_runner=runner, quality_container_image=image)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--kind", choices=("repository", "quality"), required=True)
     parser.add_argument("--root", required=True)
     parser.add_argument("--timeout", type=float, default=60)
+    # Passed explicitly because the MCP SDK launches this process with a scrubbed
+    # environment -- HOME, LOGNAME, PATH, SHELL, USER and nothing else -- so a
+    # setting given as an environment variable never arrives.
+    parser.add_argument("--runner", default="process")
+    parser.add_argument("--image", default="")
     args = parser.parse_args()
     server = (
         build_repository_server(args.root)
         if args.kind == "repository"
-        else build_quality_server(args.root, args.timeout)
+        else build_quality_server(
+            args.root, args.timeout,
+            settings=settings_from_arguments(runner=args.runner, image=args.image),
+        )
     )
     server.run("stdio")
 

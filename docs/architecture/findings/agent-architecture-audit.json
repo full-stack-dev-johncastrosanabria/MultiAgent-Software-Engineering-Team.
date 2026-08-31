@@ -194,6 +194,20 @@
       ],
       "confidence": "high",
       "recommended_fix": "Derivar la version de Python del proyecto (requires-python, clasificadores, .python-version, o el rango que sus pines soportan) y elegir la imagen del perfil en consecuencia. Sin eso, el runner de contenedor mejora el aislamiento pero repite el problema con una version distinta."
+    },
+    {
+      "severity": "high",
+      "title": "La configuracion no llega al servidor MCP que actua sobre ella",
+      "mechanism": "El SDK de MCP lanza el servidor con un entorno depurado: HOME, LOGNAME, PATH, SHELL y USER, nada mas. Cualquier ajuste dado como variable de entorno -QUALITY_RUNNER entre ellos- se pierde. Una corrida configurada para contenedores uso el sandbox de proceso sobre el Python 3.14 del operador sin decir nada, y fallo con el error de interprete que el contenedor existia para evitar. Peor que no funcionar: por .env SI funciona, porque Settings lee ese archivo por ruta dentro del hijo, asi que probar de una forma y desplegar de la otra da dos sistemas distintos.",
+      "source_layer": "6. MCP transport",
+      "root_cause": "La eleccion viajaba por herencia de entorno, que es precisamente lo que este transporte no garantiza. Las decisiones que no pueden perderse van como argumentos explicitos, donde su ausencia es visible.",
+      "evidence_refs": [
+        "src/engineering_team/mcp/client.py:43",
+        "src/engineering_team/mcp/server.py:127",
+        "evaluation/reports/e2e-flask-container.json"
+      ],
+      "confidence": "high",
+      "recommended_fix": "Pasar --runner e --image como argumentos del servidor, y afirmar en un test que el SDK no reenvia el entorno para que el supuesto no vuelva en silencio."
     }
   ],
   "ordered_fix_plan": [
@@ -262,6 +276,12 @@
       "goal": "Elegir el interprete que el proyecto soporta, no el del operador",
       "why_now": "Un proyecto con pines de hace dos anos no se puede construir en una maquina moderna, y el error no dice por que.",
       "expected_effect": "Las dependencias se instalan desde wheels y la fase de pruebas habla del codigo."
+    },
+    {
+      "order": 12,
+      "goal": "Que la configuracion llegue al proceso que actua sobre ella",
+      "why_now": "Sin esto, elegir el runner en contenedor no tiene efecto y el sistema miente sobre su propia configuracion.",
+      "expected_effect": "Un runner configurado es el runner que corre."
     }
   ]
 }

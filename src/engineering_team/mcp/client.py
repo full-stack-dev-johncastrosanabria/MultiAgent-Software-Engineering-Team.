@@ -24,8 +24,12 @@ _ClientT = TypeVar("_ClientT", bound="_MCPStdioClient")
 class _MCPStdioClient:
     transport = "stdio"
 
-    def __init__(self, root: str | Path, kind: str, *, timeout_seconds: float = 60) -> None:
+    def __init__(
+        self, root: str | Path, kind: str, *, timeout_seconds: float = 60,
+        settings: Any = None,
+    ) -> None:
         self.root = Path(root).resolve()
+        self.settings = settings
         self.kind = kind
         self.timeout_seconds = timeout_seconds
         self.last_protocol_version: str | None = None
@@ -45,6 +49,9 @@ class _MCPStdioClient:
             args=[
                 "-I", "-m", "engineering_team.mcp.server", "--kind", self.kind,
                 "--root", str(self.root), "--timeout", str(self.timeout_seconds),
+                # Explicit, because the SDK gives the child almost no environment.
+                "--runner", getattr(self.settings, "quality_runner", None) or "process",
+                "--image", getattr(self.settings, "quality_container_image", None) or "",
             ],
             cwd=Path(sys.executable).resolve().parent,
         )
@@ -295,8 +302,12 @@ class MCPRepositoryClient(_MCPStdioClient):
 
 
 class MCPQualityClient(_MCPStdioClient):
-    def __init__(self, root: str | Path, *, timeout_seconds: float = 60) -> None:
-        super().__init__(root, "quality", timeout_seconds=timeout_seconds)
+    def __init__(
+        self, root: str | Path, *, timeout_seconds: float = 60, settings: Any = None
+    ) -> None:
+        super().__init__(
+            root, "quality", timeout_seconds=timeout_seconds, settings=settings
+        )
 
     def run_tests(self, role: AgentRole, paths: list[str] | None = None) -> ToolResult:
         return self.call_tool("run_tests", role, paths=paths)

@@ -128,7 +128,10 @@ class EvaluationHarness:
             input={"scenario": scenario.identifier}, output=acceptance.model_dump(mode="json"),
         )
         with (
-            MCPQualityClient(run_workspace, timeout_seconds=timeout) as run_quality,
+            MCPQualityClient(
+                run_workspace, timeout_seconds=timeout,
+                settings=getattr(self, "settings", None),
+            ) as run_quality,
             MCPRepositoryClient(run_workspace, timeout_seconds=timeout) as run_repository,
         ):
             graph = build_engineering_graph(
@@ -334,7 +337,7 @@ def run_multimodel_acceptance(
     retriever = build_retriever(settings, settings.rag_persist_directory, reindex=True)
     with (
         MCPRepositoryClient(run_workspace) as repository_mcp,
-        MCPQualityClient(run_workspace) as quality_mcp,
+        MCPQualityClient(run_workspace, settings=settings) as quality_mcp,
     ):
         state = build_engineering_graph(
             repository_mcp=repository_mcp,
