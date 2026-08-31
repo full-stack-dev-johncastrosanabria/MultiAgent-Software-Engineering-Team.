@@ -98,7 +98,7 @@ def execute_on_project(
     with (
         MCPRepositoryClient(project_root, timeout_seconds=120) as repository_mcp,
         MCPQualityClient(
-            project_root, timeout_seconds=120, settings=settings
+            project_root, timeout_seconds=settings.quality_timeout_seconds, settings=settings
         ) as quality_mcp,
     ):
         graph = build_engineering_graph(

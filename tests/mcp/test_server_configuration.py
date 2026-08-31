@@ -43,6 +43,13 @@ def test_the_default_carries_the_default(tmp_path) -> None:
     assert args[args.index("--runner") + 1] == "process"
 
 
+def test_quality_timeout_travels_to_the_server(tmp_path) -> None:
+    client = MCPQualityClient(tmp_path, timeout_seconds=420)
+    args = client._parameters().args
+
+    assert args[args.index("--timeout") + 1] == "420"
+
+
 def test_the_server_builds_what_the_argument_asked_for(tmp_path) -> None:
     from engineering_team.mcp.server import settings_from_arguments
 

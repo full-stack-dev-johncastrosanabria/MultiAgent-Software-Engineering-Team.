@@ -74,6 +74,12 @@ distinguish a primary path from a fallback.
 without an image, raises. Constructing a QualityMCP without settings keeps the
 process sandbox, so the suite does not start depending on each machine's `.env`.*
 
+`QUALITY_TIMEOUT_SECONDS` is a separate, finite budget for one QualityMCP
+operation. It defaults to 600 seconds because a cold container must first fetch
+the project's dependencies; repository MCP and model timeouts remain shorter.
+The next FlaskApiProduct proof uses that budget before treating an install delay
+as a defect in the target project.
+
 ### 2. Profile per component
 [ADR 4](decisions/0004-profile-per-component.md). A component is a directory with a build manifest — `pom.xml`, `package.json`,
 `*.csproj`, `requirements.txt`. Detection is file existence, so it stays

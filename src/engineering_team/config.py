@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # nothing would say so -- the failure finding 5 describes for telemetry.
     quality_runner: str = "process"
     quality_container_image: str = ""
+    # A cold container may need the complete dependency graph before the first
+    # quality command can run. This stays bounded, separately from MCP lookup.
+    quality_timeout_seconds: float = Field(default=600, ge=30)
     # How work leaves the system. Off by default: delivery is outward-facing and
     # needs configuration as well as a per-run confirmation -- two keys, not one.
     delivery_backend: str = "none"

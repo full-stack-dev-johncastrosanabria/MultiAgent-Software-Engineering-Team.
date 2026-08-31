@@ -94,6 +94,8 @@ es Docker. Configure:
 QUALITY_RUNNER=container
 # Opcional: fija una imagen; si se omite, ASET deriva una imagen Python del proyecto.
 QUALITY_CONTAINER_IMAGE=
+# Limite por operacion de calidad, incluido instalar dependencias frias.
+QUALITY_TIMEOUT_SECONDS=600
 ```
 
 Con Docker Desktop en Windows, macOS o Linux, el mismo runner puede ejecutar el
@@ -101,6 +103,12 @@ proyecto con su toolchain dentro de un contenedor. Para Python, ASET deriva la
 version a partir de sus pines o declaracion; FlaskApiProduct, por ejemplo, se
 ejecuto con Python 3.12 cuando el host tenia Python 3.14. Una imagen explicita
 es necesaria si no se puede derivar una compatible.
+
+El primer `pip install`, restore o descarga de imagen puede tardar mas que una
+llamada MCP normal. `QUALITY_TIMEOUT_SECONDS` conserva un presupuesto finito por
+operacion de QualityMCP (600 segundos por defecto), separado de los 120 segundos
+de Repository MCP y de los timeouts de los modelos. Aumentelo solo para un
+aprovisionamiento frio medido; no convierte un bloqueo en una espera ilimitada.
 
 El runner de proceso y sus sandbox de Darwin/Linux se conservan para
 compatibilidad local, pero no son la frontera estrategica ni dan soporte

@@ -20,6 +20,7 @@ index says where each one stands.
 | 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — a byte budget replaced the file count, and the prompt now states how much evidence was withheld |
 | 13 | high | Reviewer does not distinguish a regression from a new failing test | **fixed** — `a82ec93`, `9ad580e`; the Flask retry labelled the two formerly passing tests as `REGRESSION` before the new endpoint failures |
 | 14 | high | Apply authorizes only file paths named literally in the requirement | **in progress** — the second repair makes the orchestrator select and reread the relevant source even with an auxiliary `CHANGELOG.md`; it awaits the third clean Flask run |
+| 15 | high | Cold Quality provisioning expires before a real project reaches tests | **in progress** — Quality used the same 120-second budget as ordinary MCP calls, leaving roughly 115 seconds for the first dependency install. `QUALITY_TIMEOUT_SECONDS` now supplies a separate bounded 600-second budget; it awaits the next clean Flask external run |
 
 ## Two things worth remembering
 
@@ -87,3 +88,13 @@ a source file is still missing. The selection and Developer-role reread now run
 in the orchestrator before it governs the candidate, so model context ordering
 cannot replace that writable scope. The integration test reproduces the exact
 three paths; the next Flask run remains the external proof.
+
+**Finding 15 was exposed by that same third Flask run.** The orchestrator chose
+and reread `app/routes/products.py`, then Developer produced both the endpoint
+and its test. Before Testing could decide anything, the first
+`pip install -r requirements.txt` exhausted the 120-second MCP deadline. That
+is an infrastructure budget exhausted during cold provisioning, not evidence
+that Flask code is wrong. Quality now has its own configurable, finite
+`QUALITY_TIMEOUT_SECONDS` budget (600 seconds by default); repository MCP and
+model calls retain their existing shorter budgets. A fourth clean external run
+must reach Testing and Reviewer before findings 14 and 15 can close.

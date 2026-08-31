@@ -238,6 +238,20 @@
       ],
       "confidence": "high",
       "recommended_fix": "Cuando no hay ninguna ruta fuente entre los objetivos, pero si hay una prueba, agregar como maximo una ruta fuente ya leida con exito por Repository MCP y con relevancia positiva respecto a requisito, especificacion y propuesta de Architecture. Documentacion auxiliar no satisface esa condicion. El orquestador debe volver a leer la ruta bajo Developer antes de gobernar el candidato, y normalizar changed_files a esa seleccion. No aceptar rutas inventadas ni ampliar una solicitud que ya nombra una fuente."
+    },
+    {
+      "severity": "high",
+      "title": "El aprovisionamiento frio de Quality vence antes de llegar a pruebas reales",
+      "mechanism": "execute_on_project entrega 120 segundos tanto a Repository MCP como a Quality MCP. Al iniciar una corrida real de FlaskApiProduct, el arranque del servidor y del contenedor deja aproximadamente 115 segundos para pip install -r requirements.txt; al vencer, Security informa un MCP_ERROR y la corrida exige revision humana sin haber ejecutado Testing ni Reviewer.",
+      "source_layer": "5. Environment provisioning",
+      "root_cause": "El presupuesto de una consulta de repositorio se reutiliza para una operacion que puede descargar imagenes y resolver la primera grafo de dependencias del proyecto. El limite es correcto, pero la unidad de trabajo no es la misma.",
+      "evidence_refs": [
+        "src/engineering_team/apply_run.py",
+        "src/engineering_team/config.py",
+        "evaluation/reports/traces/apply-18267024-dd2d-4651-a0f3-d22049b8c3d7.json"
+      ],
+      "confidence": "high",
+      "recommended_fix": "Configurar un presupuesto separado y finito para cada operacion de QualityMCP. QUALITY_TIMEOUT_SECONDS usa 600 segundos por defecto y conserva los 120 segundos de Repository MCP; validar con una nueva corrida limpia de FlaskApiProduct que alcance Testing y Reviewer."
     }
   ],
   "ordered_fix_plan": [
@@ -324,6 +338,12 @@
       "goal": "Autorizar fuente inspeccionada junto a una prueba explicitamente solicitada",
       "why_now": "Una correccion bien diagnosticada sigue sin poder aplicarse si la ruta de implementacion no aparece literalmente en el requerimiento.",
       "expected_effect": "Developer puede modificar el endpoint que Repository MCP ya fundamento, sin poder expandir arbitrariamente el alcance de escritura."
+    },
+    {
+      "order": 15,
+      "goal": "Separar el presupuesto de aprovisionamiento frio de QualityMCP",
+      "why_now": "Un proyecto real puede agotarlo antes de que exista evidencia de pruebas, y la corrida lo presenta como revision humana en vez de como infraestructura insuficiente.",
+      "expected_effect": "El primer restore o install conserva un limite finito apropiado para su unidad de trabajo y permite que Testing/Reviewer evalúen el codigo."
     }
   ]
 }
