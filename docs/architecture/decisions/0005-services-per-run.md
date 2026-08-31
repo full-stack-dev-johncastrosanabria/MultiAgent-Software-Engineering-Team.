@@ -78,3 +78,30 @@ changes no application code.
 SQL Server publishes `linux/amd64` only. On Apple Silicon that is emulation, for
 a service that starts on every run. Postgres and MySQL publish arm64 and do not
 have this problem, so parity between the two engines should not be promised.
+
+## What implementing it measured
+
+Compose is given the project's file and an ASET override as a second `-f`. Three
+things about that override were established by running it, not by reading docs.
+
+An empty `ports` list merges with the project's and leaves the published port in
+place; only the `!override` tag replaces it. That tag is YAML-only, so the
+override is emitted as YAML — which needs no library, unlike the parsing that
+finding 2 removed pyyaml for. Parsing is delegated to `docker compose config`,
+the same parser that later runs the file.
+
+Closing the `default` network closes nothing when a project names its own.
+PruebaNuevosIngresosBackend declares `pedidos-net` and never touches `default`,
+so an override that marked only `default` internal produced an isolated network
+no container was attached to while the services kept their route out. Every
+declared network is closed now, and the network the run actually uses is read
+back from a running container rather than derived from the project name.
+
+A compose file may also pin a global network name, as that one does. Two runs
+would then share a network and either one's teardown would remove it under the
+other, so the override renames each network into the run's own scope.
+
+A container can be given only one network at start, and a command may need both
+the project's internal service network and a route to the registry. The runner
+therefore creates the container, attaches the second network when the command
+declares it needs one, and starts it — `docker run` cannot express this.

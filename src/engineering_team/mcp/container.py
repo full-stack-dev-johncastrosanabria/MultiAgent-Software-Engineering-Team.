@@ -64,6 +64,7 @@ class ContainerRunner:
         runtime: str = "docker",
         limits: ContainerLimits | None = None,
         allow_unpinned_image: bool = False,
+        network: str | None = None,
     ) -> None:
         if not allow_unpinned_image and not _DIGEST_PINNED.match(image):
             raise ValueError(
@@ -79,6 +80,10 @@ class ContainerRunner:
         self.image = image
         self.runtime = runtime
         self.limits = limits or ContainerLimits()
+        # The run's service network, when the project declares dependencies. It
+        # is internal, so a command that also needs the registry is attached to
+        # the default bridge as well -- see _run_container.
+        self.network = network
         self._token = uuid.uuid4().hex[:12]
         self._volume = f"aset-env-{self._token}"
         self._sequence = 0
@@ -192,7 +197,11 @@ class ContainerRunner:
         """Build the argv that starts one command inside its own container."""
         args = [
             self.runtime,
-            "run",
+            # `create` and not `run`: a container can only be given one network at
+            # start, and a command may need both the project's internal service
+            # network and a route to the registry. Connecting the second one
+            # requires the container to exist first.
+            "create",
             "--rm",
             "--name",
             name,
@@ -203,7 +212,7 @@ class ContainerRunner:
             "--security-opt",
             "no-new-privileges",
             "--network",
-            "bridge" if request.allow_network else "none",
+            self._primary_network(request),
             "--memory",
             self.limits.memory,
             "--cpus",
@@ -226,6 +235,21 @@ class ContainerRunner:
         args.append(self.image)
         args.extend(request.args)
         return args
+
+    def _primary_network(self, request: CommandRequest) -> str:
+        """The network the container starts on.
+
+        The service network wins when there is one: reaching the project's
+        database is not optional, and the route to the registry is added
+        afterwards for the commands that need it.
+        """
+        if self.network:
+            return self.network
+        return "bridge" if request.allow_network else "none"
+
+    def _needs_extra_route(self, request: CommandRequest) -> bool:
+        """Whether a second, external network has to be attached after creation."""
+        return bool(self.network) and request.allow_network
 
     def _container_path(self, path: Path) -> PurePosixPath:
         """Translate a host path under the workspace to its path in the container."""
@@ -291,8 +315,18 @@ class ContainerRunner:
         timeout = _remaining(request.deadline)
         stdout_buffer = _BoundedOutput(_OUTPUT_LIMIT)
         stderr_buffer = _BoundedOutput(_OUTPUT_LIMIT)
+        created = self._quiet(args, timeout=max(1.0, min(timeout, 120.0)))
+        if created is None or created.returncode != 0:
+            detail = "" if created is None else created.stderr.strip()[-400:]
+            raise RuntimeError(f"container was not created: {detail}")
+        if self._needs_extra_route(request):
+            # The service network is internal by construction, so a command that
+            # also resolves dependencies needs a second attachment.
+            self._quiet([self.runtime, "network", "connect", "bridge", name], timeout=60)
         process = subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            [self.runtime, "start", "--attach", name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         readers = tuple(
             threading.Thread(

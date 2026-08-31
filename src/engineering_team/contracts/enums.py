@@ -62,4 +62,9 @@ class ErrorCode(StrEnum):
     RAG_ERROR = "RAG_ERROR"
     CLOUD_FALLBACK_UNAVAILABLE = "CLOUD_FALLBACK_UNAVAILABLE"
     MCP_ERROR = "MCP_ERROR"
+    # A dependency the project needs never became ready. Distinct from
+    # TOOL_ERROR on purpose: the code under test was never given a chance to
+    # run, so reporting it as a failing test points remediation at the wrong
+    # thing -- the misleading headline finding 7 describes.
+    INFRASTRUCTURE_ERROR = "INFRASTRUCTURE_ERROR"
     AGENT_TIMEOUT = "AGENT_TIMEOUT"

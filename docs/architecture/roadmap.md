@@ -103,7 +103,12 @@ tests fail, the gate reads "tests failed", and an infrastructure problem is
 reported as a code problem — the misleading-headline failure of
 [finding 7](findings/README.md).
 
-*Status: not started. Depends on 2.*
+*Status: done. Compose owns the lifecycle -- it already knows the images, the
+healthchecks and the ordering, and `--wait` blocks until healthy rather than
+sleeping for a guess. What ASET adds is an override that closes every declared
+network and removes every published port, and the decision to start
+infrastructure only. A service that never becomes ready raises with
+INFRASTRUCTURE_ERROR, so it is never reported as a failing test.*
 
 ### 4. The project's own compose as the primary source
 [ADR 5](decisions/0005-services-per-run.md). Where a repository ships a compose file, use it rather than inferring a topology.
