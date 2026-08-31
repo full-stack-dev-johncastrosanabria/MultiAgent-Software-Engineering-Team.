@@ -111,6 +111,12 @@ PROFILES: dict[str, StackProfile] = {
             "mvn", "-B", "-q", f"-Dmaven.repo.local={ENVIRONMENT}/m2",
             "-DskipTests", "package",
         ),
+        # The container deliberately runs as the host user. Maven otherwise
+        # inherits the image's /root home and fails before resolving anything.
+        environment=(
+            ("HOME", f"{ENVIRONMENT}/home"),
+            ("MAVEN_CONFIG", f"{ENVIRONMENT}/maven-config"),
+        ),
         test_needs_network=True,
     ),
     "dotnet": StackProfile(

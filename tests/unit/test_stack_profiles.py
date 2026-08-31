@@ -55,6 +55,7 @@ def test_toolchain_caches_are_placed_on_the_shared_volume() -> None:
     assert "-Dmaven.repo.local=/aset/env/m2" in profile_for("jvm").test_command(
         "", "/aset/env"
     )
+    assert dict(profile_for("jvm").env("/aset/env"))["HOME"] == "/aset/env/home"
     assert "-p:RestorePackagesPath=/aset/env/nuget" in profile_for(
         "dotnet"
     ).test_command("", "/aset/env")
