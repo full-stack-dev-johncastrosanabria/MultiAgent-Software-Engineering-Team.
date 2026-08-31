@@ -106,6 +106,7 @@ class QualityMCP:
         deadline: float,
         allow_network: bool = False,
         allow_subprocesses: bool = False,
+        env: tuple[tuple[str, str], ...] = (),
     ) -> subprocess.CompletedProcess[str]:
         """Hand one command to the runner.
 
@@ -119,6 +120,7 @@ class QualityMCP:
                 deadline=deadline,
                 allow_network=allow_network,
                 allow_subprocesses=allow_subprocesses,
+                env=env,
             )
         )
 
@@ -256,15 +258,24 @@ class QualityMCP:
                 started,
             )
         interpreter = ""
-        if INTERPRETER in template:
+        if any(INTERPRETER in part for part in template):
             try:
                 interpreter = self._interpreter(deadline)
             except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
                 return self._unavailable(role, tool, exc, started)
-        command = getattr(self.profile, f"{phase}_command")(interpreter)
+        environment = str(self._runner.environment or "")
+        command = getattr(self.profile, f"{phase}_command")(interpreter, environment)
+        # Python installs from a hashed lock and then tests offline. The other
+        # toolchains resolve while they build, so denying the network would only
+        # make the phase fail; the cache on the shared volume keeps it to the
+        # first run. See StackProfile.test_needs_network.
+        needs_network = allow_network or (
+            phase == "test" and self.profile.test_needs_network
+        )
         return self._run(
             role, tool, [*command, *extra], allowed, deadline,
-            cwd=cwd or self.root, started=started, allow_network=allow_network,
+            cwd=cwd or self.root, started=started, allow_network=needs_network,
+            env=self.profile.env(environment),
         )
 
     def _run(
@@ -278,6 +289,7 @@ class QualityMCP:
         cwd: Path,
         started: float | None = None,
         allow_network: bool = False,
+        env: tuple[tuple[str, str], ...] = (),
     ) -> ToolResult:
         if role not in allowed:
             return self._denied(role, tool)
@@ -289,6 +301,7 @@ class QualityMCP:
                 deadline=deadline,
                 allow_network=allow_network,
                 allow_subprocesses=allow_network,
+                env=env,
             )
         except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
             return self._unavailable(role, tool, exc, started)

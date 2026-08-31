@@ -71,7 +71,11 @@ class ContainerRunner:
                 "pass allow_unpinned_image=True only for local experiments"
             )
         self.workspace = workspace
-        self.environment: Path | None = None
+        # The volume is mounted at a fixed path by every container this runner
+        # starts, so the environment root exists before anything provisions into
+        # it. Toolchains that keep a cache need somewhere to put it from the very
+        # first command, not only after a Python interpreter has been built.
+        self.environment: Path | None = Path(ENVIRONMENT_MOUNT)
         self.image = image
         self.runtime = runtime
         self.limits = limits or ContainerLimits()
@@ -217,6 +221,8 @@ class ContainerRunner:
         # leaves the run workspace owned by a user the host cannot clean up.
         if hasattr(os, "getuid"):
             args += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        for variable, value in request.env:
+            args += ["--env", f"{variable}={value}"]
         args.append(self.image)
         args.extend(request.args)
         return args

@@ -209,6 +209,14 @@ class CommandRequest:
     cwd: Path
     deadline: float
     allow_network: bool = False
+    env: tuple[tuple[str, str], ...] = ()
+    """Extra environment the command needs, as explicit pairs.
+
+    Some toolchains are only configurable this way: the .NET CLI decides where to
+    write its first-run state from DOTNET_CLI_HOME, and there is no argument for
+    it. Kept to declared pairs rather than inheriting the operator's environment,
+    which is the whole reason PATH is rebuilt rather than passed through.
+    """
     allow_subprocesses: bool = False
     """Whether the command may fork.
 
@@ -328,6 +336,7 @@ class ProcessRunner:
             deadline=request.deadline,
             allow_network=request.allow_network,
             allow_subprocesses=request.allow_subprocesses,
+            extra_env=request.env,
         )
 
     def close(self) -> None:
@@ -674,6 +683,7 @@ class ProcessRunner:
         deadline: float,
         allow_network: bool = False,
         allow_subprocesses: bool = False,
+        extra_env: tuple[tuple[str, str], ...] = (),
     ) -> subprocess.CompletedProcess[str]:
         timeout = _remaining(deadline)
         stdout_buffer = _BoundedOutput()
@@ -690,7 +700,7 @@ class ProcessRunner:
             process = subprocess.Popen(
                 sandboxed_args,
                 cwd=cwd,
-                env=self._subprocess_environment(),
+                env={**self._subprocess_environment(), **dict(extra_env or ())},
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 **self._process_group_options(),

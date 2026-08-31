@@ -24,7 +24,16 @@ holds.
       parent's `pyproject.toml`, died with "Operation not permitted" outside the
       sandbox, and both demos were rejected for a defect that did not exist. Any
       tool that searches upward has to be pinned downward.
-- [ ] Only the install phase declares network. Everything else runs offline.
+- [ ] Network is declared, and the declaration is honest. Python installs from a
+      hashed lock and tests offline. Maven, dotnet and npm resolve while they
+      build, so their test phase is granted network and says so through
+      `test_needs_network`. Do not claim a restore phase makes them offline
+      without measuring it: `dependency:go-offline` completes and a following
+      offline `mvn test` still fails.
+- [ ] **Toolchain caches live on the environment volume.** Each command is a
+      fresh container running as the host user, whose HOME it cannot write, so a
+      cache left at its default location is both unwritable and gone before the
+      next phase starts.
 - [ ] Commands are argv, never a shell string, so nothing in a project's name or
       path is interpreted.
 

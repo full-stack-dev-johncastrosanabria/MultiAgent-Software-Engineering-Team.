@@ -116,7 +116,8 @@ def test_a_jvm_component_runs_maven_without_an_interpreter(tmp_path: Path) -> No
     recorder = _Recorder(tmp_path)
     quality = QualityMCP(tmp_path, runner=recorder, profile=profile_for("jvm"))
     command = _last_command(quality, recorder)
-    assert command == ["mvn", "-B", "-q", "test"]
+    assert command[0] == "mvn"
+    assert command[-1] == "test"
     assert not any("python" in part for part in command)
 
 
@@ -125,7 +126,8 @@ def test_a_dotnet_component_runs_dotnet_test(tmp_path: Path) -> None:
 
     recorder = _Recorder(tmp_path)
     quality = QualityMCP(tmp_path, runner=recorder, profile=profile_for("dotnet"))
-    assert _last_command(quality, recorder) == ["dotnet", "test", "--nologo"]
+    command = _last_command(quality, recorder)
+    assert command[:3] == ["dotnet", "test", "--nologo"]
 
 
 def test_python_remains_the_default_profile(tmp_path: Path) -> None:

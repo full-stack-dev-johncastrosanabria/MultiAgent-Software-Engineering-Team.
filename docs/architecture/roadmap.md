@@ -65,7 +65,10 @@ run's evidence. Auto-detection is rejected: a boundary that varies silently by
 machine reproduces [finding 5](findings/README.md), where telemetry could not
 distinguish a primary path from a fallback.
 
-*Status: not started. One construction site, `mcp/server.py`.*
+*Status: done. `quality_runner` and `quality_container_image`, honoured at
+`build_quality_server`. There is no fallback: an unknown runner, or a container
+without an image, raises. Constructing a QualityMCP without settings keeps the
+process sandbox, so the suite does not start depending on each machine's `.env`.*
 
 ### 2. Profile per component
 [ADR 4](decisions/0004-profile-per-component.md). A component is a directory with a build manifest — `pom.xml`, `package.json`,
@@ -73,9 +76,20 @@ distinguish a primary path from a fallback.
 deterministic and no routing decision comes from model text. Each component
 carries its image and its install, lint, test and build commands.
 
-*Status: not started. The Python assumption lives in about eight lines of
-`mcp/quality.py`; the evidence contract above it is already stack-agnostic,
-because `TEST_EVIDENCE_TOOLS` names MCP operations and not tool binaries.*
+*Status: done. Detection is file existence, verified against the real trees of
+all six repositories: 3, 4, 6, 10, 8 and 2 components. Four profiles name a
+digest-pinned image and their own commands, and QualityMCP routes through them.
+The 443 tests that predate profiles still pass, which is the evidence that
+routing Python through one did not change what Python does.*
+
+**One difference worth stating rather than hiding.** Python installs from a
+hashed lock and then tests offline. Maven, dotnet and npm resolve dependencies
+while they build, so their test phase is granted network. This was measured:
+`dependency:go-offline` completes and a following offline `mvn test` still fails,
+so a restore phase cannot honestly promise an offline test phase for those
+ecosystems. Their caches live on the shared volume, so the network is used on the
+first run and largely idle afterwards. Closing the gap properly means vendoring
+dependencies into the image or the workspace, which is its own piece of work.
 
 ### 3. Services per run
 [ADR 5](decisions/0005-services-per-run.md). Services live for the run, not for a command, on an internal network where the

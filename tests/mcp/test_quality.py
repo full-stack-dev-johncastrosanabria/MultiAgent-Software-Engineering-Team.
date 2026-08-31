@@ -37,6 +37,7 @@ def _patch_executor(monkeypatch, callback) -> None:
         deadline,
         allow_network=False,
         allow_subprocesses=False,
+        extra_env=(),
     ):
         return callback(
             args,
