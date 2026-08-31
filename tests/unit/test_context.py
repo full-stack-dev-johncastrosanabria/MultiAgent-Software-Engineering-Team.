@@ -1,9 +1,19 @@
 import pytest
 
-from engineering_team.contracts.enums import AgentRole, ReviewerStatus, RouteTarget
-from engineering_team.contracts.models import ReviewerDecision
+from engineering_team.contracts.enums import (
+    ActionMode,
+    AgentRole,
+    ReviewerStatus,
+    RouteTarget,
+)
+from engineering_team.contracts.models import ImplementationResult, ReviewerDecision
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.models.context import build_context
+
+AUTHORED_SOURCE = (
+    "def autenticar(conexion, email, password):\n"
+    "    return verificar_password(password)\n"
+)
 
 
 def test_product_context_excludes_repository_and_secrets() -> None:
@@ -34,3 +44,38 @@ def test_remediation_receives_bounded_failure_details_without_testing_tool_acces
     assert "run_tests" not in developer.allowed_tools
     product = build_context(AgentRole.PRODUCT, state, "analyze")
     assert "TypeError" not in product.remediation_feedback
+
+
+def _remediation_state() -> EngineeringState:
+    """A run on its second pass: the Developer proposed code and was sent back."""
+    return EngineeringState(
+        run_id="r1",
+        requirement="add password recovery to banca/auth.py",
+        implementation=ImplementationResult(
+            action_mode=ActionMode.PROPOSED,
+            changed_files=["banca/auth.py"],
+            diff="--- a/banca/auth.py\n+++ b/banca/auth.py\n+def recuperar_password(): ...",
+            evidence=["banca/auth.py"],
+            validation_result="pytest: 1 failed",
+            file_contents={"banca/auth.py": AUTHORED_SOURCE},
+        ),
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED, score=40, subscores={"testing": 0},
+            reason="failed tests require implementation remediation", confidence=1,
+            return_to=RouteTarget.DEVELOPER,
+            problems=["ImportError: cannot import name 'encriptar_password'"],
+        ),
+    )
+
+
+def test_developer_projection_carries_the_implementation_it_authored() -> None:
+    """Finding 7: the only role that writes was the only one blind to its own output.
+
+    Every downstream role receives `implementation`; the Developer did not, so a
+    remediation cycle started from nothing instead of repairing what was there.
+    """
+    envelope = build_context(AgentRole.DEVELOPER, _remediation_state(), "fix")
+
+    assert "implementation" in envelope.state_projection
+    assert envelope.state_projection["implementation"] is not None

@@ -3,8 +3,18 @@ import json
 import pytest
 
 from engineering_team.agents.product import ProductAgent
-from engineering_team.contracts.enums import AgentRole, ToolStatus
-from engineering_team.contracts.models import ToolResult
+from engineering_team.contracts.enums import (
+    ActionMode,
+    AgentRole,
+    ReviewerStatus,
+    RouteTarget,
+    ToolStatus,
+)
+from engineering_team.contracts.models import (
+    ImplementationResult,
+    ReviewerDecision,
+    ToolResult,
+)
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.llm.prompting import build_role_prompts, governed_output_schema
 from engineering_team.models.context import build_context
@@ -78,3 +88,64 @@ def test_apply_schema_constrains_paths_and_facts_but_leaves_code_to_the_model():
     assert contents["required"] == ["app.py"]
     assert contents["additionalProperties"] is False
     assert contents["properties"]["app.py"] == {"type": "string"}
+
+
+def test_developer_remediation_prompt_carries_the_code_it_authored():
+    """Finding 7: in PROPOSED mode nothing reaches the workspace between cycles.
+
+    The write-back in stategraph only runs for ActionMode.APPLIED, so on a
+    remediation pass the Developer re-reads the original files and sees no trace
+    of its own work. Adding `implementation` to the projection is not enough on
+    its own either: build_role_prompts collapses every projected value except
+    run_id and requirement to "present"/"absent", so the code has to be rendered
+    for the Developer to repair instead of rewrite.
+    """
+    authored = "def autenticar(conexion, email, password):\n    return verificar(password)\n"
+    state = EngineeringState(
+        run_id="prompt",
+        requirement="add password recovery",
+        implementation=ImplementationResult(
+            action_mode=ActionMode.PROPOSED,
+            changed_files=["banca/auth.py"],
+            diff="--- a/banca/auth.py\n+++ b/banca/auth.py\n+def recuperar(): ...",
+            evidence=["banca/auth.py"],
+            validation_result="pytest: 1 failed",
+            file_contents={"banca/auth.py": authored},
+        ),
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED, score=40, subscores={"testing": 0},
+            reason="failed tests require implementation remediation", confidence=1,
+            return_to=RouteTarget.DEVELOPER,
+            problems=["ImportError: cannot import name 'encriptar_password'"],
+        ),
+    )
+    envelope = build_context(AgentRole.DEVELOPER, state, "remediate")
+
+    _, user = build_role_prompts(
+        AgentRole.DEVELOPER, envelope, {}, {"action_mode": "PROPOSED"}
+    )
+
+    assert authored in user, "the Developer cannot repair code it cannot see"
+    assert "banca/auth.py" in user
+
+
+def test_only_the_developer_is_shown_previously_authored_code():
+    """Security and Reviewer read evidence, not the author's draft."""
+    authored = "SECRET_MARKER_ONLY_THE_AUTHOR_SEES = 1\n"
+    state = EngineeringState(
+        run_id="prompt",
+        requirement="change",
+        implementation=ImplementationResult(
+            action_mode=ActionMode.PROPOSED,
+            changed_files=["a.py"],
+            diff="--- a/a.py\n+++ b/a.py\n+x = 1",
+            evidence=["a.py"],
+            validation_result="ok",
+            file_contents={"a.py": authored},
+        ),
+    )
+    for role in (AgentRole.SECURITY, AgentRole.REVIEWER):
+        envelope = build_context(role, state, role.value)
+        _, user = build_role_prompts(role, envelope, {}, {"action_mode": "PROPOSED"})
+        assert authored not in user, f"{role.value} was shown the author's draft"

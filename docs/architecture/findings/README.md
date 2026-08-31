@@ -12,7 +12,7 @@ index says where each one stands.
 | 4 | high | Repository MCP indexes ignored artefacts without limit | **fixed** — `6fe08e4` |
 | 5 | medium | Telemetry confuses primary execution with fallback | **open** — confirmed live in run-8e101cac (`fallback_used: true`, `fallback_reason: CLOUD_FIRST` on the primary path) |
 | 6 | medium | Visible history reconstructs past decisions from the latest revision | **open** — untouched |
-| 7 | critical | The Developer can empty files and cannot see what it wrote | **open** — recorded `210b125` |
+| 7 | critical | The Developer can empty files and cannot see what it wrote | **fixed** — the projection now carries `implementation`, and the prompt renders the code it authored, because a projected value alone is collapsed to "present" |
 | 8 | high | Architecture designs from four files and cannot ask for a fifth | **open** — recorded `47642e7` |
 
 ## Two things worth remembering
@@ -20,6 +20,13 @@ index says where each one stands.
 **Finding 3 is the reason ADR 2 exists.** Four rounds of review against the
 process sandbox each closed a gap and revealed another. The decision to move to a
 container was not a preference; it came from the shape of what kept being wrong.
+
+**Finding 7 was not where the audit said it was.** The audit blamed the missing
+`implementation` in the Developer's projection. That is real, but fixing it alone
+changes nothing: `build_role_prompts` collapses every projected value except
+`run_id` and `requirement` to "present"/"absent". The mechanism is that the graph
+writes to the workspace only for `ActionMode.APPLIED`, so after a `PROPOSED` pass
+the Developer re-reads the original files and sees no trace of its own work.
 
 **Finding 7 is why counts are not evidence.** The rewrite it describes deleted
 four tests and added five, so the total rose from 18 to 19. Anything checking

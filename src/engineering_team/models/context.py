@@ -26,12 +26,16 @@ class ContextEnvelope(StrictModel):
 _FIELDS: dict[AgentRole, tuple[str, ...]] = {
     AgentRole.PRODUCT: ("run_id", "requirement"),
     AgentRole.ARCHITECTURE: ("run_id", "requirement", "specification"),
+    # `implementation` is the Developer's own previous output. Every downstream
+    # role already receives it; the only role that writes was the only one blind
+    # to what it had written, so each remediation restarted instead of repairing.
     AgentRole.DEVELOPER: (
         "run_id",
         "requirement",
         "specification",
         "architecture",
         "repository_context",
+        "implementation",
     ),
     AgentRole.SECURITY: ("run_id", "specification", "architecture", "implementation"),
     AgentRole.TESTING: (

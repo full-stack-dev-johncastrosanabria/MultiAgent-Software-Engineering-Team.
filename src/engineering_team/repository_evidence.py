@@ -15,6 +15,10 @@ MAX_ARCHITECTURE_READ_BYTES = 16 * 1024
 MAX_ARCHITECTURE_LIST_BYTES = 8 * 1024
 MAX_ARCHITECTURE_SEARCH_BYTES = 8 * 1024
 MAX_ARCHITECTURE_RAW_EVIDENCE_BYTES = 64 * 1024
+# What the Developer is shown of its own previous attempt. Larger than the
+# architecture read budget because repairing code requires seeing all of it,
+# and it is the agent's own output rather than untrusted repository content.
+MAX_DEVELOPER_PRIOR_BYTES = 32 * 1024
 MAX_ARCHITECTURE_JSON_DEPTH = 64
 MAX_ARCHITECTURE_JSON_NODES = 4_096
 MAX_REPOSITORY_PATH_INPUT_BYTES = 4 * 1024 * 1024
