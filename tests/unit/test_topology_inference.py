@@ -312,3 +312,54 @@ def test_the_delivery_probe_reads_the_variable_it_parameterised() -> None:
     document = derive_compose((_postgres(),), mode="delivery")
     assert "$$POSTGRES_USER" in document
     assert derive_compose((_postgres(),), mode="run").count("$$") == 0
+
+
+# -- in .NET the provider decides, not the connection string -----------------
+
+
+PROPFLOW_SETTINGS = '{"ConnectionStrings":{"DefaultConnection":"Data Source=propflow.db"}}'
+PROPFLOW_WIRING = """
+public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
+{
+    var connectionString = configuration.GetConnectionString("DefaultConnection");
+    services.AddDbContext<AppDbContext>(options =>
+        options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+    return services;
+}
+"""
+
+
+def test_the_registered_provider_decides_the_engine() -> None:
+    """Measured against PropFlow, whose connection string is SQLite-shaped and
+    whose DbContext is registered with UseMySql. Reading the string alone
+    concluded the project needed no services at all."""
+    found = extract_dependencies(
+        {"appsettings.json": PROPFLOW_SETTINGS, "DependencyInjection.cs": PROPFLOW_WIRING}
+    )
+    assert [item.engine for item in found] == ["mysql"]
+
+
+def test_a_provider_package_is_enough_on_its_own() -> None:
+    """The registration may live in a file the scan did not read."""
+    csproj = '<PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />'
+    found = extract_dependencies(
+        {"appsettings.json": PROPFLOW_SETTINGS, "App.csproj": csproj}
+    )
+    assert [item.engine for item in found] == ["mysql"]
+
+
+def test_a_sqlite_provider_still_means_no_service() -> None:
+    wiring = "options.UseSqlite(connectionString);"
+    assert extract_dependencies(
+        {"appsettings.json": PROPFLOW_SETTINGS, "DependencyInjection.cs": wiring}
+    ) == ()
+
+
+def test_the_provider_overrides_a_contradicting_connection_string() -> None:
+    """A .NET string never names its engine, so the provider is the fact."""
+    settings = '{"ConnectionStrings":{"Default":"Host=localhost;Port=5432;Database=d;Username=u;Password=p"}}'
+    found = extract_dependencies(
+        {"appsettings.json": settings, "Startup.cs": "options.UseNpgsql(cs);"}
+    )
+    assert [item.engine for item in found] == ["postgres"]
+    assert found[0].database == "d", "the string still supplies the details"

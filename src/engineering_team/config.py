@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # nothing would say so -- the failure finding 5 describes for telemetry.
     quality_runner: str = "process"
     quality_container_image: str = ""
+    # How work leaves the system. Off by default: delivery is outward-facing and
+    # needs configuration as well as a per-run confirmation -- two keys, not one.
+    delivery_backend: str = "none"
+    github_mcp_image: str = "ghcr.io/github/github-mcp-server:latest"
+    github_personal_access_token: SecretStr = SecretStr("")
     ollama_base_url: str = "http://localhost:11434"
     llm_timeout_seconds: float = Field(default=60, gt=0)
     cloud_role_timeout_seconds: float = Field(default=120, gt=0)

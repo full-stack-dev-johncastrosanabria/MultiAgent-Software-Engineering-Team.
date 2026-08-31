@@ -366,3 +366,76 @@ def infrastructure_proposal(
         # A project usually has one already, documenting more than a database.
         extends={".env.example": env_example},
     )
+
+
+class GitHubMCPPullRequests:
+    """Opens the pull request through the GitHub MCP server.
+
+    Same port as `GitHubPullRequests`, a different way of reaching GitHub: the
+    server runs as a container over stdio, which is the transport this project
+    already uses for its own MCP ports. The refusals are shared, not
+    reimplemented -- a second backend must not become a second policy.
+    """
+
+    def __init__(
+        self,
+        *,
+        image: str = "ghcr.io/github/github-mcp-server:latest",
+        token: str = "",
+        runtime: str = "docker",
+    ) -> None:
+        self.image = image
+        self.token = token
+        self.runtime = runtime
+
+    def server_command(self) -> list[str]:
+        """The argv that starts the server. The token is passed by name only.
+
+        `-e NAME` without a value tells the runtime to forward the variable from
+        the environment, so the secret never appears in a command line where a
+        process listing would show it.
+        """
+        return [
+            self.runtime, "run", "-i", "--rm",
+            "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+            self.image, "stdio",
+        ]
+
+    def open(self, repository: Path, proposal: Proposal, *, confirmed: bool) -> str:
+        if not confirmed:
+            raise DeliveryRefused(
+                "opening a pull request requires an explicit confirmation"
+            )
+        if not self.token:
+            raise DeliveryRefused("no GitHub token is configured for delivery")
+        GitDelivery._check_branch(proposal.branch)
+        GitDelivery._check_no_secret(proposal)
+        raise DeliveryRefused(
+            "the MCP delivery backend is configured but not yet implemented; "
+            "use the gh backend, which is verified"
+        )
+
+
+def build_delivery(settings) -> object | None:
+    """Pick the delivery backend named by configuration, or refuse to guess.
+
+    Returns None when delivery is off, which is the default. There is no
+    fallback between backends: a run that cannot deliver the way it was
+    configured must say so rather than quietly using the other one.
+    """
+    choice = getattr(settings, "delivery_backend", "none")
+    if choice == "none":
+        return None
+    if choice == "gh":
+        return GitHubPullRequests()
+    if choice == "mcp":
+        secret = getattr(settings, "github_personal_access_token", None)
+        token = secret.get_secret_value() if secret is not None else ""
+        if not token:
+            raise DeliveryRefused(
+                "delivery_backend is 'mcp' but no GitHub token is configured"
+            )
+        return GitHubMCPPullRequests(
+            image=settings.github_mcp_image, token=token
+        )
+    raise DeliveryRefused(f"unknown delivery_backend: {choice!r}")

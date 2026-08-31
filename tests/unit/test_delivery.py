@@ -357,3 +357,56 @@ def test_the_infrastructure_proposal_extends_the_env_example() -> None:
     assert "docker-compose.yml" in proposal.files
     assert ".env.example" in proposal.extends
     assert ".env.example" not in proposal.files
+
+
+# -- choosing a delivery backend ---------------------------------------------
+
+
+def test_delivery_is_off_unless_configured() -> None:
+    """Outward-facing capabilities need two keys: configuration and a per-run
+    confirmation. The default supplies neither."""
+    from engineering_team.config import Settings
+    from engineering_team.delivery import build_delivery
+
+    assert Settings().delivery_backend == "none"
+    assert build_delivery(Settings()) is None
+
+
+def test_an_unknown_backend_is_refused_rather_than_guessed() -> None:
+    from engineering_team.config import Settings
+    from engineering_team.delivery import build_delivery
+
+    with pytest.raises(DeliveryRefused, match="unknown delivery_backend"):
+        build_delivery(Settings(delivery_backend="carrier-pigeon"))
+
+
+def test_the_mcp_backend_requires_a_token() -> None:
+    from engineering_team.config import Settings
+    from engineering_team.delivery import build_delivery
+
+    with pytest.raises(DeliveryRefused, match="token"):
+        build_delivery(Settings(delivery_backend="mcp", github_personal_access_token=""))
+
+
+def test_the_token_never_reaches_a_command_line() -> None:
+    """`-e NAME` forwards the variable; `-e NAME=value` would put the secret
+    where any process listing shows it."""
+    from engineering_team.delivery import GitHubMCPPullRequests
+
+    command = GitHubMCPPullRequests(token="super-secret-value").server_command()
+    assert "super-secret-value" not in " ".join(command)
+    assert "-e" in command
+    assert command[command.index("-e") + 1] == "GITHUB_PERSONAL_ACCESS_TOKEN"
+
+
+def test_both_backends_share_the_same_refusals() -> None:
+    """A second backend must not become a second policy."""
+    from engineering_team.delivery import GitHubMCPPullRequests
+
+    backend = GitHubMCPPullRequests(token="t")
+    with pytest.raises(DeliveryRefused, match="confirmation"):
+        backend.open(Path("."), PROPOSAL, confirmed=False)
+    with pytest.raises(DeliveryRefused, match="branch"):
+        backend.open(
+            Path("."), Proposal("main", "t", "b", {"a.txt": "x"}, "r"), confirmed=True
+        )

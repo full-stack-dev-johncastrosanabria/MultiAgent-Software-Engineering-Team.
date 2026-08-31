@@ -129,7 +129,8 @@ _URI = re.compile(
     r"(?:/(?P<database>[A-Za-z0-9_.-]+))?"
 )
 _PAIRS = re.compile(
-    r"\b(?P<key>Host|Server|Port|Database|Initial\s*Catalog|User\s*Id|Username|User|Uid|Password|Pwd)"
+    r"\b(?P<key>Host|Server|Port|Database|Initial\s*Catalog|Data\s*Source"
+    r"|User\s*Id|Username|User|Uid|Password|Pwd)"
     r"\s*=\s*(?P<value>[^;\"']+)",
     re.IGNORECASE,
 )
@@ -139,6 +140,22 @@ _YAML_VALUE = re.compile(
 )
 _PLACEHOLDER = re.compile(r"^\$\{[^:}]+:?(?P<default>[^}]*)\}$")
 _ALIASES = {"postgresql": "postgres", "mariadb": "mysql", "mongodb": "mongo"}
+# In .NET the connection string never names its engine -- `Data Source=` serves
+# SQLite and SQL Server alike -- so the registered provider is the fact. One real
+# project passes a SQLite-shaped string to UseMySql, and reading only the string
+# concluded it needed no services at all.
+_DOTNET_PROVIDER = re.compile(
+    r"(?i)\bUse(?P<call>MySql|Npgsql|Sqlite|SqlServer)\b"
+    r"|EntityFrameworkCore\.(?P<package>MySql|PostgreSQL|Sqlite|SqlServer)\b"
+    r"|\bNpgsql\.EntityFrameworkCore\b"
+)
+_PROVIDER_ENGINE = {
+    "mysql": "mysql",
+    "npgsql": "postgres",
+    "postgresql": "postgres",
+    "sqlite": None,  # a file, so no service at all
+    "sqlserver": "mssql",
+}
 
 
 def _unwrap(value: str) -> str:
@@ -175,10 +192,34 @@ def _credentials(text: str) -> tuple[str, str]:
     return user, password
 
 
-def _dotnet_engine(pairs: dict[str, str]) -> str:
-    """Which engine a .NET connection string means."""
+def _declared_provider(text: str) -> tuple[str | None, bool]:
+    """The EF provider a .NET project registers, and whether it said anything.
+
+    Returns (engine, found). `engine` is None for SQLite, which is a file rather
+    than a service -- a distinct answer from "nothing was declared".
+    """
+    match = _DOTNET_PROVIDER.search(text)
+    if match is None:
+        return None, False
+    name = (match.group("call") or match.group("package") or "npgsql").lower()
+    return _PROVIDER_ENGINE.get(name, None), True
+
+
+_FILE_DATABASE = re.compile(r"\.(db|sqlite|sqlite3)$", re.IGNORECASE)
+
+
+def _dotnet_engine(pairs: dict[str, str]) -> str | None:
+    """Which engine a .NET connection string means, when nothing declared one.
+
+    Returns None where the string names a file: `Data Source=app.db` with no
+    server and no port is SQLite, which needs nothing started.
+    """
     if "host" in pairs:
         return "postgres"
+    source = pairs.get("datasource", "")
+    names_a_file = bool(_FILE_DATABASE.search(source.strip())) or "/" in source
+    if source and "server" not in pairs and not pairs.get("port") and names_a_file:
+        return None
     port = (pairs.get("port") or "").strip()
     server = pairs.get("server", "")
     if port == "1433" or ",1433" in server:
@@ -195,6 +236,12 @@ def extract_dependencies(sources: dict[str, str]) -> tuple[Dependency, ...]:
     saying so is not a failure to infer.
     """
     found: dict[str, Dependency] = {}
+    provider_engine: str | None = None
+    provider_declared = False
+    for name in sorted(sources):
+        engine_name, declared = _declared_provider(_without_comments(sources[name]))
+        if declared and not provider_declared:
+            provider_engine, provider_declared = engine_name, True
     for text in (_without_comments(sources[name]) for name in sorted(sources)):
         pairs = {
             key.lower().replace(" ", ""): value.strip()
@@ -216,13 +263,28 @@ def extract_dependencies(sources: dict[str, str]) -> tuple[Dependency, ...]:
             found.setdefault(
                 engine, Dependency(engine, port, database, user, password)
             )
-        if "host" in pairs or "server" in pairs:
+        # `Data Source=` included: it is how a .NET project names its database
+        # when the provider is SQLite or SQL Server, and one real project uses it
+        # with MySQL. Without it there is nothing for the provider to attach to.
+        if {"host", "server", "datasource"} & set(pairs):
             # A .NET connection string does not name its engine. `Host=` is the
             # Npgsql spelling; `Server=` is shared by MySQL and SQL Server, and
             # only the port separates them. `Data Source=` is SQLite -- a file,
             # so no service at all -- and is deliberately not matched above.
-            engine = _dotnet_engine(pairs)
-            database = pairs.get("database") or pairs.get("initialcatalog") or ""
+            if provider_declared:
+                if provider_engine is None:
+                    continue  # SQLite: a file, not a service
+                engine = provider_engine
+            else:
+                inferred = _dotnet_engine(pairs)
+                if inferred is None:
+                    continue
+                engine = inferred
+            database = (
+                pairs.get("database")
+                or pairs.get("initialcatalog")
+                or pairs.get("datasource", "").removesuffix(".db")
+            )
             if database:
                 found.setdefault(
                     engine,
