@@ -8,14 +8,24 @@ index says where each one stands.
 |---|---|---|---|
 | 1 | critical | Reviewer approves without the coverage evidence it requires | **fixed** — `e6f9319` |
 | 2 | critical | Architecture is not grounded in the repository it inspected | **fixed** — `dd36bf1`, `f14e7b6`, `95cc463` |
-| 3 | high | Project dependencies install into the shared interpreter | **superseded** — `aa69fb1`, `b20ad86` landed the ephemeral environment and the process sandbox; the two races still open against it dissolve under [ADR 2](../decisions/0002-container-runner.md) rather than being fixed |
+| 3 | high | Project dependencies install into the shared interpreter | **fixed** — nothing runs the operator's interpreter any more; each QualityMCP provisions its own environment from `sys._base_executable`, and a test asserts no command reaches `sys.executable`. The two races that review found against the *sandbox* are a different question, and they dissolve under [ADR 2](../decisions/0002-container-runner.md), whose container runner is now implemented and verified |
 | 4 | high | Repository MCP indexes ignored artefacts without limit | **fixed** — `6fe08e4` |
-| 5 | medium | Telemetry confuses primary execution with fallback | **open** — confirmed live in run-8e101cac (`fallback_used: true`, `fallback_reason: CLOUD_FIRST` on the primary path) |
-| 6 | medium | Visible history reconstructs past decisions from the latest revision | **open** — untouched |
+| 5 | medium | Telemetry confuses primary execution with fallback | **fixed** — the cloud runtime reports a fallback only when it is one, and the local runtime records the reason it is given instead of accepting and dropping it |
+| 6 | medium | Visible history reconstructs past decisions from the latest revision | **fixed** — the state records every reviewer decision, and the report shows each cycle its own; where no history exists it says nothing rather than borrowing |
 | 7 | critical | The Developer can empty files and cannot see what it wrote | **fixed** — the projection now carries `implementation`, and the prompt renders the previously authored code, because a projected value alone is collapsed to "present" |
 | 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — a byte budget replaced the file count, and the prompt now states how much evidence was withheld |
 
 ## Two things worth remembering
+
+**Finding 5 was found because the record contradicted itself.** The trace beside
+each cloud attempt already said "primary" or "fallback" correctly; only the
+`ModelExecutionInfo` was wrong. A single source would have hidden it.
+
+**Finding 6 could not be fixed by reading harder.** The state kept only the
+latest reviewer decision, so the data to show what an earlier cycle decided did
+not exist. The fix had to record it. Where an older run has no history, the
+report now shows nothing for that cycle instead of the terminal decision — saying
+nothing beats saying something untrue.
 
 **Finding 3 is the reason ADR 2 exists.** Four rounds of review against the
 process sandbox each closed a gap and revealed another. The decision to move to a

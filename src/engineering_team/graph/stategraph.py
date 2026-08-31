@@ -556,6 +556,9 @@ def build_engineering_graph(
                 patch["cloud_escalations_run"] = cloud_runtime.budget.run_count
             target = targets[role]
             patch[target] = [*current.test_results, output] if role is AgentRole.TESTING else output
+            if role is AgentRole.REVIEWER:
+                # Kept so the report can show what each cycle actually decided.
+                patch["review_history"] = [*current.review_history, output]
             if role is AgentRole.REVIEWER and output.status is ReviewerStatus.REJECTED:
                 patch["iteration"] = current.iteration + 1
                 patch["remediation_request"] = output.reason

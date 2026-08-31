@@ -52,9 +52,18 @@ class LocalModelRuntime:
 
         Accepts ``fallback_reason`` so this runtime can be plugged into either the
         primary or the secondary slot in the graph — e.g. as the local fallback
-        when a cloud provider is configured as the primary runtime.
+        when a cloud provider is configured as the primary runtime. It is
+        recorded rather than accepted and dropped: a run that fell back to local
+        and reported nothing looked exactly like one that never needed to.
         """
-        return self._invoke_schema(role, envelope, type(candidate), candidate.model_dump(mode="json"))
+        artifact, info = self._invoke_schema(
+            role, envelope, type(candidate), candidate.model_dump(mode="json")
+        )
+        if fallback_reason:
+            info = info.model_copy(
+                update={"fallback_used": True, "fallback_reason": fallback_reason}
+            )
+        return artifact, info
 
     def _invoke_schema(
         self, role: AgentRole, envelope: ContextEnvelope,

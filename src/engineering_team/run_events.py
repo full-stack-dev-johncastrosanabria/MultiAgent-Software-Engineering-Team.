@@ -229,9 +229,24 @@ def _diff_files(
     return files
 
 
+def _decision_at(
+    decisions: list[dict[str, Any]], latest: dict[str, Any], iteration: int
+) -> dict[str, Any]:
+    """The reviewer decision that belongs to one cycle."""
+    if 1 <= iteration <= len(decisions):
+        return decisions[iteration - 1]
+    # Only the final transition may use the latest decision, and only when no
+    # history was recorded for it.
+    return latest if iteration > len(decisions) and not decisions else {}
+
+
 def _route_steps(state: Mapping[str, Any], completed_at: str) -> list[dict[str, Any]]:
     history = [str(item) for item in state.get("route_history", [])]
-    review = _plain(state.get("review")) or {}
+    # Each Reviewer transition is shown with its own decision. Using the terminal
+    # one gave a rejection the score of the approval that later replaced it --
+    # a record of something that never happened.
+    decisions = [_plain(item) or {} for item in state.get("review_history", [])]
+    latest = _plain(state.get("review")) or {}
     steps: list[dict[str, Any]] = []
     iteration = 1
     for index, item in enumerate(history):
@@ -246,15 +261,21 @@ def _route_steps(state: Mapping[str, Any], completed_at: str) -> list[dict[str, 
             target, decision = _agent(next_item), "REJECTED"
         steps.append({
             "iteration": iteration, "from": "reviewer", "to": target,
-            "decision": decision, "reason": str(review.get("reason") or next_item),
-            "score": float(review.get("score") or 0), "at": completed_at,
+            "decision": decision,
+            # Falls back to the transition's own target rather than borrowing a
+            # later decision: a run recorded before review_history existed has no
+            # reason for this cycle, and saying nothing beats saying something
+            # untrue.
+            "reason": str(_decision_at(decisions, latest, iteration).get("reason") or next_item),
+            "score": float(_decision_at(decisions, latest, iteration).get("score") or 0),
+            "at": completed_at,
         })
         iteration += 1
     if not steps and state.get("final_status") == "HUMAN_REVIEW_REQUIRED":
         steps.append({
             "iteration": max(1, int(state.get("iteration", 0)) + 1),
             "from": "human_review", "to": "human_review", "decision": "ESCALATED",
-            "reason": "Workflow requires human review.", "score": float(review.get("score") or 0),
+            "reason": "Workflow requires human review.", "score": float(latest.get("score") or 0),
             "at": completed_at,
         })
     return steps

@@ -36,6 +36,14 @@ class EngineeringState(StrictModel):
     security_review: SecurityReview | None = None
     test_results: list[TestResult] = Field(default_factory=list)
     review: ReviewerDecision | None = None
+    review_history: list[ReviewerDecision] = Field(default_factory=list)
+    """Every reviewer decision, in the order they were taken.
+
+    `review` is only the latest. The run report walks route_history and shows a
+    reason and a score for each Reviewer transition; with nothing but the latest
+    decision it gave all of them the final one, so a rejection was displayed with
+    the approval that eventually replaced it.
+    """
     rag_evidence: list[RetrievedEvidence] = Field(default_factory=list)
     tool_results: list[ToolResult] = Field(default_factory=list)
     model_usage: list[ModelExecutionInfo] = Field(default_factory=list)

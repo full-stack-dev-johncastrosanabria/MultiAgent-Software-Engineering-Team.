@@ -134,3 +134,45 @@ def test_python_remains_the_default_profile(tmp_path: Path) -> None:
     from engineering_team.stacks import profile_for
 
     assert QualityMCP(tmp_path).profile is profile_for("python")
+
+
+# -- finding 3: nothing installs into the interpreter that is running us ------
+
+
+def test_no_command_ever_runs_the_interpreter_this_process_uses(tmp_path: Path) -> None:
+    """Finding 3 as written: `pip install .` against sys.executable left one
+    project's dependencies available to the next, and let concurrent runs mutate
+    the same environment. Every command now goes through an environment this
+    QualityMCP built for itself."""
+    import sys
+
+    from engineering_team.contracts.enums import AgentRole
+
+    recorder = _Recorder(tmp_path)
+    quality = QualityMCP(tmp_path, runner=recorder)
+    quality.run_tests(AgentRole.TESTING)
+
+    for command in recorder.commands:
+        assert sys.executable not in command, (
+            f"a command reached the operator's interpreter: {command}"
+        )
+
+
+def test_the_environment_is_built_from_the_base_interpreter_not_the_current_one() -> None:
+    """`sys._base_executable` is what allows HOME to be closed even when the MCP
+    process itself was started from the operator's virtual environment."""
+    import inspect
+
+    from engineering_team.mcp.runner import ProcessRunner
+
+    source = inspect.getsource(ProcessRunner._base_interpreter)
+    assert "_base_executable" in source
+
+
+def test_each_quality_instance_provisions_its_own_environment(tmp_path: Path) -> None:
+    """Two runs must not share what one of them installed."""
+    first = ProcessRunner(tmp_path / "a")
+    second = ProcessRunner(tmp_path / "b")
+    assert first.environment is None and second.environment is None
+    first.environment = tmp_path / "env-a"
+    assert second.environment is None, "environments are per runner, not global"

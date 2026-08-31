@@ -405,7 +405,9 @@ class CloudModelRuntime:
             info = ModelExecutionInfo(
                 agent=role, provider=selection.provider, requested_model=selection.model,
                 actual_model=None, model_profile=selection.model_profile,
-                fallback_used=True, fallback_reason=fallback_reason, degraded=True,
+                fallback_used=not self.primary,
+                fallback_reason=None if self.primary else fallback_reason,
+                degraded=True,
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 structured_output_success=False, error=error,
                 http_status=status, error_category=category, retryable=retryable,
@@ -437,7 +439,9 @@ class CloudModelRuntime:
             info = ModelExecutionInfo(
                 agent=role, provider=selection.provider, requested_model=selection.model,
                 actual_model=None, model_profile=selection.model_profile,
-                fallback_used=True, fallback_reason=fallback_reason, degraded=True,
+                fallback_used=not self.primary,
+                fallback_reason=None if self.primary else fallback_reason,
+                degraded=True,
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 structured_output_success=False, error=error,
                 error_category=("governed_contradiction" if contradiction else
@@ -467,7 +471,12 @@ class CloudModelRuntime:
         info = ModelExecutionInfo(
             agent=role, provider=selection.provider, requested_model=selection.model,
             actual_model=selection.model, model_profile=selection.model_profile,
-            fallback_used=True, fallback_reason=fallback_reason,
+            # This runtime serves both slots. Reporting a fallback from the
+            # primary one made every cloud-first run look degraded, and the
+            # trace beside it already said 'primary' -- the record
+            # contradicted itself.
+            fallback_used=not self.primary,
+            fallback_reason=None if self.primary else fallback_reason,
             latency_ms=int((time.perf_counter() - started) * 1000), usage=usage,
             structured_output_success=True,
         )
