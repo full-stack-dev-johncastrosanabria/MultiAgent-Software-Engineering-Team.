@@ -1,17 +1,17 @@
 # Security Guidelines
 
-## Authentication and session controls
+## Authentication, Tokens, and Session Lifecycle
 
-Verify identity at trusted boundaries and keep authentication state separate from authorization decisions. Password recovery must avoid account enumeration, use high-entropy reset tokens, enforce single use, and expire tokens after the specified fifteen-minute window. Account locking should activate after five failed attempts while preserving safe recovery and audit evidence. Do not place credentials or tokens in prompts, traces, diffs, or tool summaries.
+Implement authentication using industry-standard protocols such as OAuth2 and OpenID Connect with JSON Web Tokens (JWT). Sign tokens using robust asymmetric or HMAC algorithms (e.g., RS256, EdDSA, HS256) with securely rotated keys. Validate token signatures, issuer (`iss`), audience (`aud`), and expiration time (`exp`) on every request. Short-lived access tokens should be paired with revocable refresh tokens stored securely in HttpOnly, SameSite cookies or protected storage. Ensure logout flows explicitly revoke or blacklist active refresh tokens.
 
-## Authorization and object access
+## Password Hashing and Cryptographic Best Practices
 
-Every object access must be scoped to the authenticated actor or an explicit permitted role. A supplied user or transaction identifier is not authorization. Enforce ownership in the service or data query before returning data, and deny cross-user requests consistently. Collection endpoints should apply authorization before limits so filtering cannot expose arbitrary records or conceal an insecure query.
+Store user passwords exclusively as salted cryptographic hashes computed with modern algorithms: Argon2id (recommended), bcrypt (with an adaptive work factor appropriate for hardware speeds), or PBKDF2 with SHA-256. Never store plaintext passwords or employ outdated hash algorithms like MD5 or SHA-1. Generate security-critical tokens (session IDs, password reset tokens, API keys) using cryptographically secure pseudorandom number generators (CSPRNG, such as `java.security.SecureRandom`, `System.Security.Cryptography.RandomNumberGenerator`, `crypto.randomBytes`, or Python's `secrets` module).
 
-## Validation, secrets, and logging
+## Secrets Management, Environment Isolation, and Sanitization
 
-Validate untrusted input by type, format, length, and allowed values. Use parameterized storage operations and bounded output schemas. Secret paths such as `.env` and `.env.*` are deny-by-default for listing, reading, and search; symlinks and paths outside the workspace are also rejected. Logs and Langfuse observations should contain categories, identifiers, timing, and sanitized summaries, never credential values.
+Never commit secrets, credentials, API keys, database connection strings, or private keys to source control repositories. Load sensitive configuration values exclusively from environment variables or dedicated secret managers (e.g., Azure Key Vault, AWS Secrets Manager, HashiCorp Vault). Enforce strict filesystem boundaries: deny read access to `.env` and configuration files containing secrets, and reject symlink traversal outside the project directory. Sanitize all application logs, metrics, and distributed traces to guarantee that passwords, tokens, credit card numbers, and PII are never logged.
 
-## Abuse, dependencies, and review
+## Vulnerability Remediation, SCA, and Least Privilege
 
-Rate-limit sensitive endpoints and detect repeated failures without exposing account state. Pin and scan dependencies using the approved quality tools. Security review should cite retrieved guidance and MCP evidence, classify findings by severity, and force human review for critical issues. Functional scanner failures trigger remediation; unavailable MCP transport is recorded separately as `MCP_ERROR` and cannot result in automatic approval.
+Adopt the principle of least privilege for database connection users, cloud service accounts, and microservice communication tokens. Maintain lockfiles (`package-lock.json`, `pom.xml`, `Directory.Packages.props`, `requirements.txt`) and run automated Software Composition Analysis (SCA) to detect outdated or vulnerable third-party dependencies. When a security finding or vulnerability is reported, apply surgical patches to remediate the flaw without weakening existing validation layers or disabling defensive controls.

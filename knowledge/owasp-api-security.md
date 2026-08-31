@@ -1,17 +1,17 @@
 # OWASP API Security Practices
 
-## Object-level authorization
+## Broken Object Level Authorization and Access Control
 
-Prevent IDOR and broken object-level authorization by checking permission for every requested object. Do not accept an arbitrary `user_id`, account identifier, or transaction identifier as proof of access. Prefer owner-scoped repository queries derived from the authenticated principal. Return a safe denial for cross-user access and test both direct object lookup and collection filtering.
+Prevent Broken Object Level Authorization (BOLA / IDOR) by enforcing access control checks on every single request containing an object identifier. Never assume that possessing an identifier (such as a database ID, UUID, or GUID) grants permission to read, modify, or delete that resource. Derive authorization directly from the authenticated security principal or session token, and enforce user-scoped or tenant-scoped filters at the database query level. Return identical `404 Not Found` or `403 Forbidden` responses for unauthorized object lookups to prevent unauthorized entity existence enumeration.
 
-## Authentication and sensitive flows
+## Broken Authentication and Sensitive Flow Protection
 
-Protect login, account locking, and password recovery from brute force and enumeration. Recovery tokens require unpredictable values, a narrow purpose, single-use consumption, and an explicit expiration. A non-expiring reset token is a security failure. Apply consistent responses and safe audit events while ensuring rate limits and lock thresholds follow the specified business rules.
+Protect authentication endpoints, password resets, and session creation against credential stuffing, brute force, and account enumeration. Return uniform response messages and identical HTTP response times for both existing and non-existing accounts during login and recovery requests. Password reset and verification tokens must be cryptographically random with high entropy, single-use, tied strictly to the target user account, and strictly bounded by short expiration windows. Implement account lockouts or progressive delays after consecutive failed authentication attempts.
 
-## Injection and data exposure
+## Injection, Mass Assignment, and Excessive Data Exposure
 
-Validate request data and use parameterized queries or equivalent safe APIs. Limit response fields to the contract and do not expose credentials, internal stack traces, or unrelated user records. Enforce maximum collection sizes in the authorized data query. Treat logs, traces, tool results, and model context as potential disclosure surfaces and sanitize them before export.
+Prevent SQL, NoSQL, and Command Injection by exclusively using parameterized queries, prepared statements, or strongly typed Object-Relational Mappers (EF Core, Hibernate, SQLAlchemy). Avoid dynamic SQL concatenation with untrusted input under all circumstances. Prevent Mass Assignment vulnerabilities by binding incoming request payloads strictly to dedicated DTOs or ViewModels rather than binding directly to persistent database entities. Ensure API responses return only the fields explicitly declared in public contracts, omitting sensitive attributes such as password hashes, internal roles, and system metadata.
 
-## Resource use and verification
+## Security Misconfiguration, CORS, and Rate Limiting
 
-Bound request size, execution time, retries, and external calls. Dependency or scanner failures must be visible and classified. Security tests should cover unauthorized identifiers, malformed input, repeated attempts, expired and reused tokens, excessive results, and failure paths. Preserve source, section, chunk identifier, and score for retrieved evidence so the reviewer can distinguish grounded findings from unsupported claims.
+Secure API infrastructure by disabling default credentials, verbose stack traces, and unused HTTP methods. Configure Cross-Origin Resource Sharing (CORS) with explicitly allowed origins instead of wildcards (`*`) on authenticated endpoints. Enforce transport layer security with HTTPS and HTTP Strict Transport Security (HSTS) headers. Implement rate limiting and request payload size limits across all endpoints to prevent resource exhaustion and Denial of Service (DoS) attacks. Regularly scan dependencies for known Common Vulnerabilities and Exposures (CVEs).

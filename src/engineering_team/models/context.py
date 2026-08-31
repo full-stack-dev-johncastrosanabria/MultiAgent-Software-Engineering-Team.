@@ -56,9 +56,9 @@ _FIELDS: dict[AgentRole, tuple[str, ...]] = {
 
 _RAG_DOMAINS: dict[AgentRole, set[str]] = {
     AgentRole.ARCHITECTURE: {"architecture", "api"},
-    AgentRole.DEVELOPER: {"coding"},
+    AgentRole.DEVELOPER: {"coding", "api", "security", "owasp"},
     AgentRole.SECURITY: {"security", "owasp"},
-    AgentRole.TESTING: {"testing", "coding"},
+    AgentRole.TESTING: {"testing", "coding", "api"},
     AgentRole.REVIEWER: {"architecture", "api", "coding", "security", "owasp", "testing"},
 }
 

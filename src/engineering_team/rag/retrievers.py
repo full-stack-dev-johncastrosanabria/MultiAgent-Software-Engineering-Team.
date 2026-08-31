@@ -16,9 +16,9 @@ from .loaders import DocumentChunk
 
 _DOMAINS: dict[AgentRole, set[str]] = {
     AgentRole.ARCHITECTURE: {"architecture", "api"},
-    AgentRole.DEVELOPER: {"coding"},
+    AgentRole.DEVELOPER: {"coding", "api", "security", "owasp"},
     AgentRole.SECURITY: {"security", "owasp"},
-    AgentRole.TESTING: {"testing", "coding"},
+    AgentRole.TESTING: {"testing", "coding", "api"},
 }
 
 

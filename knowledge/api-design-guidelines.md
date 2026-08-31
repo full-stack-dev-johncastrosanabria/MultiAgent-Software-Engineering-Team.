@@ -1,17 +1,17 @@
 # API Design Guidelines
 
-## Resource and endpoint design
+## Resource and Endpoint Design
 
-Model endpoints around bounded resources and explicit user goals. State the HTTP method, path, request fields, response shape, and status codes. Avoid exposing internal identifiers or persistence details without a business need. Collection endpoints must apply stable ordering, explicit limits, and pagination rules where relevant. A transaction-history response should return only the authorized user's records and enforce the required maximum at the query boundary.
+Model HTTP endpoints around clear domain resources using standard HTTP verbs (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`). URIs must use lowercase, hyphen-separated nouns in plural form (e.g., `/api/v1/user-profiles`, `/api/v1/orders/{id}/items`). Endpoints should return predictable HTTP status codes: `200 OK` or `201 Created` for successes, `204 No Content` for deletions, `400 Bad Request` for invalid input, `401 Unauthorized` for missing authentication, `403 Forbidden` for unauthorized resource access, `404 Not Found` for missing entities, and `409 Conflict` for state conflicts. Collection queries must implement deterministic ordering, default pagination (page/limit or cursor-based), and query parameter filtering.
 
-## Input and output contracts
+## Input and Output Contracts
 
-Validate types, formats, ranges, required fields, and unexpected input before domain processing. Use structured error responses that distinguish invalid input, unauthenticated access, forbidden access, missing resources, and internal failure without revealing secrets. Outputs should be minimal, deterministic, and compatible with declared schemas. Never return fields merely because they exist in storage.
+Validate data types, string formats, numeric ranges, and required fields at the application boundary before invoking domain handlers. Use strongly typed Data Transfer Objects (DTOs), Pydantic schemas, or C# records to decouple internal entities from the public wire contract. Format all error responses following the standard RFC 7807 `ProblemDetails` specification (containing `type`, `title`, `status`, `detail`, `instance`, and validation error dictionaries). Never expose internal stack traces, database column names, or raw framework exceptions to API consumers.
 
-## Authorization and abuse controls
+## Authorization, Rate Limiting, and Idempotency
 
-Authentication establishes identity; authorization must be checked for the requested object and action. Never trust a user identifier from a path or query without comparing it with the authenticated principal or an approved policy. Apply rate limits to sensitive operations such as password recovery and authentication. Reset tokens must be random, single-use, narrowly scoped, stored safely, and expire within the business-defined lifetime.
+Enforce authentication and permission checks on every non-public endpoint. Never trust unverified client-supplied identifiers in query parameters or request bodies; verify ownership against the authenticated security context or token claims. Protect mutating operations (such as payment processing or order submission) with client-supplied `Idempotency-Key` headers stored in an atomic cache. Apply rate limiting and throttling to sensitive endpoints (login, password reset, payment processing) to prevent abuse and denial of service.
 
-## Change and validation
+## Observability, Versioning, and Backward Compatibility
 
-Document API and data implications for every proposal. Cover success, validation failures, ownership failures, empty collections, limits, ordering, repeated requests, and dependency errors. Preserve correlation identifiers and safe operational logs. Backward-incompatible changes require an explicit migration decision; otherwise keep existing consumers working and restrict the patch to the smallest inspected surface.
+Include unique correlation identifiers (`X-Correlation-ID` or `TraceParent`) in request and response headers to enable end-to-end distributed tracing across microservices. Maintain backward compatibility when updating existing endpoints by making new fields optional and avoiding breaking changes to response shapes. When introducing breaking changes, declare explicit API versioning (via URI prefix `/api/v2/` or Accept headers) and define deprecation timelines. Document all endpoints, parameters, request bodies, and responses using OpenAPI / Swagger specifications.

@@ -1,17 +1,17 @@
 # Coding Standards
 
-## Bounded changes
+## C# and .NET 10 Development Standards
 
-Implement the smallest change that satisfies the accepted specification and architecture. Inspect repository evidence before naming files or symbols. Keep modules focused, use existing abstractions, and avoid unrelated refactors. A proposed change must identify inspected paths, relevant symbols or component boundaries, concrete per-file behavior, API or data implications, security surface, and a validation strategy.
+Adhere to modern C# 12 / .NET 10 idioms and Clean Architecture conventions. Use `record` types for immutable DTOs, messages, and value objects. Structure ASP.NET Core endpoints using either Minimal APIs with typed endpoint filters or controllers with explicit route attributes. Register services into the dependency injection container with appropriate lifecycles (`Scoped` for DbContext and repositories, `Singleton` for stateless utilities, `Transient` for lightweight operations). For data access with Entity Framework Core, use strongly typed `DbSet<T>`, configure entities using `IEntityTypeConfiguration<T>` in separate mapping classes, avoid client evaluation by writing clean LINQ queries, and execute async I/O with `SaveChangesAsync(cancellationToken)`.
 
-## Types and contracts
+## Java 21 and Spring Boot 3 Standards
 
-Use typed Python interfaces and validated structured outputs at trust boundaries. Prefer explicit enums and models over free-form status strings. Preserve governed facts such as tool results, evidence references, routing decisions, and error categories. Invalid structured output should enter bounded repair handling rather than being silently accepted or replaced with fabricated evidence.
+Leverage modern Java 21 features including pattern matching, sealed interfaces, and `record` types for data carrier objects. In Spring Boot 3 applications, use constructor injection with `@RequiredArgsConstructor` (or explicit constructors) instead of field injection. Separate domain services from Spring Data JPA repositories and presentation controllers. Use `@RestControllerAdvice` with `@ExceptionHandler` for centralized exception translation into RFC 7807 problem details. Validate incoming payloads with Jakarta Bean Validation (`@Valid`, `@NotNull`, `@Size`, `@Pattern`). Keep entity mutations inside declarative `@Transactional` boundaries, avoiding lazy initialization issues by utilizing `@EntityGraph` or explicit fetch joins.
 
-## Safe repository operations
+## TypeScript and Modern Frontend Standards
 
-All file operations stay inside the configured workspace. Resolve and validate paths, reject traversal and symlinks, and deny secret files such as `.env` and `.env.*`. Write only through authorized roles and preserve a real diff from the original content. Tool summaries must be useful for review without copying credentials, environment values, or unnecessary file contents.
+Enforce strict typing in TypeScript projects (`strict: true`, no `any`). For React 18/19 applications, author modular functional components using React Hooks (`useState`, `useReducer`, `useEffect`, `useMemo`), validate props with TypeScript interfaces, and manage asynchronous server state with TanStack Query. For Angular 21, use standalone components, signals for fine-grained reactivity, and typed reactive forms. For Vue 3, use the Composition API with `<script setup lang="ts">`. Keep UI state isolated from business logic by encapsulating HTTP client calls into dedicated service modules. Validate runtime payloads using schema libraries (such as Zod or Yup) before processing.
 
-## Verification and failure handling
+## Python and General Software Craftsmanship
 
-Add a failing focused test before a behavior change, implement the minimum correction, then run related integration and regression suites. Distinguish transport unavailability, functional tool failure, model availability, timeout, and invalid output. Use bounded retries and deterministic remediation. Log safe error categories and preserve evidence so a workflow failure ends with an explained result instead of collapsing.
+In Python applications (FastAPI, Flask), enforce strict type hints with Python 3.10+ syntax and Pydantic v2 data models. Use application factories, dependency injection with `Depends()`, and structured configuration settings with `pydantic-settings`. Across all languages: implement bounded, surgical changes that satisfy the specification without performing unrelated refactors; respect existing repository conventions and naming patterns; avoid circular dependencies; and ensure all file modifications remain within the authorized project workspace without touching sensitive environment files.
