@@ -123,7 +123,10 @@ read one set of results today.
 [Finding 8](findings/README.md). Not a runner concern, but it blocks the largest
 repositories, so it has to land before the last step of the proving sequence.
 
-*Status: recorded, not fixed.*
+*Status: done. A byte budget replaced the file count: twenty small modules now
+all arrive where four did before, large files are admitted while a useful slice
+remains, and the prompt states how much evidence was withheld so a partial design
+can be declared partial.*
 
 ## Proving sequence
 

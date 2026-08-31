@@ -149,3 +149,74 @@ def test_only_the_developer_is_shown_previously_authored_code():
         envelope = build_context(role, state, role.value)
         _, user = build_role_prompts(role, envelope, {}, {"action_mode": "PROPOSED"})
         assert authored not in user, f"{role.value} was shown the author's draft"
+
+
+def _architecture_envelope(files: dict[str, str]) -> "object":
+    state = EngineeringState(
+        run_id="arch",
+        requirement="map the authentication surface",
+        tool_results=[
+            ToolResult(
+                tool_name="read_file", allowed_role=AgentRole.ARCHITECTURE,
+                status=ToolStatus.SUCCESS, input_summary=f"path={path}",
+                output_summary=content, duration_ms=0,
+            )
+            for path, content in files.items()
+        ],
+    )
+    return build_context(AgentRole.ARCHITECTURE, state, "design")
+
+
+def test_architecture_sees_every_small_file_that_fits_the_budget():
+    """Finding 8: the cap was a file count, so file size did not matter.
+
+    Twenty 500-byte files are 10 KB against a 16 KB budget and should all be
+    shown. Under a fixed count of four, sixteen of them were dropped while the
+    budget sat mostly unspent.
+    """
+    files = {
+        f"src/mod{i:02d}.py": f"MARKER_MODULE_{i:02d}\n" + "x = 1\n" * 70
+        for i in range(20)
+    }
+    _, user = build_role_prompts(
+        AgentRole.ARCHITECTURE, _architecture_envelope(files), {}, {}
+    )
+
+    # The path of every read is listed either way; what matters is whose content
+    # actually arrived.
+    shown = [i for i in range(20) if f"MARKER_MODULE_{i:02d}" in user]
+    assert len(shown) > 4, f"only {len(shown)} of 20 small files had content shown"
+
+
+def test_architecture_is_told_what_it_was_not_shown():
+    """A truncation the agent cannot see is a truncation it cannot report.
+
+    This is finding 1's failure moved to the input: without knowing evidence was
+    withheld, a design built on part of the repository is presented with the same
+    confidence as one built on all of it.
+    """
+    files = {f"src/big{i:02d}.py": "# padding\n" + "y = 2\n" * 4000 for i in range(12)}
+    _, user = build_role_prompts(
+        AgentRole.ARCHITECTURE, _architecture_envelope(files), {}, {}
+    )
+
+    assert "omitted" in user.lower(), "the prompt never admits evidence was withheld"
+
+
+def test_escape_heavy_evidence_still_respects_the_budget():
+    """Escaping a newline costs two characters, so raw bytes are not the payload.
+
+    A file of pure line breaks nearly doubles when serialized. The allocator
+    renders, measures and shrinks rather than reserving for this worst case, and
+    this is what proves the shrink actually converges.
+    """
+    files = {f"src/nl{i:02d}.py": f"MARKER_{i:02d}\n" + "\n" * 3000 for i in range(30)}
+    _, user = build_role_prompts(
+        AgentRole.ARCHITECTURE, _architecture_envelope(files), {}, {}
+    )
+
+    start = user.index('{"kind": "repository"')
+    end = user.index("\nEvidence budget")
+    payload = len(user[start:end].encode("utf-8"))
+    assert payload <= 16 * 1024, f"serialized payload was {payload} bytes"
+    assert "omitted" in user.lower()

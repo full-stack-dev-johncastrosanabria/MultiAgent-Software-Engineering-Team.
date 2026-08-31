@@ -10,7 +10,18 @@ from typing import Any
 
 from engineering_team.guardrails.secrets import redact_secrets
 
-MAX_ARCHITECTURE_READ_FILES = 4
+# How many ranked paths the graph fetches. Reading is cheap; what costs is what
+# reaches the prompt, and that is governed by the byte budget below.
+MAX_ARCHITECTURE_READ_CANDIDATES = 24
+# Evidence smaller than this is not worth a slot: a 2 KB window on a large file
+# is already thin, and anything less says nothing about the file.
+MIN_ARCHITECTURE_SLICE_BYTES = 2 * 1024
+# What each item costs before any content: the JSON keys, the path, the quotes.
+# Escaping expansion is not guessed here -- the caller renders, measures, and
+# shrinks, because a fixed allowance large enough for the worst case wastes most
+# of the budget in the common one.
+ARCHITECTURE_ENVELOPE_BYTES = 256
+MAX_ARCHITECTURE_RAG_ITEMS = 4
 MAX_ARCHITECTURE_READ_BYTES = 16 * 1024
 MAX_ARCHITECTURE_LIST_BYTES = 8 * 1024
 MAX_ARCHITECTURE_SEARCH_BYTES = 8 * 1024
@@ -217,6 +228,49 @@ def safe_repository_path(raw_path: str) -> str | None:
     ):
         return None
     return candidate.as_posix()
+
+
+
+def budgeted_slices(
+    sizes: list[int], total: int, *, minimum: int, overhead: int = 0
+) -> tuple[list[int], int]:
+    """Split a byte budget across ranked evidence, fairly and by size.
+
+    A fixed file count treats four 40-line files and four 4,000-line files as the
+    same evidence. This admits an item only if it can be given a useful slice, and
+    then water-fills: small items are satisfied outright and their surplus goes to
+    the large ones rather than being wasted.
+
+    `overhead` is charged per admitted item for whatever wraps the content, so the
+    caller's serialized payload stays inside `total` rather than the text alone.
+
+    Returns the per-item slice for everything admitted, and how many ranked items
+    did not fit at all -- a number the caller must report, because evidence
+    withheld silently cannot be reported as insufficient coverage.
+    """
+    admitted, committed = 0, 0
+    for size in sizes:
+        need = overhead + min(size, minimum)
+        if committed + need > total:
+            break
+        committed += need
+        admitted += 1
+    chosen = sizes[:admitted]
+    slices = [0] * len(chosen)
+    remaining = max(0, total - admitted * overhead)
+    unsatisfied = [i for i, size in enumerate(chosen) if size > 0]
+    while unsatisfied and remaining > 0:
+        share = remaining // len(unsatisfied)
+        if share == 0:
+            break
+        for index in list(unsatisfied):
+            give = min(chosen[index] - slices[index], share)
+            if give > 0:
+                slices[index] += give
+                remaining -= give
+            if slices[index] >= chosen[index]:
+                unsatisfied.remove(index)
+    return slices, len(sizes) - admitted
 
 
 def bounded_utf8(value: str, limit: int = MAX_ARCHITECTURE_READ_BYTES) -> str:

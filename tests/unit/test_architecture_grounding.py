@@ -923,3 +923,45 @@ def test_exclusion_placeholder_survives_injection_shaped_kind() -> None:
     assert _SECRET_VALUE not in out
     assert "DROP TABLE" not in out
 
+
+# -- finding 8: a byte budget, not a file count ----------------------------
+
+
+def test_many_small_files_all_fit_where_a_file_count_would_have_dropped_them():
+    from engineering_team.repository_evidence import budgeted_slices
+
+    slices, omitted = budgeted_slices([500] * 20, 16 * 1024, minimum=2048)
+
+    assert omitted == 0
+    assert len(slices) == 20
+    assert all(given == 500 for given in slices), "small files should arrive whole"
+
+
+def test_large_files_are_admitted_only_while_a_useful_slice_remains():
+    from engineering_team.repository_evidence import budgeted_slices
+
+    slices, omitted = budgeted_slices([24 * 1024] * 12, 16 * 1024, minimum=2048)
+
+    assert len(slices) == 8, "16 KB at a 2 KB floor admits eight, not four"
+    assert omitted == 4
+    assert sum(slices) <= 16 * 1024
+
+
+def test_surplus_from_small_files_goes_to_the_large_one():
+    """Otherwise an equal split wastes budget on files that do not need it."""
+    from engineering_team.repository_evidence import budgeted_slices
+
+    slices, omitted = budgeted_slices([300, 300, 50 * 1024], 16 * 1024, minimum=2048)
+
+    assert omitted == 0
+    assert slices[:2] == [300, 300]
+    assert slices[2] > 15 * 1024, "the large file should absorb what the others left"
+
+
+def test_an_empty_budget_omits_everything_and_says_so():
+    from engineering_team.repository_evidence import budgeted_slices
+
+    slices, omitted = budgeted_slices([4096] * 3, 0, minimum=2048)
+
+    assert slices == []
+    assert omitted == 3

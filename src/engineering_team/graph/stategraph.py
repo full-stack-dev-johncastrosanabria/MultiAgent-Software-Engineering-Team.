@@ -27,8 +27,9 @@ from engineering_team.contracts.state import EngineeringState
 from engineering_team.guardrails.validation import require_explicit_destructive_authorization
 from engineering_team.models.context import build_context
 from engineering_team.repository_evidence import (
+    MAX_ARCHITECTURE_RAG_ITEMS,
     MAX_ARCHITECTURE_READ_BYTES,
-    MAX_ARCHITECTURE_READ_FILES,
+    MAX_ARCHITECTURE_READ_CANDIDATES,
     MAX_ARCHITECTURE_SEARCH_BYTES,
     bounded_rag_evidence,
     bounded_redacted_text,
@@ -280,7 +281,7 @@ def build_engineering_graph(
                         hit_set = set(search_hits)
                         relevant_ranked = [path for path in ranked if path in hit_set]
                         ranked = relevant_ranked or ranked
-                    for path in ranked[:MAX_ARCHITECTURE_READ_FILES]:
+                    for path in ranked[:MAX_ARCHITECTURE_READ_CANDIDATES]:
                         raw_read = repository_mcp.read_file(role, path)
                         architecture_read_results.append((path, raw_read))
                 elif role is AgentRole.DEVELOPER and result.status is ToolStatus.SUCCESS:
@@ -331,7 +332,7 @@ def build_engineering_graph(
                     if item.chunk_id not in seen_chunks:
                         unique_rag.append(item)
                         seen_chunks.add(item.chunk_id)
-                    if len(unique_rag) == MAX_ARCHITECTURE_READ_FILES:
+                    if len(unique_rag) == MAX_ARCHITECTURE_RAG_ITEMS:
                         break
                 evidence_count = len(unique_rag) + len(architecture_read_results)
                 content_budget = (

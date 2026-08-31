@@ -12,8 +12,8 @@ index says where each one stands.
 | 4 | high | Repository MCP indexes ignored artefacts without limit | **fixed** — `6fe08e4` |
 | 5 | medium | Telemetry confuses primary execution with fallback | **open** — confirmed live in run-8e101cac (`fallback_used: true`, `fallback_reason: CLOUD_FIRST` on the primary path) |
 | 6 | medium | Visible history reconstructs past decisions from the latest revision | **open** — untouched |
-| 7 | critical | The Developer can empty files and cannot see what it wrote | **fixed** — the projection now carries `implementation`, and the prompt renders the code it authored, because a projected value alone is collapsed to "present" |
-| 8 | high | Architecture designs from four files and cannot ask for a fifth | **open** — recorded `47642e7` |
+| 7 | critical | The Developer can empty files and cannot see what it wrote | **fixed** — the projection now carries `implementation`, and the prompt renders the previously authored code, because a projected value alone is collapsed to "present" |
+| 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — a byte budget replaced the file count, and the prompt now states how much evidence was withheld |
 
 ## Two things worth remembering
 
