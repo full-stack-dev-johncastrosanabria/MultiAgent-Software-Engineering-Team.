@@ -43,6 +43,18 @@ class ArchitectureProposal(StrictModel):
     impact: str
     evidence_references: list[str] = Field(default_factory=list)
 
+    evidence_sufficient: bool | None = None
+    """Whether the repository evidence covered enough to design against.
+
+    Three states on purpose. `None` means nothing was recorded, which is not the
+    same as a clean bill of health -- finding 1's failure was exactly that
+    conflation. Computed by the graph from what it actually read, never taken
+    from the model: a stage that overlooked something is the last thing that can
+    be trusted to report it, and a routing decision must not rest on free text.
+    """
+    evidence_gap: str = ""
+    """What was left unread, in the graph's own words."""
+
 
 class ImplementationResult(StrictModel):
     action_mode: ActionMode

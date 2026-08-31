@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -486,3 +487,39 @@ def result_path(input_summary: str) -> str | None:
     if not input_summary.startswith("path="):
         return None
     return safe_repository_path(input_summary.removeprefix("path="))
+
+
+# Below this share of the ranked candidates, a design is a guess about the rest.
+MIN_EVIDENCE_COVERAGE = 0.5
+
+
+@dataclass(frozen=True)
+class EvidenceSufficiency:
+    """How much of what was worth reading actually reached the agent."""
+
+    sufficient: bool
+    gap: str
+    coverage: float
+
+
+def assess_evidence_sufficiency(
+    *, read: int, ranked: int, omitted: int
+) -> EvidenceSufficiency:
+    """Judge whether a stage saw enough of the repository to design against it.
+
+    Reading everything there is can never be insufficient, however little that
+    is: a three-file project is not a thin slice of itself. What counts is the
+    share of the ranked candidates that arrived.
+    """
+    if ranked <= 0 or read >= ranked:
+        return EvidenceSufficiency(True, "", 1.0)
+    coverage = read / ranked
+    if coverage >= MIN_EVIDENCE_COVERAGE:
+        return EvidenceSufficiency(True, "", coverage)
+    missing = max(omitted, ranked - read)
+    return EvidenceSufficiency(
+        False,
+        f"{missing} of {ranked} ranked files were not read "
+        f"({coverage:.0%} of the relevant evidence reached this stage)",
+        coverage,
+    )

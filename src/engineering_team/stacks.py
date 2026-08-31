@@ -135,6 +135,19 @@ PROFILES: dict[str, StackProfile] = {
         ),
         test_needs_network=True,
     ),
+    "go": StackProfile(
+        name="go",
+        image=(
+            "golang@sha256:"
+            "167053a2bb901972bf2c1611f8f52c44d5fe7e762e5cab213708d82c421614db"
+        ),
+        # `./...` and not `.`: a Go module's tests live in every package under it.
+        test_template=("go", "test", "./..."),
+        build_template=("go", "build", "./..."),
+        lint_template=("go", "vet", "./..."),
+        environment=(("GOMODCACHE", f"{ENVIRONMENT}/gomod"), ("GOCACHE", f"{ENVIRONMENT}/gocache")),
+        test_needs_network=True,
+    ),
     "node": StackProfile(
         name="node",
         image=(

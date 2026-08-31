@@ -34,6 +34,7 @@ _MANIFEST_NAMES: dict[str, str] = {
     "build.gradle": "jvm",
     "build.gradle.kts": "jvm",
     "package.json": "node",
+    "go.mod": "go",
 }
 # Extensions that identify a stack. A solution file is deliberately absent: it
 # lists projects rather than being something to build in a directory.

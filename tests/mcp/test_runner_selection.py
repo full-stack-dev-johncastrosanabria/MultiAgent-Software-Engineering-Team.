@@ -176,3 +176,61 @@ def test_each_quality_instance_provisions_its_own_environment(tmp_path: Path) ->
     assert first.environment is None and second.environment is None
     first.environment = tmp_path / "env-a"
     assert second.environment is None, "environments are per runner, not global"
+
+
+# -- the project's services come up before its tests run ---------------------
+
+
+class _FakeStack:
+    """A service stack that records whether it was asked to start."""
+
+    def __init__(self, *, services=("postgres",), fails: bool = False) -> None:
+        self.services = services
+        self.network = None
+        self.started = False
+        self._fails = fails
+
+    def up(self, deadline: float) -> None:
+        from engineering_team.services import ServiceStartupError
+
+        self.started = True
+        if self._fails:
+            raise ServiceStartupError("postgres never became ready")
+        self.network = "aset-run_default"
+
+    def down(self) -> None:
+        self.network = None
+
+
+def test_services_start_before_the_tests_that_need_them(tmp_path: Path) -> None:
+    from engineering_team.contracts.enums import AgentRole
+
+    stack = _FakeStack()
+    recorder = _Recorder(tmp_path)
+    quality = QualityMCP(tmp_path, runner=recorder, services=stack)
+    quality.run_tests(AgentRole.TESTING)
+
+    assert stack.started, "the tests ran without the database the project expects"
+
+
+def test_a_service_that_never_starts_is_not_a_failing_test(tmp_path: Path) -> None:
+    """Finding 7's misleading headline: infrastructure reported as bad code."""
+    from engineering_team.contracts.enums import AgentRole, ToolStatus
+
+    stack = _FakeStack(fails=True)
+    recorder = _Recorder(tmp_path)
+    quality = QualityMCP(tmp_path, runner=recorder, services=stack)
+    result = quality.run_tests(AgentRole.TESTING)
+
+    assert result.status is ToolStatus.UNAVAILABLE
+    assert "INFRASTRUCTURE_ERROR" in (result.error or "")
+    assert not recorder.commands, "no test should run without its dependencies"
+
+
+def test_a_project_with_no_services_is_unaffected(tmp_path: Path) -> None:
+    from engineering_team.contracts.enums import AgentRole
+
+    stack = _FakeStack(services=())
+    recorder = _Recorder(tmp_path)
+    QualityMCP(tmp_path, runner=recorder, services=stack).run_tests(AgentRole.TESTING)
+    assert recorder.commands, "the tests should still have run"

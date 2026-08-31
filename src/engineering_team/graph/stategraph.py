@@ -31,6 +31,7 @@ from engineering_team.repository_evidence import (
     MAX_ARCHITECTURE_READ_BYTES,
     MAX_ARCHITECTURE_READ_CANDIDATES,
     MAX_ARCHITECTURE_SEARCH_BYTES,
+    assess_evidence_sufficiency,
     bounded_rag_evidence,
     bounded_redacted_text,
     parse_repository_paths,
@@ -219,6 +220,7 @@ def build_engineering_graph(
             existing_repo_paths: set[str] = set()
             architecture_rag = list(rag_evidence)
             architecture_read_results: list[tuple[str, Any]] = []
+            architecture_coverage: Any = None
             architecture_retrieval_ran = False
             if retriever is not None and role in {
                 AgentRole.ARCHITECTURE, AgentRole.SECURITY, AgentRole.TESTING
@@ -260,7 +262,11 @@ def build_engineering_graph(
                 if role is AgentRole.ARCHITECTURE and result.status is ToolStatus.SUCCESS:
                     listed_paths = architecture_listed_paths
                     terms = ArchitectureAgent.relevance_terms(
-                        current.specification, current.requirement
+                        current.specification,
+                        current.requirement,
+                        # What the Reviewer said, so a second pass does not read
+                        # the same files and reach the same conclusion.
+                        feedback=current.remediation_request or "",
                     )
                     search_hits: list[str] = []
                     for term in terms[:3]:
@@ -284,6 +290,14 @@ def build_engineering_graph(
                     for path in ranked[:MAX_ARCHITECTURE_READ_CANDIDATES]:
                         raw_read = repository_mcp.read_file(role, path)
                         architecture_read_results.append((path, raw_read))
+                    # Measured here, from what was actually fetched against what
+                    # ranking said was worth fetching. The stage does not get to
+                    # report on itself.
+                    architecture_coverage = assess_evidence_sufficiency(
+                        read=len(architecture_read_results),
+                        ranked=len(ranked),
+                        omitted=max(0, len(ranked) - len(architecture_read_results)),
+                    )
                 elif role is AgentRole.DEVELOPER and result.status is ToolStatus.SUCCESS:
                     listed_paths = [
                         line.strip().replace("\\", "/")
@@ -555,6 +569,11 @@ def build_engineering_graph(
                 }
                 patch["cloud_escalations_run"] = cloud_runtime.budget.run_count
             target = targets[role]
+            if role is AgentRole.ARCHITECTURE and architecture_coverage is not None:
+                output = output.model_copy(update={
+                    "evidence_sufficient": architecture_coverage.sufficient,
+                    "evidence_gap": architecture_coverage.gap,
+                })
             patch[target] = [*current.test_results, output] if role is AgentRole.TESTING else output
             if role is AgentRole.REVIEWER:
                 # Kept so the report can show what each cycle actually decided.

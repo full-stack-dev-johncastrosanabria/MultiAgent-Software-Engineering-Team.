@@ -19,8 +19,20 @@ class ArchitectureAgent(AgentBase[ArchitectureProposal]):
     }
 
     @classmethod
-    def relevance_terms(cls, specification: Any, requirement: str) -> list[str]:
+    def relevance_terms(
+        cls, specification: Any, requirement: str, feedback: str = ""
+    ) -> list[str]:
+        """Terms that decide which files this stage reads.
+
+        `feedback` is what the Reviewer said when it sent the work back. Without
+        it the function is pure in the specification and the requirement, neither
+        of which a remediation changes, so a rejected design re-read the same
+        files, proposed the same interfaces and was rejected again. The names in
+        a failure -- the module that would not import, the attribute that did not
+        exist -- are exactly the terms that would have found the missing file.
+        """
         values = [
+            feedback,
             requirement,
             getattr(specification, "objective", ""),
             " ".join(getattr(specification, "business_rules", [])),

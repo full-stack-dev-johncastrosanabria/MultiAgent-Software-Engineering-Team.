@@ -61,6 +61,38 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 evidence_references=evidence,
             )
         if latest_test is not None and latest_test.status is not ToolStatus.SUCCESS:
+            # Where does a failure belong? Every failure used to go to the
+            # Developer, which is right when the design was sound and the code
+            # was not. It is wrong when the design was built on a slice of the
+            # repository: the Developer is then asked to satisfy interfaces
+            # nobody verified, produces the same mismatch, and the cycle repeats
+            # against the same evidence -- the loop finding 8 describes.
+            #
+            # The condition is the graph's own count of what Architecture read,
+            # never the model's account of itself, so the routing stays
+            # deterministic.
+            architecture = envelope.state_projection.get("architecture")
+            if getattr(architecture, "evidence_sufficient", None) is False:
+                gap = getattr(architecture, "evidence_gap", "") or "evidence was incomplete"
+                return ReviewerDecision(
+                    status=ReviewerStatus.REJECTED, score=40,
+                    subscores={
+                        item: (0 if item in {"testing", "architecture"} else 70)
+                        for item in _DIMENSIONS
+                    },
+                    problems=[
+                        f"the design was produced from incomplete evidence: {gap}",
+                        *latest_test.failures,
+                    ],
+                    reason=(
+                        "tests fail against a design built on incomplete repository "
+                        "evidence; the architecture needs to be revisited before "
+                        "the implementation"
+                    ),
+                    remediation_category=RemediationCategory.ARCHITECTURE,
+                    return_to=RouteTarget.ARCHITECTURE, confidence=1,
+                    evidence_references=evidence,
+                )
             return ReviewerDecision(
                 status=ReviewerStatus.REJECTED, score=45,
                 subscores={item: (0 if item == "testing" else 75) for item in _DIMENSIONS},

@@ -11,9 +11,15 @@ from engineering_team.stacks import PROFILES, StackProfile, profile_for
 
 
 def test_every_detectable_stack_has_a_profile() -> None:
-    """Detection and execution must not disagree about what exists."""
-    stacks = {"python", "jvm", "dotnet", "node"}
-    assert set(PROFILES) == stacks
+    """Detection and execution must not disagree about what exists.
+
+    Derived from detection rather than restated: a hardcoded list drifts the
+    moment a manifest is added, and then says nothing.
+    """
+    from engineering_team.components import _MANIFEST_NAMES, _MANIFEST_SUFFIXES
+
+    detectable = set(_MANIFEST_NAMES.values()) | set(_MANIFEST_SUFFIXES.values())
+    assert detectable == set(PROFILES)
 
 
 def test_the_python_profile_reproduces_todays_commands() -> None:

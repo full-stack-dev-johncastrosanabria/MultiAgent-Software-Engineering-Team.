@@ -9,9 +9,10 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import AgentRole, ToolStatus
+from engineering_team.contracts.enums import AgentRole, ErrorCode, ToolStatus
 from engineering_team.contracts.models import ToolResult
 from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.runner import (
@@ -68,6 +69,7 @@ class QualityMCP:
         settings: Settings | None = None,
         profile: StackProfile | None = None,
         component: str = "",
+        services: Any = None,
     ) -> None:
         self.root = Path(root).resolve()
         # Which ecosystem's commands to run. Python stays the default so every
@@ -77,6 +79,10 @@ class QualityMCP:
         # run, which leaves evidence_reference unset exactly as before: the gates
         # group by it, and an unset reference is one bucket.
         self.component = component
+        # The dependencies this project declares. They live for the run, so they
+        # are started once, before the first phase that could need them.
+        self.services = services
+        self._services_started = False
         self.timeout_seconds = float(timeout_seconds)
         self._last: dict[str, ToolResult] = {}
         self._project_prepared = False
@@ -240,6 +246,41 @@ class QualityMCP:
             allow_network=allow_network,
         )
 
+
+
+    def _ensure_services(
+        self, role: AgentRole, tool: str, deadline: float
+    ) -> ToolResult | None:
+        """Start the project's dependencies, or report why they are missing.
+
+        A service that never became ready is not a failing test. Letting the
+        suite run and fail would attribute an infrastructure problem to the code
+        under test -- the misleading headline finding 7 describes -- so the run
+        stops here and says which it was.
+        """
+        if self.services is None or self._services_started:
+            return None
+        if not getattr(self.services, "services", ()):
+            self._services_started = True
+            return None
+        started = time.perf_counter()
+        try:
+            self.services.up(deadline)
+        except (OSError, RuntimeError, subprocess.SubprocessError, TimeoutError) as exc:
+            return ToolResult(
+                tool_name=tool, allowed_role=role, status=ToolStatus.UNAVAILABLE,
+                input_summary="services", output_summary="",
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                error=f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: {exc}",
+                evidence_reference=self._evidence_reference(tool),
+            )
+        self._services_started = True
+        network = getattr(self.services, "network", None)
+        if network and hasattr(self._runner, "network"):
+            # The commands have to join the network the services are on, and it
+            # only exists once they are up.
+            self._runner.network = network
+        return None
 
     def _run_profile(
         self,
@@ -628,6 +669,9 @@ class QualityMCP:
         if role not in allowed:
             return self._denied(role, "run_tests")
         deadline = self._deadline()
+        unavailable = self._ensure_services(role, "run_tests", deadline)
+        if unavailable is not None:
+            return unavailable
         # Installing the project and its test tool with pip is Python's answer to
         # a question Maven and dotnet resolve on their own.
         if self.profile.name == "python":

@@ -77,7 +77,7 @@ deterministic and no routing decision comes from model text. Each component
 carries its image and its install, lint, test and build commands.
 
 *Status: done. Detection is file existence, verified against the real trees of
-all six repositories: 3, 4, 6, 10, 8 and 2 components. Four profiles name a
+all six repositories: 3, 4, 6, 10, 8 and 2 components. Five profiles -- Python, JVM, .NET, Node and Go -- name a
 digest-pinned image and their own commands, and QualityMCP routes through them.
 The 443 tests that predate profiles still pass, which is the evidence that
 routing Python through one did not change what Python does.*
@@ -170,14 +170,21 @@ a failure a later cycle had already fixed kept counting — five workflow tests
 caught that. The verdict is now the latest result per component, which for a
 single-component run is exactly the previous behaviour.*
 
-### 7. Read limits that can be widened
-[Finding 8](findings/README.md). Not a runner concern, but it blocks the largest
-repositories, so it has to land before the last step of the proving sequence.
+### 7. Reading that widens, and knows when it did not
+[Finding 8](findings/README.md) and [ADR 7](decisions/0007-declared-coverage-decides-remediation.md).
 
-*Status: done. A byte budget replaced the file count: twenty small modules now
-all arrive where four did before, large files are admitted while a useful slice
-remains, and the prompt states how much evidence was withheld so a partial design
-can be declared partial.*
+*Status: done. The fixed cap of four files became a byte budget over
+twenty-four ranked candidates, split by size so a repository of small modules
+arrives whole. Coverage is then measured by the graph and stamped onto the
+proposal in three states, where silence is distinct from sufficiency. A test
+failure over declared-thin evidence is routed back to Architecture rather than to
+the Developer, and the Reviewer's feedback contributes terms to the next
+selection so a second pass does not read the same files.*
+
+*What remains is the budget itself. Twenty-four candidates against a 16 KB
+payload is a deliberate compromise, not a limit of the design: raising it costs
+context on every architecture call, and the honest way to move it is to measure
+what coverage actually buys on a large repository rather than to guess upward.*
 
 ## Proving sequence
 

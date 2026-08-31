@@ -53,6 +53,12 @@ holds.
 
 ## Proof
 
+- [ ] The stack is detectable *and* runnable. A manifest that detection knows
+      about with no profile behind it produces a component nothing can build;
+      a test derives one set from the other rather than restating it.
+- [ ] Services the project declares are started before its tests, and a service
+      that never becomes ready is reported as infrastructure rather than as a
+      failing test.
 - [ ] Verified against a real repository, not a fixture. The six in
       [../roadmap.md](../roadmap.md) exist for this.
 - [ ] The suite passes on a machine with no container runtime and no images
