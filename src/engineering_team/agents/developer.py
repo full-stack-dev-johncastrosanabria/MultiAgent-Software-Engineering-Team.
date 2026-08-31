@@ -74,15 +74,15 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
             return explicit
         if any(cls._is_source_path(path) for path in explicit):
             return explicit
-        terms = [
-            *cls.relevance_terms(specification, architecture, requirement),
-            *(
-                Path(path).stem.removeprefix("test_")
-                for path in explicit
-                if cls._is_test_path(path)
-            ),
+        test_terms = [
+            Path(path).stem.removeprefix("test_")
+            for path in explicit
+            if cls._is_test_path(path)
         ]
-        candidates: list[tuple[int, str]] = []
+        terms = list(dict.fromkeys([
+            *cls.relevance_terms(specification, architecture, requirement), *test_terms,
+        ]))
+        candidates: list[tuple[int, int, int, str]] = []
         for item in repository_results:
             if (
                 item.status is not ToolStatus.SUCCESS
@@ -95,17 +95,22 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
             if (
                 path in explicit
                 or cls._is_test_path(path)
-                or suffix not in cls._TARGET_EXTENSIONS
+                or suffix not in cls._SOURCE_EXTENSIONS
                 or not cls._safe_path(path)
             ):
                 continue
-            haystack = f"{path}\n{item.output_summary}".lower()
-            score = sum(haystack.count(term.lower()) for term in terms if term)
+            normalized_path = path.lower()
+            content = item.output_summary.lower()
+            test_affinity = sum(normalized_path.count(term.lower()) for term in test_terms if term)
+            path_score = sum(normalized_path.count(term.lower()) for term in terms if term)
+            score = path_score + sum(content.count(term.lower()) for term in terms if term)
             if score:
-                candidates.append((score, path))
+                candidates.append((test_affinity, path_score, score, path))
         if not candidates:
             return explicit
-        _, source = min(candidates, key=lambda candidate: (-candidate[0], candidate[1]))
+        _, _, _, source = min(
+            candidates, key=lambda candidate: (-candidate[0], -candidate[1], -candidate[2], candidate[3])
+        )
         return [source, *explicit]
 
     @staticmethod

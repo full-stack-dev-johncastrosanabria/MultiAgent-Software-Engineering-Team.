@@ -223,6 +223,7 @@ def build_engineering_graph(
             architecture_read_results: list[tuple[str, Any]] = []
             architecture_coverage: Any = None
             architecture_retrieval_ran = False
+            developer_apply_targets: list[str] = []
             if retriever is not None and role in {
                 AgentRole.ARCHITECTURE, AgentRole.SECURITY, AgentRole.TESTING
             }:
@@ -330,10 +331,17 @@ def build_engineering_graph(
                             read, role, errors, tool_results, repository_mcp
                         )
                     if current.repository_context.get("apply_changes"):
-                        # Guarantee the LLM sees the current content of every file the
-                        # requirement explicitly names, not just the heuristically
-                        # ranked ones, before it authors real replacement content.
-                        for target_path in DeveloperAgent.requested_targets(current.requirement):
+                        # A test path is often the only literal path in a request. Select
+                        # one related source from already inspected evidence, then read it
+                        # as Developer evidence before the write candidate is governed.
+                        developer_apply_targets = DeveloperAgent.apply_targets(
+                            DeveloperAgent.requested_targets(current.requirement),
+                            tool_results,
+                            current.specification,
+                            current.architecture,
+                            current.requirement,
+                        )
+                        for target_path in developer_apply_targets:
                             if target_path in existing_repo_paths and target_path not in already_read:
                                 read = repository_mcp.read_file(role, target_path)
                                 required_mcp_missing |= preserve_tool_result(
@@ -411,6 +419,15 @@ def build_engineering_graph(
             model_usage = list(current.model_usage)
             envelope = build_context(role, current, role.value)
             candidate = agents[role].execute(envelope)
+            if (
+                role is AgentRole.DEVELOPER
+                and developer_apply_targets
+                and candidate.action_mode is ActionMode.APPLIED
+            ):
+                # Keep the governed candidate aligned with the files just read above.
+                # This makes the orchestrator, rather than model context order, the
+                # final authority on a remediation's writable scope.
+                candidate = candidate.model_copy(update={"changed_files": developer_apply_targets})
             if role in {AgentRole.TESTING, AgentRole.REVIEWER}:
                 # Testing and Reviewer are deterministic gates over real MCP evidence.
                 # Calling a model here adds latency without improving the result.

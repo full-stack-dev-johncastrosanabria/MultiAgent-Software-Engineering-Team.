@@ -237,7 +237,7 @@
         "evaluation/reports/e2e-flask-container-retry.json"
       ],
       "confidence": "high",
-      "recommended_fix": "Cuando no hay ninguna ruta fuente entre los objetivos, pero si hay una prueba, agregar como maximo una ruta fuente ya leida con exito por Repository MCP y con relevancia positiva respecto a requisito, especificacion y propuesta de Architecture. Documentacion auxiliar no satisface esa condicion. No aceptar rutas inventadas ni ampliar una solicitud que ya nombra una fuente."
+      "recommended_fix": "Cuando no hay ninguna ruta fuente entre los objetivos, pero si hay una prueba, agregar como maximo una ruta fuente ya leida con exito por Repository MCP y con relevancia positiva respecto a requisito, especificacion y propuesta de Architecture. Documentacion auxiliar no satisface esa condicion. El orquestador debe volver a leer la ruta bajo Developer antes de gobernar el candidato, y normalizar changed_files a esa seleccion. No aceptar rutas inventadas ni ampliar una solicitud que ya nombra una fuente."
     }
   ],
   "ordered_fix_plan": [

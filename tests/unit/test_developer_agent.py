@@ -163,6 +163,11 @@ def test_apply_adds_source_when_test_request_also_contains_auxiliary_documentati
         [
             ToolResult(
                 tool_name="read_file", allowed_role=AgentRole.DEVELOPER,
+                status=ToolStatus.SUCCESS, input_summary="path=app/ai/knowledge_base.py",
+                output_summary="base " * 100, duration_ms=1,
+            ),
+            ToolResult(
+                tool_name="read_file", allowed_role=AgentRole.DEVELOPER,
                 status=ToolStatus.SUCCESS, input_summary="path=app/routes/products.py",
                 output_summary="def get_products(): pass\n", duration_ms=1,
             ),

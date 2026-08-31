@@ -248,6 +248,35 @@ def test_workflow_searches_and_reads_relevant_repository_files_for_developer(tmp
     assert "transaction_history" in result["implementation"].diff
 
 
+def test_apply_reads_and_governs_source_for_a_named_test_with_auxiliary_docs(tmp_path):
+    """Finding 14: docs must not prevent a named test's route from changing."""
+    (tmp_path / "app" / "routes").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "app" / "routes" / "products.py").write_text(
+        "def products():\n    return []\n", encoding="utf-8"
+    )
+    (tmp_path / "tests" / "test_products.py").write_text(
+        "def test_products():\n    pass\n", encoding="utf-8"
+    )
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8")
+
+    with MCPRepositoryClient(tmp_path) as repository:
+        result = build_engineering_graph(repository_mcp=repository).invoke({
+            "run_id": "apply-targets",
+            "requirement": "Implement low stock products in tests/test_products.py and CHANGELOG.md",
+            "repository_context": {"apply_changes": True, "authorized": False},
+        })
+
+    assert result["implementation"].changed_files == [
+        "app/routes/products.py", "tests/test_products.py", "CHANGELOG.md",
+    ]
+    developer_reads = [
+        item.input_summary for item in result["tool_results"]
+        if item.tool_name == "read_file" and item.allowed_role is AgentRole.DEVELOPER
+    ]
+    assert "path=app/routes/products.py" in developer_reads
+
+
 class FailingLocalRuntime:
     def __init__(self):
         self.attempts = []

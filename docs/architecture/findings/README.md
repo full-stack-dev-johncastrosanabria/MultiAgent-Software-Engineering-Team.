@@ -19,7 +19,7 @@ index says where each one stands.
 | 9 | critical | The cloud-context guardrail blocks any project that reads environment variables | **fixed** — `.env` is matched as a file reference and not as a substring of `os.environ` |
 | 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — a byte budget replaced the file count, and the prompt now states how much evidence was withheld |
 | 13 | high | Reviewer does not distinguish a regression from a new failing test | **fixed** — `a82ec93`, `9ad580e`; the Flask retry labelled the two formerly passing tests as `REGRESSION` before the new endpoint failures |
-| 14 | high | Apply authorizes only file paths named literally in the requirement | **in progress** — the first repair works for a test-only allowlist; the Flask retry proved an auxiliary `CHANGELOG.md` can still suppress the relevant inspected source |
+| 14 | high | Apply authorizes only file paths named literally in the requirement | **in progress** — the second repair makes the orchestrator select and reread the relevant source even with an auxiliary `CHANGELOG.md`; it awaits the third clean Flask run |
 
 ## Two things worth remembering
 
@@ -83,4 +83,7 @@ Its first repair exposed one more boundary: `CHANGELOG.md` appeared beside the
 test in the deterministic candidate, which made the allowlist no longer
 literally test-only and again suppressed the products route. Auxiliary
 documentation must not count as an implementation target when deciding whether
-a source file is still missing.
+a source file is still missing. The selection and Developer-role reread now run
+in the orchestrator before it governs the candidate, so model context ordering
+cannot replace that writable scope. The integration test reproduces the exact
+three paths; the next Flask run remains the external proof.
