@@ -17,7 +17,7 @@ index says where each one stands.
 | 11 | high | The ephemeral environment imposes the operator's Python on the project | **fixed** — the container image follows the interpreter derived from the project's pins, verified against FlaskApiProduct: 32 seconds, Python 3.12, every dependency from a wheel, 62 tests passing. Previously **partly fixed** — the failure now says so: an install that fell back to a source build is reported as INFRASTRUCTURE_ERROR naming the interpreter, instead of a wall of ninja output read as a code defect. Declared requirements are read where a project states one. Actually *providing* a different interpreter still needs a version-matched container image |
 | 10 | critical | The ephemeral environment installs only projects that ship a pyproject.toml | **fixed** — a project that declares its dependencies in requirements.txt gets them, and the installable manifests are tied to the ones detection recognises |
 | 9 | critical | The cloud-context guardrail blocks any project that reads environment variables | **fixed** — `.env` is matched as a file reference and not as a substring of `os.environ` |
-| 8 | high | Architecture designs from four files and cannot ask for a fifth | **in progress** — Flask v8 made seven of 27 ranked paths visible and omitted the product route. Task-boundary reservation and unseen-path rotation are unit-validated; the next clean Flask run must prove them against the actual inventory module |
+| 8 | high | Architecture designs from four files and cannot ask for a fifth | **fixed** — `2856069`; Flask v9 made the route, test and model visible, marked evidence sufficient and never returned to Architecture |
 | 13 | high | Reviewer does not distinguish a regression from a new failing test | **fixed** — `a82ec93`, `9ad580e`; the Flask retry labelled the two formerly passing tests as `REGRESSION` before the new endpoint failures |
 | 14 | high | Apply authorizes only file paths named literally in the requirement | **fixed** — the fourth Flask run wrote the inspected `app/routes/products.py` together with `tests/test_products.py`, without expanding the scope to the auxiliary `CHANGELOG.md` |
 | 15 | high | Cold Quality provisioning expires before a real project reaches tests | **fixed** — with the separate bounded 600-second Quality budget, the fourth Flask run reached Security, Testing and Reviewer; its later failure was functional, not an install timeout |
@@ -119,4 +119,7 @@ model/domain boundaries. When Reviewer returns to Architecture, those boundaries
 remain and every remaining slot rotates to previously unseen evidence. The
 50-percent candidate threshold remains only for work with no deterministic task
 boundaries. Unit regressions cover both the first selection and the remediation
-rotation; the next clean Flask run is the external proof.
+rotation. Flask v9 then made `app/routes/products.py`, `tests/test_products.py`
+and `app/models/product.py` visible, declared the evidence sufficient and kept
+all three Reviewer returns on Developer. The endpoint's remaining test failures
+are a separate implementation defect, not an Architecture loop.
