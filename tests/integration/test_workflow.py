@@ -337,6 +337,44 @@ class RecordingRuntime:
         )
 
 
+class FlakyDeveloperRuntime(RecordingRuntime):
+    """Simulates one transient provider failure before the Developer can respond."""
+
+    def __init__(self):
+        super().__init__()
+        self.developer_failures = 0
+
+    def invoke_artifact(self, role, envelope, candidate):
+        self.roles.append(role)
+        if role is AgentRole.DEVELOPER and self.developer_failures == 0:
+            self.developer_failures += 1
+            info = ModelExecutionInfo(
+                agent=role, provider="ollama", requested_model="local", actual_model=None,
+                model_profile="LOCAL", degraded=True, latency_ms=1,
+                structured_output_success=False, error="AGENT_TIMEOUT: controlled",
+            )
+            self.attempts.append(info)
+            raise RuntimeError(info.error)
+        return candidate, ModelExecutionInfo(
+            agent=role, provider="ollama", requested_model="local", actual_model="local",
+            model_profile="LOCAL", latency_ms=1, structured_output_success=True,
+        )
+
+
+class TimingOutCloudRuntime:
+    def __init__(self):
+        self.attempts = []
+
+    def invoke_artifact(self, role, envelope, candidate, *, fallback_reason):
+        info = ModelExecutionInfo(
+            agent=role, provider="google", requested_model="cloud", actual_model=None,
+            model_profile="CLOUD_FALLBACK", degraded=True, latency_ms=1,
+            structured_output_success=False, error="AGENT_TIMEOUT: controlled cloud timeout",
+        )
+        self.attempts.append(info)
+        raise RuntimeError(info.error)
+
+
 class SuccessfulCloudRuntime:
     def invoke_artifact(self, role, envelope, candidate, *, fallback_reason):
         return candidate, ModelExecutionInfo(
@@ -366,6 +404,30 @@ def test_local_failure_without_cloud_routes_to_terminal_hitl_instead_of_crashing
 
     assert result["final_status"] == "HUMAN_REVIEW_REQUIRED"
     assert result["route_history"] == ["Product", "HUMAN_REVIEW_REQUIRED"]
+
+
+def test_transient_developer_failure_retries_before_human_review():
+    runtime = FlakyDeveloperRuntime()
+    result = build_engineering_graph(
+        model_runtime=runtime, quality_mcp=PassingQuality()
+    ).invoke({"run_id": "retry-developer", "requirement": "safe bounded change"})
+
+    assert result["final_status"] == "APPROVED"
+    assert runtime.roles.count(AgentRole.DEVELOPER) == 2
+    assert result["route_history"][-5:-1] == ["Developer", "Security", "Testing", "Reviewer"]
+
+
+def test_transient_primary_and_cloud_developer_failures_retry_the_stage_once():
+    runtime = FlakyDeveloperRuntime()
+    cloud = TimingOutCloudRuntime()
+    result = build_engineering_graph(
+        model_runtime=runtime, cloud_runtime=cloud, quality_mcp=PassingQuality()
+    ).invoke({"run_id": "retry-developer-cloud", "requirement": "safe bounded change"})
+
+    assert result["final_status"] == "APPROVED"
+    assert runtime.roles.count(AgentRole.DEVELOPER) == 2
+    assert len(cloud.attempts) == 1
+    assert any(item.provider == "google" for item in result["model_usage"])
 
 
 def test_agent_timeout_is_preserved_in_workflow_and_langfuse():
@@ -443,6 +505,6 @@ def test_failed_cloud_attempt_preserves_budget_model_attempt_and_completed_evide
     assert result["final_status"] == "HUMAN_REVIEW_REQUIRED"
     assert result["cloud_escalations_run"] == 1
     assert result["cloud_escalations_by_agent"] == {"Product": 1}
-    assert result["model_usage"][-1].provider == "google"
-    assert result["model_usage"][-1].error.startswith("CLOUD_FALLBACK_UNAVAILABLE")
+    cloud_attempt = next(item for item in result["model_usage"] if item.provider == "google")
+    assert cloud_attempt.error.startswith("CLOUD_FALLBACK_UNAVAILABLE")
     assert "rag_evidence" in result and "tool_results" in result

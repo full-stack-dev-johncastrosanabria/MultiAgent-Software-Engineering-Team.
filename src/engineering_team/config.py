@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     max_local_repairs: int = Field(default=1, ge=0)
     max_cloud_escalations_per_agent: int = Field(default=1, ge=0)
     max_cloud_escalations_per_run: int = Field(default=3, ge=0)
+    # A transient connection/timeout may clear on a second request. This is a
+    # stage retry, before writes, and does not create another remediation cycle.
+    max_model_stage_retries: int = Field(default=1, ge=0)
     # Which boundary target-project commands execute behind. Deliberately not
     # auto-detected: a runner that varies silently by machine would isolate the
     # same run differently depending on whether a daemon happened to be up, and

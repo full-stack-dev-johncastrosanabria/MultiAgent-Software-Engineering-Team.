@@ -225,6 +225,10 @@ actua como contingencia** (`LOCAL_FIRST=true`). Como runtime primario no esta
 limitado por esos contadores: atender seis agentes por corrida es el caso
 normal, no una escalada. `CLOUD_ROLE_TIMEOUT_SECONDS` acota cada intento de rol.
 
+`MAX_MODEL_STAGE_RETRIES` (por defecto `1`) repite solo una etapa que fallo por
+conexion o timeout, antes de cualquier escritura. No inicia otro ciclo de
+remediacion: si se agota, la corrida queda en revision humana.
+
 `MCP_ERROR`, `TOOL_ERROR` y `RAG_ERROR` nunca activan cloud automaticamente:
 son fallas de herramienta o de evidencia, no de modelo.
 

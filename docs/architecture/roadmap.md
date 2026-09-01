@@ -272,7 +272,10 @@ when no source target exists. The first repair treated auxiliary documentation
 as a source target, so `CHANGELOG.md` still blocked the route. The next clean
 run moved the selection and reread into the orchestrator before the candidate is
 governed. The next clean run must prove that the endpoint and isolated fixtures
-converge before any branch is pushed.
+converge before any branch is pushed. The sixth run stopped earlier when both
+Developer providers timed out, before Testing or Reviewer. A bounded retry now
+repeats that stage once without writing; the next clean run must prove the real
+provider path rather than treating a local unit test as delivery evidence.
 
 ## What is deliberately not here
 

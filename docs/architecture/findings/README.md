@@ -21,6 +21,7 @@ index says where each one stands.
 | 13 | high | Reviewer does not distinguish a regression from a new failing test | **fixed** — `a82ec93`, `9ad580e`; the Flask retry labelled the two formerly passing tests as `REGRESSION` before the new endpoint failures |
 | 14 | high | Apply authorizes only file paths named literally in the requirement | **fixed** — the fourth Flask run wrote the inspected `app/routes/products.py` together with `tests/test_products.py`, without expanding the scope to the auxiliary `CHANGELOG.md` |
 | 15 | high | Cold Quality provisioning expires before a real project reaches tests | **fixed** — with the separate bounded 600-second Quality budget, the fourth Flask run reached Security, Testing and Reviewer; its later failure was functional, not an install timeout |
+| 16 | high | A transient model outage ends a run before its deterministic gates | **in progress** — one bounded retry now repeats the affected model stage before HITL; a clean FlaskApiProduct run must prove the real provider path reaches Testing and Reviewer |
 
 ## Two things worth remembering
 
@@ -98,6 +99,15 @@ that Flask code is wrong. Quality now has its own configurable, finite
 `QUALITY_TIMEOUT_SECONDS` budget (600 seconds by default); repository MCP and
 model calls retain their existing shorter budgets. A fourth clean external run
 must reach Testing and Reviewer before findings 14 and 15 can close.
+
+**Finding 16 came from the sixth Flask run.** Product and Architecture completed,
+but Developer saw a connection failure and then a cloud read timeout. The graph
+immediately stopped at `HUMAN_REVIEW_REQUIRED`, so no test or reviewer result
+existed and a pull request would have been dishonest. A stage now retries once
+only for connection and timeout errors, before any write. It does not create a
+new remediation cycle or loosen delivery: a second failure remains a human-review
+stop. The focused tests cover both a primary-only failure and a primary-plus-cloud
+failure; the pending proof is the same clean external Flask run.
 
 **Finding 8 needed a second external validation.** The third Flask attempt
 showed 24 Architecture reads but no useful source content reached the candidate:

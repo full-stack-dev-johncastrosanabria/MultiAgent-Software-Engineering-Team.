@@ -109,6 +109,7 @@ def execute_on_project(
             cloud_runtime=secondary_runtime,
             trace=trace,
             test_paths=resolved_test_paths,
+            model_stage_retries=settings.max_model_stage_retries,
         )
         # Before anything is written, record what already passes. A failure and
         # a break are different news, and after the first write there is no way

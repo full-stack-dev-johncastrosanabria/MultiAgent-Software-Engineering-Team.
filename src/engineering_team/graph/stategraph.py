@@ -140,9 +140,12 @@ def build_engineering_graph(
     trace: Any | None = None,
     test_paths: list[str] | None = None,
     interactive_hitl: bool = False,
+    model_stage_retries: int = 1,
 ):
     # StateGraph(WorkflowState) real con TypedDict, un nodo por agente y edges condicionales.
     """Compile normal, remediation, MCP/RAG, and HITL routes as real nodes."""
+    if model_stage_retries < 0:
+        raise ValueError("model_stage_retries must be non-negative")
     graph = StateGraph(WorkflowState)
     agents: dict[AgentRole, Any] = {
         AgentRole.PRODUCT: ProductAgent(), AgentRole.ARCHITECTURE: ArchitectureAgent(),
@@ -459,94 +462,84 @@ def build_engineering_graph(
                 # Calling a model here adds latency without improving the result.
                 output = candidate
             elif model_runtime is not None:
-                attempt_start = len(model_runtime.attempts)
-                try:
-                    output, model_info = model_runtime.invoke_artifact(role, envelope, candidate)
-                    attempts = model_runtime.attempts[attempt_start:]
-                    model_usage.extend(attempts or [model_info])
-                except RuntimeError as exc:
-                    model_usage.extend(model_runtime.attempts[attempt_start:])
-                    message = str(exc)
-                    if message.startswith(ErrorCode.LLM_QUALITY_ERROR.value):
-                        code = ErrorCode.LLM_QUALITY_ERROR
-                    elif message.startswith(ErrorCode.AGENT_TIMEOUT.value):
-                        code = ErrorCode.AGENT_TIMEOUT
-                    else:
-                        code = ErrorCode.LLM_AVAILABILITY_ERROR
-                    errors.append(WorkflowError(
-                        code=code, source_stage=role.value, retryable=True, detail=message,
-                    ))
-                    if trace is not None:
-                        trace.record(
-                            code.value, level="ERROR", status_message=message,
-                            metadata={"agent": role.value},
-                        )
-                    # Testing and review have deterministic candidates derived from
-                    # real MCP evidence. A model formatting failure must not hide a
-                    # genuine failed test from the remediation route.
-                    if code is ErrorCode.LLM_QUALITY_ERROR and role in {
-                        AgentRole.TESTING, AgentRole.REVIEWER,
-                    }:
-                        output = candidate
-                    elif cloud_runtime is not None:
-                        cloud_attempt_start = len(getattr(cloud_runtime, "attempts", []))
-                        try:
-                            output, cloud_info = cloud_runtime.invoke_artifact(
-                                role,
-                                envelope,
-                                candidate,
-                                fallback_reason=code.value,
+                for stage_attempt in range(model_stage_retries + 1):
+                    attempt_start = len(model_runtime.attempts)
+                    try:
+                        output, model_info = model_runtime.invoke_artifact(role, envelope, candidate)
+                        attempts = model_runtime.attempts[attempt_start:]
+                        model_usage.extend(attempts or [model_info])
+                        break
+                    except RuntimeError as exc:
+                        model_usage.extend(model_runtime.attempts[attempt_start:])
+                        message = str(exc)
+                        if message.startswith(ErrorCode.LLM_QUALITY_ERROR.value):
+                            code = ErrorCode.LLM_QUALITY_ERROR
+                        elif message.startswith(ErrorCode.AGENT_TIMEOUT.value):
+                            code = ErrorCode.AGENT_TIMEOUT
+                        else:
+                            code = ErrorCode.LLM_AVAILABILITY_ERROR
+                        errors.append(WorkflowError(
+                            code=code, source_stage=role.value, retryable=True, detail=message,
+                        ))
+                        if trace is not None:
+                            trace.record(
+                                code.value, level="ERROR", status_message=message,
+                                metadata={"agent": role.value, "stage_attempt": stage_attempt + 1},
                             )
-                            model_usage.append(cloud_info)
-                        except RuntimeError as cloud_exc:
-                            model_usage.extend(
-                                getattr(cloud_runtime, "attempts", [])[cloud_attempt_start:]
-                            )
-                            if role in {AgentRole.TESTING, AgentRole.REVIEWER}:
-                                # The deterministic artifacts for these gates are
-                                # built from actual tool evidence. Do not discard
-                                # a completed test result merely because both LLM
-                                # providers failed to serialize it.
-                                output = candidate
-                            else:
+
+                        retryable = code in {
+                            ErrorCode.LLM_AVAILABILITY_ERROR, ErrorCode.AGENT_TIMEOUT,
+                        }
+                        if cloud_runtime is not None:
+                            cloud_attempt_start = len(getattr(cloud_runtime, "attempts", []))
+                            try:
+                                output, cloud_info = cloud_runtime.invoke_artifact(
+                                    role,
+                                    envelope,
+                                    candidate,
+                                    fallback_reason=code.value,
+                                )
+                                model_usage.append(cloud_info)
+                                break
+                            except RuntimeError as cloud_exc:
+                                model_usage.extend(
+                                    getattr(cloud_runtime, "attempts", [])[cloud_attempt_start:]
+                                )
                                 errors.append(WorkflowError(
                                     code=ErrorCode.CLOUD_FALLBACK_UNAVAILABLE,
-                                    source_stage=role.value, retryable=False,
+                                    source_stage=role.value, retryable=retryable,
                                     detail=str(cloud_exc),
                                 ))
                                 if trace is not None:
                                     trace.record(
                                         "cloud fallback error", level="ERROR",
                                         status_message=str(cloud_exc),
-                                        metadata={"agent": role.value},
+                                        metadata={"agent": role.value, "stage_attempt": stage_attempt + 1},
                                     )
-                                fallback_patch: dict[str, Any] = {
-                                    "route_history": [*current.route_history, role.value],
-                                    "errors": errors, "model_usage": model_usage,
-                                    "rag_evidence": rag_evidence, "tool_results": tool_results,
-                                    "human_review_required": True,
-                                    "trace_id": trace.trace_id if trace is not None else current.trace_id,
-                                }
-                                if hasattr(cloud_runtime, "budget"):
-                                    fallback_patch["cloud_escalations_by_agent"] = {
-                                        item.value: count
-                                        for item, count in cloud_runtime.budget.by_agent.items()
-                                    }
-                                    fallback_patch["cloud_escalations_run"] = cloud_runtime.budget.run_count
-                                return fallback_patch
-                    else:
-                        if trace is not None:
-                            trace.record(
-                                "model error", level="ERROR", status_message=message,
-                                metadata={"agent": role.value, "cloud_fallback": "unavailable"},
-                            )
-                        return {
+
+                        if retryable and stage_attempt < model_stage_retries:
+                            if trace is not None:
+                                trace.record(
+                                    "model stage retry", level="WARNING",
+                                    status_message=message,
+                                    metadata={"agent": role.value, "next_attempt": stage_attempt + 2},
+                                )
+                            continue
+
+                        fallback_patch: dict[str, Any] = {
                             "route_history": [*current.route_history, role.value],
                             "errors": errors, "model_usage": model_usage,
                             "rag_evidence": rag_evidence, "tool_results": tool_results,
                             "human_review_required": True,
                             "trace_id": trace.trace_id if trace is not None else current.trace_id,
                         }
+                        if cloud_runtime is not None and hasattr(cloud_runtime, "budget"):
+                            fallback_patch["cloud_escalations_by_agent"] = {
+                                item.value: count
+                                for item, count in cloud_runtime.budget.by_agent.items()
+                            }
+                            fallback_patch["cloud_escalations_run"] = cloud_runtime.budget.run_count
+                        return fallback_patch
             else:
                 output = candidate
             if (
