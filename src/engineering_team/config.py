@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     # nothing would say so -- the failure finding 5 describes for telemetry.
     quality_runner: str = "process"
     quality_container_image: str = ""
+    # ADR 4 (profile per component). Deliberately not auto-detected either: a
+    # repository that carries more than one buildable component (finding 19 --
+    # PruebaNuevosIngresosBackend has two Maven modules and one is not the one a
+    # given run is about) has no single correct guess, and guessing would make
+    # component choice depend on which manifest a search happened to see first.
+    # A caller who wants a non-Python component states its stack and where it
+    # lives, exactly as it already must state a container image.
+    quality_stack: str = "python"
+    quality_component_path: str = ""
     # A cold container may need the complete dependency graph before the first
     # quality command can run. This stays bounded, separately from MCP lookup.
     quality_timeout_seconds: float = Field(default=600, ge=30)

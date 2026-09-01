@@ -27,7 +27,7 @@ from engineering_team.mcp.runner import (
     CommandRunner,
     ProcessRunner,
 )
-from engineering_team.stacks import INTERPRETER, PROFILES, StackProfile
+from engineering_team.stacks import INTERPRETER, StackProfile, profile_for
 
 _DISTRIBUTION_NAME = "autonomous-engineering-team"
 
@@ -56,9 +56,10 @@ def build_runner(
     operator has to see, not something to paper over with the other backend.
 
     When containers are chosen and no image is named, the image follows the
-    project rather than the operator: an interpreter derived from what the
-    project's pins publish, which is the whole point of ADR 2 and the answer to
-    finding 11. An operator who names an image means it, and is not overridden.
+    project rather than the operator: for the Python stack, an interpreter
+    derived from what the project's pins publish (ADR 2, the answer to finding
+    11); for every other stack, the pinned image its profile already names
+    (ADR 4). An operator who names an image means it, and is not overridden.
     """
     choice = settings.quality_runner
     if choice == "process":
@@ -66,13 +67,19 @@ def build_runner(
     if choice == "container":
         image = settings.quality_container_image
         if not image:
-            chosen = (interpreter or select_interpreter)(root)
-            if chosen is None:
-                raise ValueError(
-                    "no container image is configured and none could be derived "
-                    "from this project; set quality_container_image"
-                )
-            image = python_image(chosen)
+            if settings.quality_stack == "python":
+                chosen = (interpreter or select_interpreter)(root)
+                if chosen is None:
+                    raise ValueError(
+                        "no container image is configured and none could be "
+                        "derived from this project; set quality_container_image"
+                    )
+                image = python_image(chosen)
+            else:
+                try:
+                    image = profile_for(settings.quality_stack).image
+                except KeyError as exc:
+                    raise ValueError(str(exc)) from exc
         return ContainerRunner(root, image=image)
     raise ValueError(f"unknown quality_runner: {choice!r}")
 
@@ -97,9 +104,19 @@ class QualityMCP:
         services: Any = None,
     ) -> None:
         self.root = Path(root).resolve()
-        # Which ecosystem's commands to run. Python stays the default so every
-        # existing caller keeps the behaviour it had before profiles existed.
-        self.profile = profile or PROFILES["python"]
+        # Which ecosystem's commands to run. An explicit profile (how every
+        # existing caller and test selects one) always wins. Failing that, an
+        # explicit, non-auto-detected settings.quality_stack (ADR 4) chooses one.
+        # Python stays the default so every caller that predates profiles keeps
+        # the behaviour it had.
+        if profile is not None:
+            self.profile = profile
+        else:
+            stack = getattr(settings, "quality_stack", None) or "python"
+            try:
+                self.profile = profile_for(stack)
+            except KeyError as exc:
+                raise ValueError(str(exc)) from exc
         # Which component these results describe. Empty for a single-component
         # run, which leaves evidence_reference unset exactly as before: the gates
         # group by it, and an unset reference is one bucket.

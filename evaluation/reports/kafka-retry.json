@@ -1,0 +1,136 @@
+{
+  "run_id": "apply-1b94a85d-cc5b-4118-a879-0632eb9c6d5f",
+  "trace_id": "858d8d020f2c0c7f987f521a69e9f221",
+  "langfuse_live": true,
+  "project_path": "/private/tmp/aset-kafka-retry/PruebaNuevosIngresosBackend",
+  "cloud_first": true,
+  "final_status": "HUMAN_REVIEW_REQUIRED",
+  "route_history": [
+    "Product",
+    "Architecture",
+    "Developer",
+    "Security",
+    "HUMAN_REVIEW_REQUIRED"
+  ],
+  "iterations": 0,
+  "duration_seconds": 39.66318174999833,
+  "authorize_writes": true,
+  "action_mode": "PROPOSED",
+  "changed_files": [
+    "README.md",
+    "order-ms/src/main/resources/application.yml",
+    "payment-ms/src/main/resources/application.yml"
+  ],
+  "diff_summary": "PROPOSED TECHNICAL CHANGE\nObjective: Agregar un endpoint de estadisticas GET /api/v1/orders/stats en OrderController que devuelva, para cada valor de OrderStatus, la cantidad de pedidos y la suma de totalAmount en ese estado. El endpoint no recibe parametros. La respuesta es un objeto JSON donde cada clave es el nombre del estado y el valor es un objeto con \"count\" (entero) y \"totalAmount\" (numero) para ese estado. Un estado sin pedidos aparece con count 0 y totalAmount 0, nunca se omite. La consulta se resuelve con una consulta agregada al repositorio, no iterando todos los pedidos en memoria.\n\nTest specification: Agregar pruebas en OrderControllerTest o un test dedicado que verifiquen: (1) con pedidos en varios estados, el conteo y la suma por estado son correctos; (2) un estado sin pedidos aparece con count 0 y totalAmount 0; (3) la respuesta incluye todos los valores de OrderStatus, no solo los que tienen pedidos.\nComponents: OrderControllerTest (order-ms/src/test/java/com/prueba/orderms/web/OrderControllerTest.java), order-ms/src/main/java/com/prueba/orderms/domain/Order, frontend/src/app/features/orders/order-list/order-list, README, order-ms/src/main/java/com/prueba/orderms/web/OrderController, order-ms/src/main/java/com/prueba/orderms/service/OrderService\nAPIs: no API change declared\nData: no data change declared\nDesign decisions: Maintain order-ms/src/main/java/com/prueba/orderms/domain/Order as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/domain/Order.java; Keep asynchronous event publication and retry handling in frontend/src/app/features/orders/order-list/order-list; Maintain frontend/src/app/features/orders/order-list/order-list as the bounded component represented by frontend/src/app/features/orders/order-list/order-list.html; Maintain README as the bounded component represented by README.md; Maintain OrderControllerTest as the bounded component represented by order-ms/src/test/java/com/prueba/orderms/web/OrderControllerTest.java; Maintain frontend/src/app/features/orders/order-list/order-list as the bounded component represented by frontend/src/app/features/orders/order-list/order-list.ts; Maintain order-ms/src/main/java/com/prueba/orderms/web/OrderController as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/web/OrderController.java; Keep asynchronous event publication and retry handling in order-ms/src/main/java/com/prueba/orderms/service/OrderService; Maintain order-ms/src/main/java/com/prueba/orderms/service/OrderService as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/service/OrderService.java\nFILE: README.md\nObserved symbols: the inspected module boundary\nTechnical change: adapt the inspected module boundary to satisfy Agregar un endpoint de estadisticas GET /api/v1/orders/stats en OrderController que devuelva, para cada valor de OrderStatus, la cantidad de pedidos y la suma de totalAmount en ese estado. El endpoint no recibe parametros. La respuesta es un objeto JSON donde cada clave es el nombre del estado y el valor es un objeto con \"count\" (entero) y \"totalAmount\" (numero) para ese estado. Un estado sin pedidos aparece con count 0 y totalAmount 0, nunca se omite. La consulta se resuelve con una consulta agregada al repositorio, no iterando todos los pedidos en memoria.\n\nTest specification: Agregar pruebas en OrderControllerTest o un test dedicado que verifiquen: (1) con pedidos en varios estados, el conteo y la suma por estado son correctos; (2) un estado sin pedidos aparece con count 0 y totalAmount 0; (3) la respuesta incluye todos los valores de OrderStatus, no solo los que tienen pedidos..\nAPI implications: no API change declared.\nData implications: no data change declared.\n--- a/README.md\n+++ b/README.md\n@@ proposed @@\n+ Update the inspected module boundary while preserving: Maintain order-ms/src/main/java/com/prueba/orderms/domain/Order as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/domain/Order.java; Keep asynchronous event publication and retry handling in frontend/src/app/features/orders/order-list/order-list; Maintain frontend/src/app/features/orders/order-list/order-list as the bounded component represented by frontend/src/app/features/orders/order-list/order-list.html; Maintain README as the bounded component represented by README.md; Maintain OrderControllerTest as the bounded component represented by order-ms/src/test/java/com/prueba/orderms/web/OrderControllerTest.java; Maintain frontend/src/app/features/orders/order-list/order-list as the bounded component represented by frontend/src/app/features/orders/order-list/order-list.ts; Maintain order-ms/src/main/java/com/prueba/orderms/web/OrderController as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/web/OrderController.java; Keep asynchronous event publication and retry handling in order-ms/src/main/java/com/prueba/orderms/service/OrderService; Maintain order-ms/src/main/java/com/prueba/orderms/service/OrderService as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/service/OrderService.java.\nFILE: order-ms/src/main/resources/application.yml\nObserved symbols: the inspected module boundary\nTechnical change: adapt the inspected module boundary to satisfy Agregar un endpoint de estadisticas GET /api/v1/orders/stats en OrderController que devuelva, para cada valor de OrderStatus, la cantidad de pedidos y la suma de totalAmount en ese estado. El endpoint no recibe parametros. La respuesta es un objeto JSON donde cada clave es el nombre del estado y el valor es un objeto con \"count\" (entero) y \"totalAmount\" (numero) para ese estado. Un estado sin pedidos aparece con count 0 y totalAmount 0, nunca se omite. La consulta se resuelve con una consulta agregada al repositorio, no iterando todos los pedidos en memoria.\n\nTest specification: Agregar pruebas en OrderControllerTest o un test dedicado que verifiquen: (1) con pedidos en varios estados, el conteo y la suma por estado son correctos; (2) un estado sin pedidos aparece con count 0 y totalAmount 0; (3) la respuesta incluye todos los valores de OrderStatus, no solo los que tienen pedidos..\nAPI implications: no API change declared.\nData implications: no data change declared.\n--- a/order-ms/src/main/resources/application.yml\n+++ b/order-ms/src/main/resources/application.yml\n@@ proposed @@\n+ Update the inspected module boundary while preserving: Maintain order-ms/src/main/java/com/prueba/orderms/domain/Order as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/domain/Order.java; Keep asynchronous event publication and retry handling in frontend/src/app/features/orders/order-list/order-list; Maintain frontend/src/app/features/orders/order-list/order-list as the bounded component represented by frontend/src/app/features/orders/order-list/order-list.html; Maintain README as the bounded component represented by README.md; Maintain OrderControllerTest as the bounded component represented by order-ms/src/test/java/com/prueba/orderms/web/OrderControllerTest.java; Maintain frontend/src/app/features/orders/order-list/order-list as the bounded component represented by frontend/src/app/features/orders/order-list/order-list.ts; Maintain order-ms/src/main/java/com/prueba/orderms/web/OrderController as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/web/OrderController.java; Keep asynchronous event publication and retry handling in order-ms/src/main/java/com/prueba/orderms/service/OrderService; Maintain order-ms/src/main/java/com/prueba/orderms/service/OrderService as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/service/OrderService.java.\nFILE: payment-ms/src/main/resources/application.yml\nObserved symbols: the inspected module boundary\nTechnical change: adapt the inspected module boundary to satisfy Agregar un endpoint de estadisticas GET /api/v1/orders/stats en OrderController que devuelva, para cada valor de OrderStatus, la cantidad de pedidos y la suma de totalAmount en ese estado. El endpoint no recibe parametros. La respuesta es un objeto JSON donde cada clave es el nombre del estado y el valor es un objeto con \"count\" (entero) y \"totalAmount\" (numero) para ese estado. Un estado sin pedidos aparece con count 0 y totalAmount 0, nunca se omite. La consulta se resuelve con una consulta agregada al repositorio, no iterando todos los pedidos en memoria.\n\nTest specification: Agregar pruebas en OrderControllerTest o un test dedicado que verifiquen: (1) con pedidos en varios estados, el conteo y la suma por estado son correctos; (2) un estado sin pedidos aparece con count 0 y totalAmount 0; (3) la respuesta incluye todos los valores de OrderStatus, no solo los que tienen pedidos..\nAPI implications: no API change declared.\nData implications: no data change declared.\n--- a/payment-ms/src/main/resources/application.yml\n+++ b/payment-ms/src/main/resources/application.yml\n@@ proposed @@\n+ Update the inspected module boundary while preserving: Maintain order-ms/src/main/java/com/prueba/orderms/domain/Order as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/domain/Order.java; Keep asynchronous event publication and retry handling in frontend/src/app/features/orders/order-list/order-list; Maintain frontend/src/app/features/orders/order-list/order-list as the bounded component represented by frontend/src/app/features/orders/order-list/order-list.html; Maintain README as the bounded component represented by README.md; Maintain OrderControllerTest as the bounded component represented by order-ms/src/test/java/com/prueba/orderms/web/OrderControllerTest.java; Maintain frontend/src/app/features/orders/order-list/order-list as the bounded component represented by frontend/src/app/features/orders/order-list/order-list.ts; Maintain order-ms/src/main/java/com/prueba/orderms/web/OrderController as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/web/OrderController.java; Keep asynchronous event publication and retry handling in order-ms/src/main/java/com/prueba/orderms/service/OrderService; Maintain order-ms/src/main/java/com/prueba/orderms/service/OrderService as the bounded component represented by order-ms/src/main/java/com/prueba/orderms/service/OrderService.java.",
+  "proposed_file_contents": {},
+  "files_written": [],
+  "write_errors": [],
+  "applied_diff": "",
+  "review": null,
+  "model_usage": [
+    {
+      "agent": "Product",
+      "provider": "groq",
+      "requested_model": "openai/gpt-oss-120b",
+      "actual_model": "openai/gpt-oss-120b",
+      "model_profile": "CLOUD_FALLBACK",
+      "fallback_used": false,
+      "fallback_reason": null,
+      "degraded": false,
+      "latency_ms": 3965,
+      "usage": {
+        "queue_time": 0.149649667,
+        "prompt_tokens": 1381,
+        "prompt_time": 0.065137618,
+        "completion_tokens": 1593,
+        "completion_time": 3.311228178,
+        "total_tokens": 2974,
+        "total_time": 3.376365796,
+        "completion_tokens_details": {
+          "reasoning_tokens": 948
+        }
+      },
+      "structured_output_success": true,
+      "error": null,
+      "http_status": null,
+      "error_category": null,
+      "retryable": null
+    },
+    {
+      "agent": "Architecture",
+      "provider": "mistral",
+      "requested_model": "mistral-medium-latest",
+      "actual_model": null,
+      "model_profile": "CLOUD_FALLBACK",
+      "fallback_used": false,
+      "fallback_reason": null,
+      "degraded": true,
+      "latency_ms": 5392,
+      "usage": null,
+      "structured_output_success": false,
+      "error": "CLOUD_FALLBACK_UNAVAILABLE: governed fields differ: apis, components, data_changes, decisions, dependencies, evidence_references, evidence_sufficient, impact, integrations, risks",
+      "http_status": null,
+      "error_category": "governed_contradiction",
+      "retryable": true
+    },
+    {
+      "agent": "Architecture",
+      "provider": "groq",
+      "requested_model": "openai/gpt-oss-120b",
+      "actual_model": "openai/gpt-oss-120b",
+      "model_profile": "CLOUD_FALLBACK",
+      "fallback_used": false,
+      "fallback_reason": null,
+      "degraded": false,
+      "latency_ms": 2721,
+      "usage": {
+        "queue_time": 0.091998097,
+        "prompt_tokens": 5866,
+        "prompt_time": 0.293286197,
+        "completion_tokens": 811,
+        "completion_time": 1.691084257,
+        "total_tokens": 6677,
+        "total_time": 1.984370454,
+        "completion_tokens_details": {
+          "reasoning_tokens": 139
+        }
+      },
+      "structured_output_success": true,
+      "error": null,
+      "http_status": null,
+      "error_category": null,
+      "retryable": null
+    },
+    {
+      "agent": "Developer",
+      "provider": "mistral",
+      "requested_model": "codestral-latest",
+      "actual_model": "codestral-latest",
+      "model_profile": "CLOUD_FALLBACK",
+      "fallback_used": false,
+      "fallback_reason": null,
+      "degraded": false,
+      "latency_ms": 22694,
+      "usage": {
+        "prompt_tokens": 3402,
+        "total_tokens": 5889,
+        "completion_tokens": 2487,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "service_tier": "standard"
+      },
+      "structured_output_success": true,
+      "error": null,
+      "http_status": null,
+      "error_category": null,
+      "retryable": null
+    }
+  ],
+  "errors": [
+    "MCP_ERROR: scan_dependencies: isolated environment unavailable: RuntimeError: venv creation failed in container: mkdir: cannot create directory \u2018/root\u2019: Permission denied\n/usr/local/bin/mvn-entrypoint.sh: 50: exec: python: not found\n",
+    "MCP_ERROR: run_security_scan: isolated environment unavailable: RuntimeError: venv creation failed in container: mkdir: cannot create directory \u2018/root\u2019: Permission denied\n/usr/local/bin/mvn-entrypoint.sh: 50: exec: python: not found\n"
+  ],
+  "human_review_required": true,
+  "destructive_authorization_blocked": false
+}

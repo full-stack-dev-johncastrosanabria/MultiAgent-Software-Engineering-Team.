@@ -52,6 +52,11 @@ class _MCPStdioClient:
                 # Explicit, because the SDK gives the child almost no environment.
                 "--runner", getattr(self.settings, "quality_runner", None) or "process",
                 "--image", getattr(self.settings, "quality_container_image", None) or "",
+                # ADR 4 (finding 19): read only by the quality server; the
+                # repository server always sees the whole tree regardless.
+                "--stack", getattr(self.settings, "quality_stack", None) or "python",
+                "--component-root",
+                getattr(self.settings, "quality_component_path", None) or "",
             ],
             cwd=Path(sys.executable).resolve().parent,
         )

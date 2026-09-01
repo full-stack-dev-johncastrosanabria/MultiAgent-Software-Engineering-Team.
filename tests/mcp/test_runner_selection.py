@@ -14,7 +14,7 @@ import pytest
 
 from engineering_team.config import Settings
 from engineering_team.mcp.container import ContainerRunner
-from engineering_team.mcp.quality import QualityMCP
+from engineering_team.mcp.quality import QualityMCP, build_runner
 from engineering_team.mcp.runner import ProcessRunner
 
 PINNED = "python@sha256:" + "0" * 64
@@ -128,6 +128,50 @@ def test_a_dotnet_component_runs_dotnet_test(tmp_path: Path) -> None:
     quality = QualityMCP(tmp_path, runner=recorder, profile=profile_for("dotnet"))
     command = _last_command(quality, recorder)
     assert command[:3] == ["dotnet", "test", "--nologo"]
+
+
+# -- Finding 19: the profile a real external run picks, not only a test double --
+
+
+def test_settings_quality_stack_selects_the_profile_without_an_explicit_one(
+    tmp_path: Path,
+) -> None:
+    """The one path `run-project` actually exercises: no test constructs a profile."""
+    settings = Settings(quality_stack="jvm")
+    quality = QualityMCP(tmp_path, settings=settings)
+    assert quality.profile.name == "jvm"
+
+
+def test_an_explicit_profile_still_overrides_the_configured_stack(
+    tmp_path: Path,
+) -> None:
+    from engineering_team.stacks import profile_for
+
+    settings = Settings(quality_stack="jvm")
+    quality = QualityMCP(tmp_path, settings=settings, profile=profile_for("node"))
+    assert quality.profile.name == "node"
+
+
+def test_an_unconfigured_stack_still_defaults_to_python(tmp_path: Path) -> None:
+    assert QualityMCP(tmp_path).profile.name == "python"
+
+
+def test_an_unknown_quality_stack_fails_closed(tmp_path: Path) -> None:
+    settings = Settings(quality_stack="cobol")
+    with pytest.raises(ValueError, match="cobol"):
+        QualityMCP(tmp_path, settings=settings)
+
+
+def test_a_container_runner_for_a_non_python_stack_uses_the_profiles_own_image(
+    tmp_path: Path,
+) -> None:
+    """No pins, no derived interpreter: the stack's own pinned image, per ADR 4."""
+    from engineering_team.stacks import profile_for
+
+    settings = Settings(quality_runner="container", quality_stack="jvm")
+    runner = build_runner(tmp_path, settings)
+    assert isinstance(runner, ContainerRunner)
+    assert runner.image == profile_for("jvm").image
 
 
 def test_python_remains_the_default_profile(tmp_path: Path) -> None:
