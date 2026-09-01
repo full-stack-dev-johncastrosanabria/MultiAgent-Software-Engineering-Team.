@@ -284,7 +284,8 @@
         "https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1"
       ],
       "confidence": "high",
-      "recommended_fix": "Mantener Reviewer determinista y no conceder herramientas de Testing al Developer. Asociar a cada identificador fallido un fragmento limitado y redactado de su asercion o excepcion desde el TestResult mas reciente; conservar las etiquetas REGRESSION y fallo nuevo. Probar que expected/actual llega al ContextEnvelope, que el tamano esta acotado y que secretos no sobreviven."
+      "recommended_fix": "Mantener Reviewer determinista y no conceder herramientas de Testing al Developer. Asociar a cada identificador fallido un fragmento limitado y redactado de su asercion o excepcion desde el TestResult mas reciente; conservar las etiquetas REGRESSION y fallo nuevo. Probar que expected/actual llega al ContextEnvelope, que el tamano esta acotado y que secretos no sobreviven.",
+      "validation": "Las regresiones cubren el trayecto TestResult -> ReviewerDecision -> ContextEnvelope con expected/actual, prioridad de regresiones, IDs parametrizados con espacios y nombres repetidos. Se limitan seis diagnosticos, 768 bytes cada uno, 4 KiB agregados y 6 KiB de feedback total. Los valores sensibles se sustituyen antes de truncar, JSON conserva sus comillas y ToolResult originados por Testing no llegan a Developer. Code review y revision de privacidad: PASS."
     }
   ],
   "ordered_fix_plan": [

@@ -93,6 +93,35 @@ def test_reviewer_keeps_scanner_diagnostic_for_code_remediation():
     assert "banca/perfil.py:53" in "\n".join(review.problems)
 
 
+def test_reviewer_redacts_scanner_diagnostic_before_truncating_it() -> None:
+    secret = "s" * 2100
+    tool = ToolResult(
+        tool_name="run_security_scan",
+        allowed_role=AgentRole.SECURITY,
+        status=ToolStatus.FAIL,
+        input_summary="project",
+        duration_ms=1,
+        output_summary=f"password={secret}",
+    )
+    state = EngineeringState(
+        run_id="r",
+        requirement="Update own profile",
+        tool_results=[tool],
+    )
+    security = SecurityAgent().execute(build_context(AgentRole.SECURITY, state, "scan"))
+    state = state.model_copy(update={"security_review": security})
+    review = ReviewerAgent().execute(build_context(AgentRole.REVIEWER, state, "review"))
+    remediation = state.model_copy(update={
+        "review": review,
+        "remediation_request": review.reason,
+    })
+
+    feedback = build_context(AgentRole.DEVELOPER, remediation, "fix").remediation_feedback
+
+    assert "[REDACTED]" in feedback
+    assert secret[-2000:] not in feedback
+
+
 @pytest.mark.parametrize("statuses,scopes,expected", [
     ([ToolStatus.FAIL, ToolStatus.SUCCESS], ["project", "project"], "PASS"),
     ([ToolStatus.SUCCESS, ToolStatus.FAIL], ["project", "project"], "FAIL"),

@@ -118,6 +118,16 @@ def _without_documented_parameters(text: str) -> str:
 
 
 _ENV_FILE = re.compile(r"\.env\b", re.IGNORECASE)
+_SECRET_KEY_PATTERN = (
+    r"api[_-]?key|access[_-]?token|token|password|secret(?:[_-]?key)?"
+)
+_QUOTED_SECRET_VALUE = re.compile(
+    rf"(?i)(?P<prefix>['\"]?(?:{_SECRET_KEY_PATTERN})['\"]?\s*[=:]\s*)"
+    r'''(?:(?P<double>"(?:\\.|[^"\\])*")|(?P<single>'(?:\\.|[^'\\])*'))'''
+)
+_UNQUOTED_SECRET_VALUE = re.compile(
+    rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*[^\s,]+"
+)
 
 
 def _scan_text(text: str) -> str:
@@ -143,9 +153,12 @@ def redact_secrets(value: str, known_values: Iterable[str] = ()) -> str:
     for secret in known_values:
         if secret:
             redacted = redacted.replace(secret, "[REDACTED]")
-    return re.sub(
-        r"(?i)(api[_-]?key|token|password|secret)\s*[=:]\s*[^\s,]+", r"\1=[REDACTED]", redacted
-    )
+    def redact_quoted(match: re.Match[str]) -> str:
+        quote = '"' if match.group("double") else "'"
+        return match.group("prefix") + quote + "[REDACTED]" + quote
+
+    redacted = _QUOTED_SECRET_VALUE.sub(redact_quoted, redacted)
+    return _UNQUOTED_SECRET_VALUE.sub(r"\1=[REDACTED]", redacted)
 
 
 def _names_a_credential_file(name: str) -> bool:

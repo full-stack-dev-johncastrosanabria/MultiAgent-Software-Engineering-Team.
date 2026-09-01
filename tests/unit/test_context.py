@@ -5,8 +5,13 @@ from engineering_team.contracts.enums import (
     AgentRole,
     ReviewerStatus,
     RouteTarget,
+    ToolStatus,
 )
-from engineering_team.contracts.models import ImplementationResult, ReviewerDecision
+from engineering_team.contracts.models import (
+    ImplementationResult,
+    ReviewerDecision,
+    ToolResult,
+)
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.models.context import build_context
 
@@ -44,6 +49,107 @@ def test_remediation_receives_bounded_failure_details_without_testing_tool_acces
     assert "run_tests" not in developer.allowed_tools
     product = build_context(AgentRole.PRODUCT, state, "analyze")
     assert "TypeError" not in product.remediation_feedback
+
+
+def test_remediation_redacts_secrets_before_truncating_diagnostics() -> None:
+    secret = "s" * 2100
+    state = EngineeringState(
+        run_id="r1",
+        requirement="recovery",
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED,
+            score=40,
+            subscores={"testing": 0},
+            reason="failed tests require implementation remediation",
+            confidence=1,
+            return_to=RouteTarget.DEVELOPER,
+            problems=[f"AssertionError: password={secret}"],
+        ),
+    )
+
+    developer = build_context(AgentRole.DEVELOPER, state, "fix")
+
+    assert "[REDACTED]" in developer.remediation_feedback
+    assert secret[-2000:] not in developer.remediation_feedback
+
+
+def test_remediation_redacts_quoted_and_mapping_secret_values() -> None:
+    state = EngineeringState(
+        run_id="r1",
+        requirement="recovery",
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED,
+            score=40,
+            subscores={"testing": 0},
+            reason="failed tests require implementation remediation",
+            confidence=1,
+            return_to=RouteTarget.DEVELOPER,
+            problems=[
+                'AssertionError: password="alpha beta gamma"',
+                "AssertionError: {'password': 'delta epsilon zeta'}",
+            ],
+        ),
+    )
+
+    feedback = build_context(AgentRole.DEVELOPER, state, "fix").remediation_feedback
+
+    assert "alpha beta gamma" not in feedback
+    assert "delta epsilon zeta" not in feedback
+    assert feedback.count("[REDACTED]") == 2
+
+
+def test_total_remediation_feedback_is_bounded_to_six_kib() -> None:
+    state = EngineeringState(
+        run_id="r1",
+        requirement="recovery",
+        remediation_request="reason " * 300,
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED,
+            score=40,
+            subscores={"testing": 0},
+            reason="failed tests require implementation remediation",
+            confidence=1,
+            return_to=RouteTarget.DEVELOPER,
+            problems=[f"diagnostic-{index}: {'x' * 2100}" for index in range(8)],
+        ),
+    )
+
+    feedback = build_context(AgentRole.DEVELOPER, state, "fix").remediation_feedback
+
+    assert len(feedback.encode()) <= 6 * 1024
+
+
+def test_developer_excludes_results_produced_for_testing_role() -> None:
+    state = EngineeringState(
+        run_id="r1",
+        requirement="fix build",
+        tool_results=[
+            ToolResult(
+                tool_name="run_build",
+                allowed_role=AgentRole.TESTING,
+                status=ToolStatus.FAIL,
+                input_summary="testing build",
+                output_summary="complete testing output must stay isolated",
+                duration_ms=1,
+            ),
+            ToolResult(
+                tool_name="run_build",
+                allowed_role=AgentRole.DEVELOPER,
+                status=ToolStatus.SUCCESS,
+                input_summary="developer build",
+                output_summary="developer-owned result",
+                duration_ms=1,
+            ),
+        ],
+    )
+
+    envelope = build_context(AgentRole.DEVELOPER, state, "fix")
+
+    assert [item.output_summary for item in envelope.tool_results] == [
+        "developer-owned result"
+    ]
 
 
 def _remediation_state() -> EngineeringState:

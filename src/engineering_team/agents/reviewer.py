@@ -10,7 +10,12 @@ from engineering_team.contracts.enums import (
 from engineering_team.contracts.models import ReviewerDecision, ToolResult
 from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.models.context import ContextEnvelope
-from engineering_team.testing_evidence import describe_failures, failing_tests
+from engineering_team.testing_evidence import (
+    classify_failures,
+    describe_failures,
+    failing_tests,
+    failure_diagnostics,
+)
 
 from .base import AgentBase
 from .testing import TEST_EVIDENCE_TOOLS
@@ -49,7 +54,7 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                         "run_security_scan", "scan_dependencies", "get_security_report"}}
                 failures = [item for item in latest_scans.values()
                             if item.status is not ToolStatus.SUCCESS]
-                problems.extend(f"{item.tool_name}: {redact_secrets(item.output_summary[-2000:])}"
+                problems.extend(f"{item.tool_name}: {redact_secrets(item.output_summary)[-2000:]}"
                                 for item in failures[:2])
             return ReviewerDecision(
                 status=ReviewerStatus.REJECTED, score=40,
@@ -62,6 +67,11 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 evidence_references=evidence,
             )
         if latest_test is not None and latest_test.status is not ToolStatus.SUCCESS:
+            failure_output = "\n".join(latest_test.failures)
+            failed_identifiers = failing_tests(failure_output)
+            baseline = tuple(envelope.state_projection.get("baseline_tests") or ())
+            regressions, new_failures = classify_failures(failed_identifiers, baseline)
+            diagnostic_order = regressions + new_failures
             # Where does a failure belong? Every failure used to go to the
             # Developer, which is right when the design was sound and the code
             # was not. It is wrong when the design was built on a slice of the
@@ -101,8 +111,9 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 # naming them the same is why three cycles went to the wrong one.
                 problems=(
                     describe_failures(
-                        failing_tests(" ".join(latest_test.failures)),
-                        tuple(envelope.state_projection.get("baseline_tests") or ()),
+                        failed_identifiers,
+                        baseline,
+                        failure_diagnostics(failure_output, diagnostic_order),
                     )
                     or list(latest_test.failures)
                 ),

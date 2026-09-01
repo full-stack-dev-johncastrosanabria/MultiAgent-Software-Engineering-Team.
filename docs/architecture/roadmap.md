@@ -230,9 +230,10 @@ three times, but Developer could see only failing test names, not the
 `expected/actual` assertions, and did not converge. An operator corrected the
 two remaining failures, obtained 68 passing tests and 84% coverage on the route,
 and opened [PR #1](https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1)
-from `aset/low-stock-endpoint-v9`. The remaining proof is to fix
-[finding 17](findings/README.md) and repeat a focused remediation that reaches
-`APPROVED` and delivery without an external code repair.
+from `aset/low-stock-endpoint-v9`. [Finding 17](findings/README.md) now preserves
+the failed assertions in bounded Developer feedback. The remaining proof is to
+repeat a focused remediation that reaches `APPROVED` and delivery without an
+external code repair.
 
 **2. PruebaNuevosIngresosBackend** — validate declared Compose against the
 actual Java services, Postgres and Kafka. This proves that the project-owned
@@ -295,8 +296,8 @@ for threshold 7 while expecting stock 8 to be excluded, and the invalid-threshol
 test hid Werkzeug's typed-default behaviour. Developer saw neither contradiction
 in three attempts. An operator corrected the test and implementation, obtained
 68 passing tests and opened the first code-change pull request. That PR proves
-delivery mechanics; [finding 17](findings/README.md) records why it does not yet
-prove autonomous convergence.
+delivery mechanics. [Finding 17](findings/README.md) now closes the information
+loss; a new Flask run must prove that the repair produces autonomous convergence.
 
 ## What is deliberately not here
 

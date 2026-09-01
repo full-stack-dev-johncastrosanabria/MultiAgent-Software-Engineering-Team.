@@ -22,7 +22,7 @@ index says where each one stands.
 | 14 | high | Apply authorizes only file paths named literally in the requirement | **fixed** — the fourth Flask run wrote the inspected `app/routes/products.py` together with `tests/test_products.py`, without expanding the scope to the auxiliary `CHANGELOG.md` |
 | 15 | high | Cold Quality provisioning expires before a real project reaches tests | **fixed** — with the separate bounded 600-second Quality budget, the fourth Flask run reached Security, Testing and Reviewer; its later failure was functional, not an install timeout |
 | 16 | high | A transient model outage ends a run before its deterministic gates | **fixed** — `1fcaf0d`; Flask v9 recovered from real provider failures and reached Testing and Reviewer three times |
-| 17 | high | Developer receives failing test names but not the failing assertions | **open** — Flask v9 repeated three remediations without seeing the contradictory `expected/actual` evidence already retained by Testing |
+| 17 | high | Developer receives failing test names but not the failing assertions | **fixed** — Reviewer now attaches bounded, redacted pytest diagnostics while ContextEnvelope preserves role isolation and a 6 KiB total budget |
 
 ## Two things worth remembering
 
@@ -137,4 +137,9 @@ asked for threshold 7 while expecting stock 8 to be excluded; another hid the
 typed-default behaviour of Werkzeug. Three remediations could not see either
 contradiction. The repair must preserve deterministic Reviewer and role
 isolation while attaching a bounded, secret-redacted assertion excerpt to each
-failed identifier.
+failed identifier. It now does: regressions consume diagnostic budget before new
+failures, parametrized IDs and repeated test names remain associated with their
+own blocks, captured output is excluded, and Developer receives neither Testing
+tools nor complete `TestResult`/`ToolResult` payloads. Redaction happens before
+every truncation and preserves valid quoted JSON. The remaining evidence is an
+external Flask rerun that converges without operator repair.
