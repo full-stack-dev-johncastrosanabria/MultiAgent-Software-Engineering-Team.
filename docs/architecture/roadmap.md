@@ -190,10 +190,12 @@ failure over declared-thin evidence is routed back to Architecture rather than t
 the Developer, and the Reviewer's feedback contributes terms to the next
 selection so a second pass does not read the same files.*
 
-*What remains is the budget itself. Twenty-four candidates against a 16 KB
-payload is a deliberate compromise, not a limit of the design: raising it costs
-context on every architecture call, and the honest way to move it is to measure
-what coverage actually buys on a large repository rather than to guess upward.*
+*Flask v8 measured the current compromise: a 16 KB payload delivered seven large
+files after per-item overhead, not all twenty-four candidates. Before raising the
+global budget, explicit task boundaries are reserved and remediations rotate their
+remaining evidence to unseen paths. The provider has also returned HTTP 413, so
+the next budget change must be based on measured coverage by component, not an
+intuition that more context is always safe.*
 
 ### 8. Frontend as a delivery control
 

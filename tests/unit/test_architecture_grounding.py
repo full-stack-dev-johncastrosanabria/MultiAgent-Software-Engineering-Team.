@@ -1,4 +1,5 @@
 import json
+from typing import ClassVar
 
 import pytest
 
@@ -167,6 +168,52 @@ class _LateSearchHitRepository:
         )
 
 
+class _FlaskLowStockRepository:
+    """The v8 shape: generic stock hits crowd out the actual blueprint."""
+
+    transport = "test"
+    paths: ClassVar[list[str]] = [
+        "tests/test_products.py",
+        *(f"app/analytics/stock_report_{index}.py" for index in range(7)),
+        "app/routes/products.py",
+        "app/models/product.py",
+        *(f"app/ai/stock_helper_{index}.py" for index in range(17)),
+    ]
+    critical: ClassVar[set[str]] = {
+        "tests/test_products.py",
+        "app/routes/products.py",
+        "app/models/product.py",
+    }
+
+    def __init__(self) -> None:
+        self.read_paths: list[str] = []
+
+    def list_files(self, role):
+        return _tool("list_files", "\n".join(self.paths))
+
+    def search_code(self, role, query):
+        # Mirrors v8: the generic domain search does not identify the endpoint
+        # module, which needs to be found from the requested API boundary.
+        return _tool(
+            "search_code",
+            "\n".join(path for path in self.paths if path not in self.critical),
+            input_summary=f"query={query}",
+        )
+
+    def read_file(self, role, relative):
+        self.read_paths.append(relative)
+        content = {
+            "tests/test_products.py": "class TestProducts:\n    pass\n",
+            "app/routes/products.py": "products_bp = Blueprint('products', __name__)\n",
+            "app/models/product.py": "class Product:\n    stock = 0\n",
+        }.get(relative, "def stock_report():\n    return 0\n")
+        return _tool(
+            "read_file",
+            content + ("x" * 2_500),
+            evidence="mcp://repository/read_file",
+        )
+
+
 class _UnterminatedSecretRepository:
     transport = "test"
     secret = "unterminated-secret-prefix"
@@ -238,6 +285,69 @@ def test_architecture_reads_one_to_four_relevant_safe_bounded_files() -> None:
     assert len(reads) == len(repository.read_paths)
     assert all(item.input_summary.startswith("path=") for item in reads)
     assert all(len(item.output_summary.encode("utf-8")) <= 16 * 1024 for item in reads)
+
+
+def test_architecture_reserves_visible_evidence_for_an_explicit_endpoint_boundary() -> None:
+    repository = _FlaskLowStockRepository()
+    architecture = _StopAfterArchitecture()
+    graph = build_engineering_graph(
+        repository_mcp=repository,
+        agent_overrides={AgentRole.ARCHITECTURE: architecture},
+    )
+
+    with pytest.raises(RuntimeError, match="architecture captured"):
+        graph.invoke({
+            "run_id": "flask-low-stock-boundary",
+            "requirement": (
+                "Add GET /api/products/low-stock and tests/test_products.py "
+                "for products with low stock"
+            ),
+        })
+
+    visible = {
+        item.input_summary.removeprefix("path=")
+        for item in architecture.envelope.tool_results
+        if item.tool_name == "read_file"
+    }
+    assert _FlaskLowStockRepository.critical <= visible
+    assert len(visible) <= 7
+
+
+def test_architecture_remediation_rotates_past_already_visible_generic_files() -> None:
+    repository = _FlaskLowStockRepository()
+    architecture = _StopAfterArchitecture()
+    old_generic = [f"app/analytics/stock_report_{index}.py" for index in range(4)]
+    graph = build_engineering_graph(
+        repository_mcp=repository,
+        agent_overrides={AgentRole.ARCHITECTURE: architecture},
+    )
+
+    with pytest.raises(RuntimeError, match="architecture captured"):
+        graph.invoke({
+            "run_id": "flask-low-stock-remediation",
+            "requirement": (
+                "Add GET /api/products/low-stock and tests/test_products.py "
+                "for products with low stock"
+            ),
+            "remediation_request": "the endpoint design missed the blueprint",
+            "tool_results": [
+                _tool(
+                    "read_file",
+                    "def stock_report():\n    return 0\n" + ("x" * 2_500),
+                    input_summary=f"path={path}",
+                    evidence="mcp://repository/read_file",
+                )
+                for path in old_generic
+            ],
+        })
+
+    visible = {
+        item.input_summary.removeprefix("path=")
+        for item in architecture.envelope.tool_results
+        if item.tool_name == "read_file"
+    }
+    assert _FlaskLowStockRepository.critical <= visible
+    assert not set(old_generic) & visible
 
 
 def test_architecture_proposal_changes_with_repository_evidence_and_cites_only_sources() -> None:

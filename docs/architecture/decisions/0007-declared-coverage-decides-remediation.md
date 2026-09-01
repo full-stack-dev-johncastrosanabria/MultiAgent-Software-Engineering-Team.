@@ -44,6 +44,16 @@ to file selection. The names in a failure — the module that would not import, 
 attribute that did not exist — are exactly the terms that would have found the
 missing file.
 
+**A focused task has focused boundaries.** For an explicit HTTP endpoint, the
+graph derives the resource and reserves the named test plus conventional
+route/controller and model/domain files. A broad word such as `stock` must not
+push the endpoint's owning boundary out of the bounded evidence window.
+
+**A remediation spends its next window on unseen evidence.** The audit retains
+all historical reads, but Architecture receives the current visible window. Task
+boundaries remain visible on every pass; the remaining slots rotate to paths not
+read in an earlier Architecture pass.
+
 ## Alternatives rejected
 
 **Ask the model whether it saw enough.** It is the cheapest signal and the least
@@ -64,10 +74,13 @@ Remediation can now go somewhere other than the Developer, so a run can spend
 cycles re-reading rather than re-writing. That is the intended trade: reading
 again is cheap next to implementing against interfaces that do not exist.
 
-The threshold — half the ranked candidates — is a judgement, stated in one place
-and easy to move. Reading everything a small repository has is always sufficient,
+The threshold — half the ranked candidates — is a fallback judgement, stated in
+one place and easy to move. When a task has at least two deterministic boundaries,
+every one must be visible; otherwise the proposal declares exactly which boundary
+was missed. Reading everything a small repository has is always sufficient,
 however little that is: a three-file project is not a thin slice of itself.
 
-Feedback in the terms makes selection depend on the review history, so two runs
-of the same requirement can read different files. That is the point, and it means
-selection is no longer reproducible from the specification alone.
+Feedback in the terms and unseen-path rotation make selection depend on review
+history, so two runs of the same requirement can read different files. That is the
+point, and it means selection is no longer reproducible from the specification
+alone.

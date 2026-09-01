@@ -26,6 +26,54 @@ class ArchitectureAgent(AgentBase[ArchitectureProposal]):
         "implement", "model", "service", "that", "the", "this", "using", "with",
     }
 
+    @staticmethod
+    def task_boundary_paths(paths: list[str], requirement: str) -> list[str]:
+        """Find source boundaries named by an HTTP request, without an LLM guess.
+
+        Broad domain searches (for example ``stock``) often find analytics before
+        the blueprint that owns ``/api/products/...``. A route and its model are
+        mandatory evidence for that request even when their content does not use
+        the endpoint's final path segment.
+        """
+        available = set(paths)
+        mentioned = {
+            match.group(0).replace("\\", "/")
+            for match in re.finditer(r"(?<![A-Za-z0-9_./-])[A-Za-z0-9_./-]+\.[A-Za-z0-9]+", requirement)
+        }
+        resources: set[str] = set()
+        for route in re.findall(
+            r"\b(?:get|post|put|patch|delete)\s+(/[^\s,;]+)", requirement, re.IGNORECASE
+        ):
+            for segment in route.split("/"):
+                normalized = segment.casefold().strip("-_")
+                if normalized and normalized not in {"api", "v1", "v2"}:
+                    resources.add(normalized)
+        resource_stems = set(resources)
+        for resource in tuple(resources):
+            if resource.endswith("ies") and len(resource) > 3:
+                resource_stems.add(resource[:-3] + "y")
+            elif resource.endswith("s") and len(resource) > 1:
+                resource_stems.add(resource[:-1])
+
+        candidates: list[tuple[int, str]] = []
+        for path in available:
+            folded = path.casefold()
+            stem = PurePosixPath(path).stem.casefold()
+            if path in mentioned:
+                candidates.append((0, path))
+            if stem not in resource_stems:
+                continue
+            if "/routes/" in f"/{folded}" or "/controllers/" in f"/{folded}":
+                candidates.append((1, path))
+            elif "/models/" in f"/{folded}" or "/domain/" in f"/{folded}":
+                candidates.append((2, path))
+
+        # One path can be named directly and also be a conventional boundary.
+        priorities: dict[str, int] = {}
+        for priority, path in candidates:
+            priorities[path] = min(priority, priorities.get(path, priority))
+        return [path for path, _ in sorted(priorities.items(), key=lambda item: (item[1], item[0]))]
+
     @classmethod
     def relevance_terms(
         cls, specification: Any, requirement: str, feedback: str = ""

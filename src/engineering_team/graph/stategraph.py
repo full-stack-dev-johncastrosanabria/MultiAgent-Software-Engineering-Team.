@@ -38,6 +38,7 @@ from engineering_team.repository_evidence import (
     bounded_redacted_text,
     budgeted_slices,
     parse_repository_paths,
+    result_path,
     summarize_path_tool_result,
 )
 
@@ -229,6 +230,8 @@ def build_engineering_graph(
             architecture_read_results: list[tuple[str, Any]] = []
             architecture_coverage: Any = None
             architecture_ranked_count = 0
+            architecture_required_paths: set[str] = set()
+            architecture_visible_paths: set[str] = set()
             architecture_retrieval_ran = False
             developer_apply_targets: list[str] = []
             if retriever is not None and role in {
@@ -291,11 +294,38 @@ def build_engineering_graph(
                             searched, role, errors, tool_results, repository_mcp
                         )
                         search_hits.extend(ephemeral_hits)
+                    boundary_paths = ArchitectureAgent.task_boundary_paths(
+                        listed_paths, current.requirement
+                    )
+                    architecture_required_paths = set(boundary_paths)
                     ranked = ArchitectureAgent.rank_paths(listed_paths, search_hits, terms)
                     if search_hits:
                         hit_set = set(search_hits)
                         relevant_ranked = [path for path in ranked if path in hit_set]
                         ranked = relevant_ranked or ranked
+                    # Search hits are useful signals, but an explicitly requested
+                    # endpoint owns a route/model boundary even when its body has
+                    # none of the broad domain terms used by the bounded search.
+                    ranked = list(dict.fromkeys([*boundary_paths, *ranked]))
+                    if current.remediation_request:
+                        prior_paths = {
+                            path
+                            for item in current.tool_results
+                            if item.allowed_role is AgentRole.ARCHITECTURE
+                            and item.tool_name in {"read_file", "get_file_content"}
+                            and (path := result_path(item.input_summary))
+                        }
+                        unseen = [
+                            path for path in ranked
+                            if path not in prior_paths and path not in architecture_required_paths
+                        ]
+                        seen = [
+                            path for path in ranked
+                            if path in prior_paths and path not in architecture_required_paths
+                        ]
+                        # Keep task boundaries available on every pass, then make
+                        # a rejected design spend its bounded window on new files.
+                        ranked = [*boundary_paths, *unseen, *seen]
                     for path in ranked[:MAX_ARCHITECTURE_READ_CANDIDATES]:
                         raw_read = repository_mcp.read_file(role, path)
                         architecture_read_results.append((path, raw_read))
@@ -381,10 +411,19 @@ def build_engineering_graph(
                 read_slices = slices[:len(architecture_read_results)]
                 rag_slices = slices[len(architecture_read_results):]
                 visible_reads = sum(slice_size > 0 for slice_size in read_slices)
+                architecture_visible_paths = {
+                    path
+                    for (path, _), budget in zip(
+                        architecture_read_results, read_slices, strict=False
+                    )
+                    if budget > 0
+                }
                 architecture_coverage = assess_evidence_sufficiency(
                     read=visible_reads,
                     ranked=architecture_ranked_count,
                     omitted=max(0, architecture_ranked_count - visible_reads),
+                    required_paths=architecture_required_paths,
+                    visible_paths=architecture_visible_paths,
                 )
                 rag_evidence = [
                     bounded_rag_evidence(item, budget)
@@ -447,6 +486,21 @@ def build_engineering_graph(
                 }
             model_usage = list(current.model_usage)
             envelope = build_context(role, current, role.value)
+            if role is AgentRole.ARCHITECTURE and current.remediation_request:
+                # Evidence from an earlier pass remains in the audit trail, but
+                # showing it again would spend the next prompt's small window on
+                # the same files and defeat the unseen-path rotation above.
+                envelope = envelope.model_copy(update={
+                    "tool_results": [
+                        item for item in envelope.tool_results
+                        if not (
+                            item.allowed_role is AgentRole.ARCHITECTURE
+                            and item.tool_name in {"read_file", "get_file_content"}
+                            and (path := result_path(item.input_summary))
+                            and path not in architecture_visible_paths
+                        )
+                    ],
+                })
             candidate = agents[role].execute(envelope)
             if (
                 role is AgentRole.DEVELOPER

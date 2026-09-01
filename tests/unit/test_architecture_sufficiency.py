@@ -26,6 +26,8 @@ from engineering_team.contracts.models import (
     ToolResult,
 )
 from engineering_team.contracts.state import EngineeringState
+from engineering_team.models.context import build_context
+from engineering_team.repository_evidence import assess_evidence_sufficiency
 
 
 def _proposal(**overrides) -> ArchitectureProposal:
@@ -76,6 +78,46 @@ def test_a_repository_smaller_than_the_budget_is_always_sufficient() -> None:
     assert assess_evidence_sufficiency(read=3, ranked=3, omitted=0).sufficient is True
 
 
+def test_task_boundary_coverage_beats_generic_search_hit_coverage() -> None:
+    result = assess_evidence_sufficiency(
+        read=7,
+        ranked=27,
+        omitted=20,
+        required_paths={
+            "tests/test_products.py",
+            "app/routes/products.py",
+            "app/models/product.py",
+        },
+        visible_paths={
+            "tests/test_products.py",
+            "app/routes/products.py",
+            "app/models/product.py",
+        },
+    )
+
+    assert result.sufficient is True
+
+
+def test_missing_task_boundary_is_reported_as_insufficient() -> None:
+    result = assess_evidence_sufficiency(
+        read=7,
+        ranked=27,
+        omitted=20,
+        required_paths={
+            "tests/test_products.py",
+            "app/routes/products.py",
+            "app/models/product.py",
+        },
+        visible_paths={
+            "tests/test_products.py",
+            "app/routes/products.py",
+        },
+    )
+
+    assert result.sufficient is False
+    assert "app/models/product.py" in result.gap
+
+
 # -- the Reviewer stops sending every failure to the Developer ---------------
 
 
@@ -112,7 +154,6 @@ def _state(*, sufficient: bool | None, failing: bool) -> EngineeringState:
 
 def _decide(state: EngineeringState):
     from engineering_team.agents.reviewer import ReviewerAgent
-    from engineering_team.models.context import build_context
 
     return ReviewerAgent().execute(build_context(AgentRole.REVIEWER, state, "review"))
 

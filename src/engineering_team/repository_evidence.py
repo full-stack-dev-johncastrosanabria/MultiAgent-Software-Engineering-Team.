@@ -503,7 +503,12 @@ class EvidenceSufficiency:
 
 
 def assess_evidence_sufficiency(
-    *, read: int, ranked: int, omitted: int
+    *,
+    read: int,
+    ranked: int,
+    omitted: int,
+    required_paths: set[str] | None = None,
+    visible_paths: set[str] | None = None,
 ) -> EvidenceSufficiency:
     """Judge whether a stage saw enough of the repository to design against it.
 
@@ -511,6 +516,20 @@ def assess_evidence_sufficiency(
     is: a three-file project is not a thin slice of itself. What counts is the
     share of the ranked candidates that arrived.
     """
+    required = required_paths or set()
+    visible = visible_paths or set()
+    # A focused change can be sound with less than half of a broad domain search
+    # when it includes its literal test plus the route/model boundary it names.
+    # One path is not enough to relax the general repository-coverage rule.
+    if len(required) >= 2:
+        missing_required = sorted(required - visible)
+        if not missing_required:
+            return EvidenceSufficiency(True, "", 1.0)
+        return EvidenceSufficiency(
+            False,
+            "required task boundary files were not read: " + ", ".join(missing_required),
+            read / ranked if ranked else 0.0,
+        )
     if ranked <= 0 or read >= ranked:
         return EvidenceSufficiency(True, "", 1.0)
     coverage = read / ranked
