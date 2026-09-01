@@ -59,6 +59,12 @@ that the target code is defective.
 
 Delivery is separate from Apply. A confirmed proposal can be placed on a new
 `aset/` branch and opened as a pull request; the default branch is never a
-delivery target. The UI still accepts local paths today. GitHub URLs, runner and
-service visibility, and reviewed PR presentation are the next frontend
-capability, tracked in the roadmap rather than implied by the current UI.
+delivery target. The first real code-change delivery is
+[FlaskApiProduct PR #1](https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1).
+ASET selected the right files and reached Testing and Reviewer, but stopped at
+`HUMAN_REVIEW_REQUIRED`; an operator corrected the final implementation, reran
+the gates and opened the pull request. This proves the branch and review path,
+not yet an autonomous clone-to-PR product flow. The UI still accepts local paths
+today. GitHub URLs, runner and service visibility, and reviewed PR presentation
+are the next frontend capability, tracked in the roadmap rather than implied by
+the current UI.

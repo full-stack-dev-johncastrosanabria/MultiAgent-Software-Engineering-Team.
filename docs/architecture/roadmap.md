@@ -23,10 +23,16 @@ boundary is verified against a real daemon, profiles for Python, JVM, .NET,
 Node and Go, and services isolated per run. The runner can select the Python
 version a project needs rather than reusing the operator's interpreter.
 
-Still to prove as one product flow: a real code-change pull request after all
-gates pass, the declared Compose path against Kafka, non-Python remediation in
-a target repository, and the large multi-component case. The UI still accepts a
-local path only; it does not yet let a user choose a GitHub repository or review
+A first real code-change pull request now exists:
+[FlaskApiProduct PR #1](https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1).
+ASET selected the relevant route, test and model and reached its deterministic
+gates, but it did not approve the change after three remediation cycles. An
+operator corrected the final two failures, reran 68 tests and the quality gates,
+then committed and delivered the branch. Therefore the branch-to-PR mechanism is
+proved, while an autonomous clone-to-approved-PR product flow is not. Also still
+to prove: declared Compose against Kafka, non-Python remediation in a target
+repository, and the large multi-component case. The UI still accepts a local
+path only; it does not yet let a user choose a GitHub repository or review
 delivery evidence in one place.
 
 ## The evidence
@@ -163,9 +169,11 @@ anywhere in the path: a second delivery builds on the branch it made. Verified b
 opening a real pull request on NorthgateTollPlaza, which had no compose file and
 whose test.sh told the reader to install Postgres and MongoDB by hand.*
 
-*Code-change pull requests are not enabled. Finding 7 is the reason: a rewrite
-that empties files is contained today because nothing is applied, and that
-containment is the thing a delivery path removes.*
+*The same branch policy now has one real code-change artefact as evidence, but it
+was delivered by an operator after ASET stopped for human review. Automatic
+code delivery remains gated on an `APPROVED` verdict. This distinction matters:
+the product must not describe an operator-completed repair as an autonomous
+delivery.*
 
 ### 6. Evidence per component
 A run over BusinessAI-Analytics produces results for ten components. The gates
@@ -214,16 +222,17 @@ binds to stable backend evidence instead of creating a second workflow.*
 Each repository is chosen for what it forces, and the order is chosen so that
 nothing is built before something proves it is needed.
 
-**1. FlaskApiProduct** — complete the first real code-change pull request. The
-runner, dependencies and Python version now work. The Flask retry has proved
-that Reviewer distinguishes regressions from new failures; its next gate is the
-same request on a clean branch after Apply was taught to authorize the inspected
-products route as well as its explicitly named test. The first repair exposed
-an auxiliary `CHANGELOG.md` target that still suppressed the route, so the next
-clean run verifies that documentation does not count as the implementation.
-The orchestrator now selects and rereads that source before governing the
-candidate; only a green run produces
-the first code-change pull request.
+**1. FlaskApiProduct** — partial proof complete. Version 9 selected
+`app/routes/products.py`, `tests/test_products.py` and
+`app/models/product.py`; Architecture declared sufficient evidence and Reviewer
+never sent the work back to Architecture. ASET reached Testing and Reviewer
+three times, but Developer could see only failing test names, not the
+`expected/actual` assertions, and did not converge. An operator corrected the
+two remaining failures, obtained 68 passing tests and 84% coverage on the route,
+and opened [PR #1](https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1)
+from `aset/low-stock-endpoint-v9`. The remaining proof is to fix
+[finding 17](findings/README.md) and repeat a focused remediation that reaches
+`APPROVED` and delivery without an external code repair.
 
 **2. PruebaNuevosIngresosBackend** — validate declared Compose against the
 actual Java services, Postgres and Kafka. This proves that the project-owned
@@ -273,11 +282,21 @@ products route. Apply now adds one relevant, successfully inspected source file
 when no source target exists. The first repair treated auxiliary documentation
 as a source target, so `CHANGELOG.md` still blocked the route. The next clean
 run moved the selection and reread into the orchestrator before the candidate is
-governed. The next clean run must prove that the endpoint and isolated fixtures
-converge before any branch is pushed. The sixth run stopped earlier when both
-Developer providers timed out, before Testing or Reviewer. A bounded retry now
-repeats that stage once without writing; the next clean run must prove the real
-provider path rather than treating a local unit test as delivery evidence.
+governed. The sixth run stopped earlier when both Developer providers timed out,
+before Testing or Reviewer. A bounded retry now repeats that stage once without
+writing.
+
+Version 9 supplied the missing external evidence: it survived provider failures,
+reached Testing and Reviewer three times, selected the route, test and model, and
+kept every remediation with Developer. It also exposed the next loss of
+information. Testing retained the complete pytest assertion, but Reviewer reduced
+it to test identifiers before building Developer feedback. One custom test asked
+for threshold 7 while expecting stock 8 to be excluded, and the invalid-threshold
+test hid Werkzeug's typed-default behaviour. Developer saw neither contradiction
+in three attempts. An operator corrected the test and implementation, obtained
+68 passing tests and opened the first code-change pull request. That PR proves
+delivery mechanics; [finding 17](findings/README.md) records why it does not yet
+prove autonomous convergence.
 
 ## What is deliberately not here
 

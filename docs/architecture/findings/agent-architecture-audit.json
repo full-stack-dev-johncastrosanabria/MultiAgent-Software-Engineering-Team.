@@ -267,7 +267,24 @@
         "evaluation/reports/e2e-flask-container-retry-v6.json"
       ],
       "confidence": "high",
-      "recommended_fix": "Reintentar una sola vez la etapa afectada solo para disponibilidad o timeout, sin repetir MCP ni ejecutar escrituras. Registrar cada intento y conservar HUMAN_REVIEW_REQUIRED si se agota el limite. MAX_MODEL_STAGE_RETRIES controla el limite; una corrida limpia de FlaskApiProduct debe alcanzar Testing y Reviewer antes de considerar arreglado el hallazgo."
+      "recommended_fix": "Reintentar una sola vez la etapa afectada solo para disponibilidad o timeout, sin repetir MCP ni ejecutar escrituras. Registrar cada intento y conservar HUMAN_REVIEW_REQUIRED si se agota el limite. MAX_MODEL_STAGE_RETRIES controla el limite; Flask v9 demostro recuperacion ante fallos reales y alcanzo Testing y Reviewer tres veces.",
+      "validation": "Flask v9 alcanzo Testing y Reviewer tres veces despues de fallos reales de proveedor; la detencion posterior fue por dos pruebas funcionales nuevas, no por disponibilidad del modelo."
+    },
+    {
+      "severity": "high",
+      "title": "Developer recibe nombres de pruebas fallidas pero no las aserciones que fallaron",
+      "mechanism": "Testing conserva el output completo de pytest en TestResult.failures. Reviewer extrae los identificadores para clasificarlos como REGRESSION o fallo nuevo y reemplaza el diagnostico por mensajes que solo contienen esos nombres. La proyeccion de Developer no incluye test_results ni run_tests, por lo que remediation_feedback pierde expected, actual y la excepcion concreta. En Flask v9 tres ciclos no mostraron al Developer que una prueba generada para threshold 7 esperaba excluir un producto con stock 8 ni que Werkzeug convertia un query invalido al valor por defecto.",
+      "source_layer": "4. Retroalimentacion de Review y evidencia de pruebas",
+      "root_cause": "La clasificacion determinista agregada en finding 13 preserva la identidad y procedencia temporal del fallo, pero descarta el fragmento acotado de asercion antes de construir ReviewerDecision.problems. ContextEnvelope solo reenvia esos problemas resumidos al Developer.",
+      "evidence_refs": [
+        "src/engineering_team/agents/testing.py",
+        "src/engineering_team/testing_evidence.py",
+        "src/engineering_team/agents/reviewer.py",
+        "src/engineering_team/models/context.py",
+        "https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1"
+      ],
+      "confidence": "high",
+      "recommended_fix": "Mantener Reviewer determinista y no conceder herramientas de Testing al Developer. Asociar a cada identificador fallido un fragmento limitado y redactado de su asercion o excepcion desde el TestResult mas reciente; conservar las etiquetas REGRESSION y fallo nuevo. Probar que expected/actual llega al ContextEnvelope, que el tamano esta acotado y que secretos no sobreviven."
     }
   ],
   "ordered_fix_plan": [
@@ -366,6 +383,12 @@
       "goal": "Reintentar de forma acotada una etapa de modelo transitoriamente indisponible",
       "why_now": "Un timeout de proveedor puede cortar una corrida antes de que las compuertas deterministas produzcan evidencia.",
       "expected_effect": "Una recuperacion breve alcanza Testing y Reviewer; dos fallos conservan la parada segura para revision humana."
+    },
+    {
+      "order": 17,
+      "goal": "Entregar al Developer la asercion que fallo, no solo el nombre de la prueba",
+      "why_now": "Flask v9 contenia una prueba contradictoria y tres ciclos no pudieron ver expected versus actual aunque Testing ya conservaba esos datos.",
+      "expected_effect": "Developer puede distinguir un defecto de implementacion de una prueba incorrecta y converger sin ampliar sus permisos ni recibir output ilimitado."
     }
   ]
 }

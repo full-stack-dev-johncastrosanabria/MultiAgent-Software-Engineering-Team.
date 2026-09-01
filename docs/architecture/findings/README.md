@@ -21,7 +21,8 @@ index says where each one stands.
 | 13 | high | Reviewer does not distinguish a regression from a new failing test | **fixed** — `a82ec93`, `9ad580e`; the Flask retry labelled the two formerly passing tests as `REGRESSION` before the new endpoint failures |
 | 14 | high | Apply authorizes only file paths named literally in the requirement | **fixed** — the fourth Flask run wrote the inspected `app/routes/products.py` together with `tests/test_products.py`, without expanding the scope to the auxiliary `CHANGELOG.md` |
 | 15 | high | Cold Quality provisioning expires before a real project reaches tests | **fixed** — with the separate bounded 600-second Quality budget, the fourth Flask run reached Security, Testing and Reviewer; its later failure was functional, not an install timeout |
-| 16 | high | A transient model outage ends a run before its deterministic gates | **in progress** — one bounded retry now repeats the affected model stage before HITL; a clean FlaskApiProduct run must prove the real provider path reaches Testing and Reviewer |
+| 16 | high | A transient model outage ends a run before its deterministic gates | **fixed** — `1fcaf0d`; Flask v9 recovered from real provider failures and reached Testing and Reviewer three times |
+| 17 | high | Developer receives failing test names but not the failing assertions | **open** — Flask v9 repeated three remediations without seeing the contradictory `expected/actual` evidence already retained by Testing |
 
 ## Two things worth remembering
 
@@ -107,7 +108,9 @@ existed and a pull request would have been dishonest. A stage now retries once
 only for connection and timeout errors, before any write. It does not create a
 new remediation cycle or loosen delivery: a second failure remains a human-review
 stop. The focused tests cover both a primary-only failure and a primary-plus-cloud
-failure; the pending proof is the same clean external Flask run.
+failure. Flask v9 supplied the external proof: after real provider failures the
+workflow recovered, reached Testing and Reviewer three times and stopped for
+functional failures rather than provider availability.
 
 **Finding 8 needed a third external validation.** Flask v8 made seven of 27
 ranked paths visible under the 16 KiB budget and item overhead. Generic `stock`
@@ -123,3 +126,15 @@ rotation. Flask v9 then made `app/routes/products.py`, `tests/test_products.py`
 and `app/models/product.py` visible, declared the evidence sufficient and kept
 all three Reviewer returns on Developer. The endpoint's remaining test failures
 are a separate implementation defect, not an Architecture loop.
+
+**Finding 17 is the information lost after finding 13's classification.**
+Testing keeps the complete pytest output, including assertion values. Reviewer
+extracts the failed identifiers so it can label regressions and new failures,
+then uses only those labels as `problems`. Developer does not receive
+`test_results` or Testing tools, so its remediation context contains names but
+not the bounded `expected/actual` diagnostic. In Flask v9 one generated test
+asked for threshold 7 while expecting stock 8 to be excluded; another hid the
+typed-default behaviour of Werkzeug. Three remediations could not see either
+contradiction. The repair must preserve deterministic Reviewer and role
+isolation while attaching a bounded, secret-redacted assertion excerpt to each
+failed identifier.
