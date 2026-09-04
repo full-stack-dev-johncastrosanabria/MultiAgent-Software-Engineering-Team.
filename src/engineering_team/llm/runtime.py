@@ -11,8 +11,12 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import AgentRole
-from engineering_team.contracts.models import ModelExecutionInfo, StrictModel
+from engineering_team.contracts.enums import ActionMode, AgentRole
+from engineering_team.contracts.models import (
+    ImplementationResult,
+    ModelExecutionInfo,
+    StrictModel,
+)
 from engineering_team.llm.prompting import build_role_prompts, governed_output_schema
 from engineering_team.llm.router import ModelRouter
 from engineering_team.models.context import ContextEnvelope
@@ -167,6 +171,42 @@ class LocalModelRuntime:
                     )
                     continue
                 raise RuntimeError(info.error)
+            remediation_error = _ineffective_remediation_error(
+                role, envelope, parsed
+            )
+            if remediation_error is not None:
+                info = ModelExecutionInfo(
+                    agent=role,
+                    provider="ollama",
+                    requested_model=selection.model,
+                    actual_model=payload.get("model", selection.model),
+                    model_profile=selection.model_profile,
+                    degraded=True,
+                    latency_ms=latency,
+                    usage=usage or None,
+                    structured_output_success=False,
+                    error=remediation_error,
+                )
+                self.attempts.append(info)
+                self._record(
+                    role,
+                    system_prompt,
+                    user_prompt,
+                    raw,
+                    info,
+                    retry=availability_attempt,
+                    repair=repair_attempt,
+                )
+                if repair_attempt < self.settings.max_local_repairs:
+                    repair_attempt += 1
+                    user_prompt += (
+                        "\nThe previous response was byte-identical to the Developer "
+                        "attempt already rejected by the current test evidence. Repair "
+                        "the listed obligations by changing the responsible content; "
+                        "preserve unrelated behavior and return only schema-valid JSON."
+                    )
+                    continue
+                raise RuntimeError(info.error)
             info = ModelExecutionInfo(
                 agent=role, provider="ollama", requested_model=selection.model,
                 actual_model=payload.get("model", selection.model),
@@ -203,6 +243,29 @@ def _contains_all(actual: list[Any], governed: list[Any]) -> bool:
 
 def _same_items(actual: list[Any], governed: list[Any]) -> bool:
     return _contains_all(actual, governed) and _contains_all(governed, actual)
+
+
+def _ineffective_remediation_error(
+    role: AgentRole,
+    envelope: ContextEnvelope,
+    parsed: BaseModel,
+) -> str | None:
+    """Reject a Developer response that cannot change the failures being repaired."""
+    if (
+        role is not AgentRole.DEVELOPER
+        or not envelope.remediation_feedback
+        or not isinstance(parsed, ImplementationResult)
+        or parsed.action_mode is not ActionMode.APPLIED
+        or not parsed.file_contents
+    ):
+        return None
+    previous = envelope.state_projection.get("implementation")
+    previous_contents = getattr(previous, "file_contents", None)
+    if previous_contents is None and isinstance(previous, dict):
+        previous_contents = previous.get("file_contents")
+    if previous_contents and parsed.file_contents == previous_contents:
+        return "LLM_QUALITY_ERROR: unchanged developer remediation"
+    return None
 
 
 def _preserves_governed_facts(candidate: dict[str, Any], parsed: BaseModel) -> bool:

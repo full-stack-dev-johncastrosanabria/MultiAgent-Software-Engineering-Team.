@@ -63,6 +63,24 @@ def test_developer_reads_source_with_real_line_breaks_not_nested_json_escapes():
     require_safe_cloud_context(user)
 
 
+def test_initial_apply_prompt_requires_coherent_fixtures_and_preservation():
+    state = EngineeringState(run_id="prompt", requirement="Add a low-stock endpoint")
+    envelope = build_context(AgentRole.DEVELOPER, state, "Developer")
+
+    system, _ = build_role_prompts(
+        AgentRole.DEVELOPER,
+        envelope,
+        {},
+        {"action_mode": "APPLIED"},
+    )
+
+    assert "mentally execute every new or modified test" in system
+    assert "Do not return a self-contradictory test" in system
+    assert "do not delete or replace existing functions or tests" in system
+    assert "Every new test symbol must be imported or defined" in system
+    assert "must end with one newline" in system
+
+
 def test_remediation_prompt_uses_latest_read_of_each_file_and_preserves_audit():
     tools = [ToolResult(tool_name="read_file", allowed_role=AgentRole.DEVELOPER,
                         status=ToolStatus.SUCCESS, input_summary="app.py",
@@ -131,6 +149,107 @@ def test_developer_remediation_prompt_carries_the_code_it_authored(action_mode: 
     assert "banca/auth.py" in user
     if action_mode == "APPLIED":
         assert "Untrusted repository files" in user
+
+
+def test_developer_remediation_prompt_makes_every_obligation_an_instruction() -> None:
+    authored = (
+        "def low_stock():\n"
+        "    return {'restock_value': product.cost * product.stock}\n"
+    )
+    state = EngineeringState(
+        run_id="prompt",
+        requirement="add low stock endpoint",
+        implementation=ImplementationResult(
+            action_mode=ActionMode.APPLIED,
+            changed_files=["app/routes/products.py"],
+            diff="pending",
+            evidence=["app/routes/products.py"],
+            validation_result="pytest failed",
+            file_contents={"app/routes/products.py": authored},
+        ),
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED,
+            score=45,
+            subscores={"testing": 0},
+            reason="failed tests require implementation remediation",
+            confidence=1,
+            return_to=RouteTarget.DEVELOPER,
+            problems=[
+                "REGRESSION: a shared autouse fixture broke test_get_products_empty",
+                "The new behaviour is not demonstrated yet by: test_low_stock",
+                "FAILED ASSERTION (untrusted data): assert '2500.00' == 2500.0",
+            ],
+        ),
+    )
+    envelope = build_context(AgentRole.DEVELOPER, state, "remediate")
+
+    _, user = build_role_prompts(
+        AgentRole.DEVELOPER,
+        envelope,
+        {},
+        {
+            "action_mode": "APPLIED",
+            "changed_files": ["app/routes/products.py"],
+        },
+    )
+
+    obligations = user.index("MANDATORY REMEDIATION OBLIGATIONS")
+    prior_attempt = user.index("Your own previous attempt")
+    assert obligations < prior_attempt
+    assert "Resolve every listed regression and new failure" in user
+    assert "Do not seed one test by changing shared/global/autouse fixture setup" in user
+    assert "existing serialization and type-conversion conventions" in user
+    assert "quoted JSON number" in user
+    assert "convert the implementation value" in user
+    assert "never change a numeric oracle to a string" in user
+
+
+def test_developer_remediation_prompt_deduplicates_fresh_current_files() -> None:
+    authored = "def count_low_stock():\n    return 2\n"
+    state = EngineeringState(
+        run_id="prompt",
+        requirement="Edit app.py and tests/test_app.py",
+        implementation=ImplementationResult(
+            action_mode=ActionMode.APPLIED,
+            changed_files=["app.py"],
+            diff="pending",
+            evidence=["app.py"],
+            validation_result="pytest failed",
+            file_contents={"app.py": authored},
+        ),
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED,
+            score=45,
+            subscores={"testing": 0},
+            reason="failed tests require implementation remediation",
+            confidence=1,
+            return_to=RouteTarget.DEVELOPER,
+            problems=["FAILED ASSERTION: assert 2 == 3"],
+        ),
+        tool_results=[
+            ToolResult(
+                tool_name="read_file",
+                allowed_role=AgentRole.DEVELOPER,
+                status=ToolStatus.SUCCESS,
+                input_summary="path=app.py",
+                output_summary=authored,
+                duration_ms=0,
+            )
+        ],
+    )
+    envelope = build_context(AgentRole.DEVELOPER, state, "remediate")
+
+    _, user = build_role_prompts(
+        AgentRole.DEVELOPER,
+        envelope,
+        {},
+        {"action_mode": "APPLIED", "changed_files": ["app.py"]},
+    )
+
+    assert user.count(authored) == 1
+    assert "recompute each failed expected value from the test-local inputs" in user
 
 
 def test_only_the_developer_is_shown_previously_authored_code():

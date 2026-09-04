@@ -3,11 +3,13 @@ from __future__ import annotations
 import ast
 import atexit
 import importlib.metadata
+import json
 import re
 import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -258,6 +260,26 @@ class QualityMCP:
         self._last[tool] = failure
         return failure
 
+    def _missing_profile_operation(
+        self,
+        role: AgentRole,
+        tool: str,
+        phase: str,
+        started: float,
+    ) -> ToolResult:
+        result = ToolResult(
+            tool_name=tool,
+            allowed_role=role,
+            status=ToolStatus.UNAVAILABLE,
+            input_summary="safe",
+            output_summary="",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            error=f"the {self.profile.name} profile defines no {phase} command",
+            evidence_reference=self._evidence_reference(tool),
+        )
+        self._last[tool] = result
+        return result
+
     def _run_python(
         self,
         role: AgentRole,
@@ -347,11 +369,7 @@ class QualityMCP:
         started = time.perf_counter()
         template = getattr(self.profile, f"{phase}_template")
         if template is None:
-            return self._operation_failure(
-                role, tool,
-                f"the {self.profile.name} profile defines no {phase} command",
-                started,
-            )
+            return self._missing_profile_operation(role, tool, phase, started)
         interpreter = ""
         if any(INTERPRETER in part for part in template):
             try:
@@ -360,17 +378,29 @@ class QualityMCP:
                 return self._unavailable(role, tool, exc, started)
         environment = str(self._runner.environment or "")
         command = getattr(self.profile, f"{phase}_command")(interpreter, environment)
-        # Python installs from a hashed lock and then tests offline. The other
-        # toolchains resolve while they build, so denying the network would only
-        # make the phase fail; the cache on the shared volume keeps it to the
-        # first run. See StackProfile.test_needs_network.
-        needs_network = allow_network or (
-            phase == "test" and self.profile.test_needs_network
+        if command is None:
+            return self._missing_profile_operation(role, tool, phase, started)
+        # Network access belongs to the phase declaration, not to Quality's
+        # opinion about a toolchain. The explicit override remains for preparation
+        # operations such as npm ci.
+        needs_network = allow_network or bool(
+            getattr(self.profile, f"{phase}_needs_network", False)
+        )
+        fail_on_output = (
+            self._dotnet_reports_vulnerabilities
+            if self.profile.name == "dotnet" and phase == "security"
+            else None
+        )
+        unavailable_on_output = (
+            self._security_infrastructure_error
+            if phase == "security"
+            else None
         )
         return self._run(
             role, tool, [*command, *extra], allowed, deadline,
             cwd=cwd or self.root, started=started, allow_network=needs_network,
-            env=self.profile.env(environment),
+            env=self.profile.env(environment), fail_on_output=fail_on_output,
+            unavailable_on_output=unavailable_on_output,
         )
 
     def _run(
@@ -385,6 +415,8 @@ class QualityMCP:
         started: float | None = None,
         allow_network: bool = False,
         env: tuple[tuple[str, str], ...] = (),
+        fail_on_output: Callable[[str], bool] | None = None,
+        unavailable_on_output: Callable[[str], str | None] | None = None,
     ) -> ToolResult:
         if role not in allowed:
             return self._denied(role, tool)
@@ -400,12 +432,27 @@ class QualityMCP:
             )
         except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
             return self._unavailable(role, tool, exc, started)
-        output = (completed.stdout + completed.stderr)[-4000:]
+        full_output = completed.stdout + completed.stderr
+        output = full_output[-4000:]
         if completed.returncode < 0:
             return self._unavailable(
                 role, tool, RuntimeError("quality subprocess was terminated"), started
             )
-        status = ToolStatus.SUCCESS if completed.returncode == 0 else ToolStatus.FAIL
+        infrastructure_error = (
+            unavailable_on_output(full_output)
+            if unavailable_on_output is not None
+            else None
+        )
+        if infrastructure_error is not None:
+            status = ToolStatus.UNAVAILABLE
+        else:
+            status = ToolStatus.SUCCESS if completed.returncode == 0 else ToolStatus.FAIL
+            if (
+                status is ToolStatus.SUCCESS
+                and fail_on_output is not None
+                and fail_on_output(full_output)
+            ):
+                status = ToolStatus.FAIL
         result = ToolResult(
             tool_name=tool,
             allowed_role=role,
@@ -414,6 +461,11 @@ class QualityMCP:
             output_summary=output,
             duration_ms=int((time.perf_counter() - started) * 1000),
             evidence_reference=self._evidence_reference(tool),
+            error=(
+                f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: {infrastructure_error}"
+                if infrastructure_error is not None
+                else None
+            ),
         )
         self._last[tool] = result
         return result
@@ -841,15 +893,51 @@ class QualityMCP:
         if role not in allowed:
             return self._denied(role, "scan_dependencies")
         deadline = self._deadline()
-        prepared = self._prepare_project(role, "scan_dependencies", allowed, deadline)
-        if prepared is not None:
-            return prepared
-        try:
-            environment = Path(self._interpreter(deadline)).parent.parent
-        except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
-            return self._unavailable(role, "scan_dependencies", exc, time.perf_counter())
-        return self._run_python(
-            role, "scan_dependencies", "pip", ["check"], allowed, deadline, cwd=environment
+        if self.profile.dependency_template is None:
+            return self._missing_profile_operation(
+                role,
+                "scan_dependencies",
+                "dependency",
+                time.perf_counter(),
+            )
+        cwd: Path | None = None
+        if self.profile.name == "python":
+            prepared = self._prepare_project(
+                role, "scan_dependencies", allowed, deadline
+            )
+            if prepared is not None:
+                return prepared
+            try:
+                cwd = Path(self._interpreter(deadline)).parent.parent
+            except (
+                OSError,
+                RuntimeError,
+                TimeoutError,
+                subprocess.TimeoutExpired,
+            ) as exc:
+                return self._unavailable(
+                    role, "scan_dependencies", exc, time.perf_counter()
+                )
+        elif self.profile.install_template is not None:
+            installed = self._run_profile(
+                role,
+                "scan_dependencies",
+                "install",
+                [],
+                allowed,
+                deadline,
+                allow_network=True,
+            )
+            if installed.status is not ToolStatus.SUCCESS:
+                return installed
+        return self._run_profile(
+            role,
+            "scan_dependencies",
+            "dependency",
+            [],
+            allowed,
+            deadline,
+            cwd=cwd,
         )
 
     def _ruff_configuration(self) -> list[str]:
@@ -873,29 +961,240 @@ class QualityMCP:
         if role not in allowed:
             return self._denied(role, "run_security_scan")
         deadline = self._deadline()
-        prepared = self._prepare_quality_tools(
-            role, "run_security_scan", ("ruff",), allowed, deadline
-        )
-        if prepared is not None:
-            return prepared
-        target = (
-            "app" if (self.root / "app").is_dir()
-            else "sample_app/app" if (self.root / "sample_app" / "app").is_dir()
-            else "."
-        )
-        return self._run_python(
+        if self.profile.security_template is None:
+            return self._missing_profile_operation(
+                role,
+                "run_security_scan",
+                "security",
+                time.perf_counter(),
+            )
+        extra: list[str] = []
+        if self.profile.name == "python":
+            prepared = self._prepare_quality_tools(
+                role, "run_security_scan", ("ruff",), allowed, deadline
+            )
+            if prepared is not None:
+                return prepared
+            target = (
+                "app" if (self.root / "app").is_dir()
+                else (
+                    "sample_app/app"
+                    if (self.root / "sample_app" / "app").is_dir()
+                    else "."
+                )
+            )
+            extra = [
+                target,
+                "--select",
+                "S",
+                "--extend-exclude",
+                "tests,test,test_*.py,*_test.py",
+                *self._ruff_configuration(),
+            ]
+        return self._run_profile(
             role,
             "run_security_scan",
-            "ruff",
-            [
-                "check", target, "--select", "S", "--extend-exclude",
-                "tests,test,test_*.py,*_test.py", *self._ruff_configuration(),
-            ],
+            "security",
+            extra,
             allowed,
             deadline,
         )
 
+    @staticmethod
+    def _dotnet_vulnerability_payload(output: str) -> dict[str, Any] | None:
+        """Extract JSON despite harmless MSBuild/NuGet text around the document."""
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", output):
+            try:
+                payload, _ = decoder.raw_decode(output[match.start():])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and isinstance(payload.get("projects"), list):
+                return payload
+        return None
+
+    @classmethod
+    def _dotnet_reports_vulnerabilities(cls, output: str) -> bool:
+        """Interpret the .NET command whose exit code stays zero on findings."""
+        payload = cls._dotnet_vulnerability_payload(output)
+        if payload is not None:
+            pending: list[Any] = [payload]
+            while pending:
+                value = pending.pop()
+                if isinstance(value, dict):
+                    vulnerabilities = value.get("vulnerabilities")
+                    if isinstance(vulnerabilities, list) and vulnerabilities:
+                        return True
+                    pending.extend(value.values())
+                elif isinstance(value, list):
+                    pending.extend(value)
+            return False
+        lowered = output.lower()
+        if "has no vulnerable packages" in lowered:
+            return False
+        return "has the following vulnerable packages" in lowered
+
+    def _security_infrastructure_error(self, output: str) -> str | None:
+        """Separate scanner/advisory outages from findings in target dependencies."""
+        indicators = {
+            "jvm": (
+                "Unable to continue dependency-check analysis",
+                "Error updating the NVD Data",
+                "NoDataException",
+                "NvdApiException",
+            ),
+            "node": (
+                "npm ERR! code EAI_AGAIN",
+                "npm ERR! code ECONNREFUSED",
+                "npm ERR! code ENETUNREACH",
+                "npm ERR! code E401",
+                "npm ERR! code E403",
+            ),
+            "dotnet": (
+                "NU1301",
+                "Unable to load the service index",
+            ),
+            "go": (
+                "dial tcp:",
+                "no such host",
+                "module lookup disabled",
+            ),
+        }
+        if any(marker.lower() in output.lower() for marker in indicators.get(
+            self.profile.name, ()
+        )):
+            return f"{self.profile.name} advisory service or scanner was unavailable"
+        if (
+            self.profile.name == "dotnet"
+            and self._dotnet_vulnerability_payload(output) is None
+        ):
+            return "dotnet vulnerability scanner returned no valid JSON evidence"
+        return None
+
     def get_security_report(self, role: AgentRole) -> ToolResult:
         return self._get_last(
             role, "get_security_report", "run_security_scan", {AgentRole.SECURITY}
+        )
+
+
+
+class CompositeQuality:
+    """One quality handle that runs every component with its own profile.
+
+    ADR 4: a repository is not a stack. Until the graph can record one
+    ``run_tests`` result per component, this fans out and aggregates into the
+    single ToolResult the Testing node still appends. Commands never cross
+    profiles — a Maven module does not see pytest because Python happened to
+    be the Settings default.
+    """
+
+    transport = "composite"
+
+    def __init__(self, backends: list[Any]) -> None:
+        if not backends:
+            raise ValueError("CompositeQuality requires at least one backend")
+        self._backends = list(backends)
+        self.last_component_results: list[ToolResult] = []
+
+    def __enter__(self) -> "CompositeQuality":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+    def close(self) -> None:
+        for backend in self._backends:
+            close = getattr(backend, "close", None)
+            if close is not None:
+                close()
+
+    @staticmethod
+    def _aggregate(tool_name: str, role: AgentRole, results: list[ToolResult]) -> ToolResult:
+        if len(results) == 1:
+            return results[0]
+        status = ToolStatus.SUCCESS
+        for result in results:
+            if result.status is ToolStatus.UNAVAILABLE:
+                status = ToolStatus.UNAVAILABLE
+                break
+            if result.status is not ToolStatus.SUCCESS and status is ToolStatus.SUCCESS:
+                status = result.status
+        chunks: list[str] = []
+        errors: list[str] = []
+        duration = 0
+        for result in results:
+            label = result.evidence_reference or result.input_summary or result.tool_name
+            body = result.output_summary or result.error or result.status.value
+            chunks.append(f"{label}: {body}")
+            if result.error:
+                errors.append(f"{label}: {result.error}")
+            duration += int(result.duration_ms or 0)
+        return ToolResult(
+            tool_name=tool_name,
+            allowed_role=role,
+            status=status,
+            input_summary=f"components={len(results)}",
+            output_summary="\n".join(chunks)[-4000:],
+            duration_ms=duration,
+            evidence_reference=None,
+            error="; ".join(errors) if errors else None,
+        )
+
+    def run_tests(self, role: AgentRole, paths: list[str] | None = None) -> ToolResult:
+        results: list[ToolResult] = []
+        for backend in self._backends:
+            # Pytest path args (`-v`, node ids) belong to the python profile.
+            # Forwarding them would turn `mvn test` into `mvn test -v`.
+            extra = paths if getattr(backend, "profile", None) is not None and backend.profile.name == "python" else None
+            results.append(backend.run_tests(role, extra))
+        self.last_component_results = results
+        return self._aggregate("run_tests", role, results)
+
+    def get_test_results(self, role: AgentRole) -> ToolResult:
+        return self._aggregate(
+            "get_test_results",
+            role,
+            [backend.get_test_results(role) for backend in self._backends],
+        )
+
+    def run_build(self, role: AgentRole) -> ToolResult:
+        return self._aggregate(
+            "run_build",
+            role,
+            [backend.run_build(role) for backend in self._backends],
+        )
+
+    def get_build_status(self, role: AgentRole) -> ToolResult:
+        return self._aggregate(
+            "get_build_status",
+            role,
+            [backend.get_build_status(role) for backend in self._backends],
+        )
+
+    def run_linter(self, role: AgentRole) -> ToolResult:
+        return self._aggregate(
+            "run_linter",
+            role,
+            [backend.run_linter(role) for backend in self._backends],
+        )
+
+    def scan_dependencies(self, role: AgentRole) -> ToolResult:
+        return self._aggregate(
+            "scan_dependencies",
+            role,
+            [backend.scan_dependencies(role) for backend in self._backends],
+        )
+
+    def run_security_scan(self, role: AgentRole) -> ToolResult:
+        return self._aggregate(
+            "run_security_scan",
+            role,
+            [backend.run_security_scan(role) for backend in self._backends],
+        )
+
+    def get_security_report(self, role: AgentRole) -> ToolResult:
+        return self._aggregate(
+            "get_security_report",
+            role,
+            [backend.get_security_report(role) for backend in self._backends],
         )

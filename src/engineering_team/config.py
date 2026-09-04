@@ -29,19 +29,20 @@ class Settings(BaseSettings):
     # A transient connection/timeout may clear on a second request. This is a
     # stage retry, before writes, and does not create another remediation cycle.
     max_model_stage_retries: int = Field(default=1, ge=0)
+    # Distinct failures may need multiple bounded correction cycles. Repeated
+    # identical failures are stopped earlier by the stagnation circuit breaker.
+    max_remediation_iterations: int = Field(default=5, ge=1)
     # Which boundary target-project commands execute behind. Deliberately not
     # auto-detected: a runner that varies silently by machine would isolate the
     # same run differently depending on whether a daemon happened to be up, and
     # nothing would say so -- the failure finding 5 describes for telemetry.
     quality_runner: str = "process"
     quality_container_image: str = ""
-    # ADR 4 (profile per component). Deliberately not auto-detected either: a
-    # repository that carries more than one buildable component (finding 19 --
-    # PruebaNuevosIngresosBackend has two Maven modules and one is not the one a
-    # given run is about) has no single correct guess, and guessing would make
-    # component choice depend on which manifest a search happened to see first.
-    # A caller who wants a non-Python component states its stack and where it
-    # lives, exactly as it already must state a container image.
+    # ADR 4 (profile per component). Explicit QUALITY_STACK / quality_component_path
+    # still win (the Flask process sets QUALITY_STACK=python and must keep that
+    # path). When neither is set, apply_run detects every component and fans out
+    # — guessing a single stack for a multi-manifest tree is what we refuse
+    # (finding 19 / PruebaNuevosIngresosBackend).
     quality_stack: str = "python"
     quality_component_path: str = ""
     # A cold container may need the complete dependency graph before the first

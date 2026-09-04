@@ -7,6 +7,8 @@ cannot, the split in ADR 3 did not actually happen.
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import subprocess
 import sys
 import time
@@ -21,6 +23,7 @@ from engineering_team.mcp.runner import (
     CommandRunner,
     ProcessRunner,
 )
+from engineering_team.stacks import profile_for
 
 
 class RecordingRunner:
@@ -52,6 +55,17 @@ class RecordingRunner:
 
     def close(self) -> None:
         self.closed = True
+
+
+class NoPythonRecordingRunner(RecordingRunner):
+    """Record native toolchain commands and reject Python provisioning."""
+
+    def __init__(self, *, exit_code: int = 0, stdout: str = "") -> None:
+        super().__init__(exit_code=exit_code, stdout=stdout)
+        self.environment = Path("/recorded/env")
+
+    def prepare_environment(self, deadline: float) -> str:
+        raise AssertionError("a non-Python security operation prepared Python")
 
 
 def test_process_runner_stands_alone_without_quality() -> None:
@@ -108,6 +122,178 @@ def test_network_and_fork_permissions_reach_the_runner_verbatim() -> None:
     request = runner.requests[-1]
     assert request.allow_network is True
     assert request.allow_subprocesses is True
+
+
+@pytest.mark.parametrize(
+    ("stack", "operation_name", "needs_network"),
+    [
+        ("python", "scan_dependencies", False),
+        ("python", "run_security_scan", False),
+        ("jvm", "scan_dependencies", True),
+        ("jvm", "run_security_scan", True),
+        ("node", "scan_dependencies", False),
+        ("node", "run_security_scan", True),
+        ("dotnet", "scan_dependencies", True),
+        ("dotnet", "run_security_scan", True),
+        ("go", "scan_dependencies", True),
+        ("go", "run_security_scan", True),
+    ],
+)
+def test_profile_scan_network_policy_reaches_command_request(
+    tmp_path: Path,
+    stack: str,
+    operation_name: str,
+    needs_network: bool,
+) -> None:
+    runner = (
+        RecordingRunner()
+        if stack == "python"
+        else NoPythonRecordingRunner(
+            stdout=(
+                json.dumps({"projects": []})
+                if stack == "dotnet" and operation_name == "run_security_scan"
+                else ""
+            )
+        )
+    )
+    quality = QualityMCP(
+        tmp_path,
+        runner=runner,
+        profile=profile_for(stack),
+    )
+
+    result = getattr(quality, operation_name)(AgentRole.SECURITY)
+
+    assert result.status is ToolStatus.SUCCESS
+    assert runner.requests[-1].allow_network is needs_network
+    assert runner.requests[-1].allow_subprocesses is needs_network
+
+
+def test_jvm_security_operations_use_maven_without_preparing_python(
+    tmp_path: Path,
+) -> None:
+    runner = NoPythonRecordingRunner()
+    quality = QualityMCP(
+        tmp_path,
+        runner=runner,
+        profile=profile_for("jvm"),
+        component="backend",
+    )
+
+    dependency = quality.scan_dependencies(AgentRole.SECURITY)
+    security = quality.run_security_scan(AgentRole.SECURITY)
+
+    assert dependency.status is ToolStatus.SUCCESS
+    assert security.status is ToolStatus.SUCCESS
+    assert [request.args[0] for request in runner.requests] == ["mvn", "mvn"]
+    assert not any(
+        "python" in part
+        for request in runner.requests
+        for part in request.args
+    )
+    assert dependency.evidence_reference == "mcp://quality/scan_dependencies#backend"
+    assert security.evidence_reference == "mcp://quality/run_security_scan#backend"
+
+
+def test_jvm_advisory_failure_is_unavailable_not_a_dependency_finding(
+    tmp_path: Path,
+) -> None:
+    runner = NoPythonRecordingRunner(
+        exit_code=1,
+        stdout="Unable to continue dependency-check analysis: NvdApiException",
+    )
+    quality = QualityMCP(
+        tmp_path,
+        runner=runner,
+        profile=profile_for("jvm"),
+        component="backend",
+    )
+
+    result = quality.run_security_scan(AgentRole.SECURITY)
+
+    assert result.status is ToolStatus.UNAVAILABLE
+    assert "INFRASTRUCTURE_ERROR" in (result.error or "")
+    assert result.evidence_reference == "mcp://quality/run_security_scan#backend"
+
+
+@pytest.mark.parametrize(
+    ("template_field", "operation_name"),
+    [
+        ("dependency_template", "scan_dependencies"),
+        ("security_template", "run_security_scan"),
+    ],
+)
+def test_missing_security_operation_fails_closed_with_component_evidence(
+    tmp_path: Path,
+    template_field: str,
+    operation_name: str,
+) -> None:
+    profile = dataclasses.replace(
+        profile_for("jvm"),
+        **{template_field: None},
+    )
+    runner = NoPythonRecordingRunner()
+    quality = QualityMCP(
+        tmp_path,
+        runner=runner,
+        profile=profile,
+        component="backend",
+    )
+
+    result = getattr(quality, operation_name)(AgentRole.SECURITY)
+
+    assert result.status is ToolStatus.UNAVAILABLE
+    assert "defines no" in (result.error or "")
+    assert result.evidence_reference == f"mcp://quality/{operation_name}#backend"
+    assert runner.requests == []
+
+
+def test_dotnet_json_vulnerability_output_changes_success_to_failure(
+    tmp_path: Path,
+) -> None:
+    runner = NoPythonRecordingRunner(
+        stdout=(
+            "warning {not-json}\n"
+            + json.dumps({
+                "projects": [{
+                    "frameworks": [{
+                        "topLevelPackages": [{
+                            "id": "Example.Package",
+                            "vulnerabilities": [{
+                                "severity": "High",
+                                "advisoryurl": "https://example.invalid/advisory",
+                            }],
+                        }],
+                    }],
+                }],
+                "padding": "x" * 5000,
+            })
+            + "\nwarning with trailing }"
+        )
+    )
+    quality = QualityMCP(
+        tmp_path,
+        runner=runner,
+        profile=profile_for("dotnet"),
+    )
+
+    result = quality.run_security_scan(AgentRole.SECURITY)
+
+    assert result.status is ToolStatus.FAIL
+
+
+def test_dotnet_invalid_json_evidence_is_unavailable(tmp_path: Path) -> None:
+    runner = NoPythonRecordingRunner(stdout="warning: scan produced no JSON")
+    quality = QualityMCP(
+        tmp_path,
+        runner=runner,
+        profile=profile_for("dotnet"),
+    )
+
+    result = quality.run_security_scan(AgentRole.SECURITY)
+
+    assert result.status is ToolStatus.UNAVAILABLE
+    assert "INFRASTRUCTURE_ERROR" in (result.error or "")
 
 
 def test_closing_quality_closes_its_runner() -> None:

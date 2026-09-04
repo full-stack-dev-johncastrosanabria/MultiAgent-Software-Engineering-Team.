@@ -56,6 +56,7 @@ class EngineeringState(StrictModel):
     tool_results: list[ToolResult] = Field(default_factory=list)
     model_usage: list[ModelExecutionInfo] = Field(default_factory=list)
     iteration: int = Field(default=0, ge=0)
+    failure_fingerprints: list[str] = Field(default_factory=list)
     errors: list[WorkflowError] = Field(default_factory=list)
     human_review_required: bool = False
     final_status: str | None = None

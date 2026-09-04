@@ -17,7 +17,7 @@ from engineering_team.llm.prompting import build_role_prompts, governed_output_s
 from engineering_team.models.context import ContextEnvelope
 
 from .registry import ModelSelection
-from .runtime import _preserves_governed_facts
+from .runtime import _ineffective_remediation_error, _preserves_governed_facts
 
 # Every provider but Google speaks the OpenAI chat-completions shape, so one code
 # path serves them all; only the endpoint and the credential differ.
@@ -92,6 +92,10 @@ class _GovernedContradiction(ValueError):
 
 
 class _IncompleteOutput(ValueError):
+    pass
+
+
+class _IneffectiveRemediation(ValueError):
     pass
 
 
@@ -380,6 +384,11 @@ class CloudModelRuntime:
             artifact = type(candidate).model_validate_json(raw)
             if not _preserves_governed_facts(candidate.model_dump(mode="json"), artifact):
                 raise _GovernedContradiction(candidate_dict, artifact)
+            remediation_error = _ineffective_remediation_error(
+                role, envelope, artifact
+            )
+            if remediation_error is not None:
+                raise _IneffectiveRemediation(remediation_error)
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             category, retryable = _http_category(status)
@@ -429,13 +438,20 @@ class CloudModelRuntime:
             raise RuntimeError(error) from exc
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
             contradiction = isinstance(exc, _GovernedContradiction)
+            ineffective = isinstance(exc, _IneffectiveRemediation)
             detail = (
                 f"governed fields differ: {', '.join(exc.fields)}"
                 if contradiction else
+                "unchanged developer remediation"
+                if ineffective else
                 "schema validation: " + ", ".join(sorted({e["type"] for e in exc.errors(include_input=False)}))
                 if isinstance(exc, ValidationError) else type(exc).__name__
             )
-            error = f"CLOUD_FALLBACK_UNAVAILABLE: {detail}"
+            error = (
+                "LLM_QUALITY_ERROR: unchanged developer remediation"
+                if ineffective
+                else f"CLOUD_FALLBACK_UNAVAILABLE: {detail}"
+            )
             info = ModelExecutionInfo(
                 agent=role, provider=selection.provider, requested_model=selection.model,
                 actual_model=None, model_profile=selection.model_profile,
@@ -445,6 +461,7 @@ class CloudModelRuntime:
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 structured_output_success=False, error=error,
                 error_category=("governed_contradiction" if contradiction else
+                                "ineffective_remediation" if ineffective else
                                 "incomplete_output" if isinstance(exc, _IncompleteOutput) else
                                 "timeout" if isinstance(exc, httpx.TimeoutException) else
                                 "schema_validation" if isinstance(exc, ValidationError) else "invalid_response"),

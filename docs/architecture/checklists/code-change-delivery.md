@@ -1,10 +1,14 @@
 # Code-change delivery
 
-A code pull request counts as delivered only when every item below is true. The
-first evidence for this checklist is
-[FlaskApiProduct PR #1](https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1),
-which also showed why operator-completed and autonomous deliveries must not be
-reported as the same result.
+A code pull request counts as delivered only when every item below is true.
+
+- Operator-completed reference:
+  [FlaskApiProduct PR #1](https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1)
+  (John; showed why operator repair must not be reported as autonomous delivery).
+- First autonomous ASET delivery:
+  [FlaskApiProduct PR #2](https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/2)
+  (`apply-debugger-flask-writes-v7`, Reviewer APPROVED, `build_delivery` with
+  `DELIVERY_BACKEND=gh` + `--confirm-delivery`).
 
 ## Source and branch
 
@@ -25,6 +29,37 @@ reported as the same result.
 - [ ] Coverage is reported when measurable; a threshold is not invented when the
   project has none. ASET's current Python delivery target is at least 80 percent
   on the changed boundary.
+
+
+## Run flags (do not guess)
+
+Autonomous delivery from `run-project` / `apply_run` only happens when **all** of
+these are true. Missing any one leaves delivery off (safe default).
+
+- [ ] `DELIVERY_BACKEND=gh` in the environment (Settings `delivery_backend`;
+  default is `none` — `build_delivery` then returns `None` and no PR is opened).
+- [ ] `--authorize-writes` on the CLI (Developer may write via Repository MCP).
+- [ ] `--confirm-delivery` on the CLI (`confirm_delivery=True` into
+  `run_on_project`; default `--no-confirm-delivery`).
+- [ ] Reviewer status is `APPROVED` on that same run (HITL / REJECTED never
+  delivers).
+- [ ] Written paths have file contents available for `Proposal.updates` /
+  `files` (empty proposal → `DeliveryRefused`, recorded as `delivery_error`).
+
+Example (Flask-style autonomous PR):
+
+```bash
+DELIVERY_BACKEND=gh .venv/bin/engineering-team run-project /path/to/FlaskApiProduct \
+  --spec "…" \
+  --authorize-writes \
+  --confirm-delivery \
+  --report-path evaluation/reports/apply-run.json
+```
+
+Evidence fields after a delivery attempt: `delivery_branch`, `delivery_pr_url`,
+or `delivery_error`. With `delivery_backend=none` or without `--confirm-delivery`,
+those fields stay absent and GitHub Helper (or a later run) must open `aset/…`
+manually only after a real APPROVED.
 
 ## Truthful delivery
 

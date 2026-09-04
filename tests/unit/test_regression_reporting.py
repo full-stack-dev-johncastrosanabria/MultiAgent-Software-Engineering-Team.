@@ -109,6 +109,35 @@ def test_repeated_test_names_keep_their_own_failure_blocks() -> None:
     assert "second-actual" in diagnostics[second]
 
 
+def test_truncated_pytest_traceback_preserves_one_orphan_exception_tail() -> None:
+    failures = [
+        "tests/test_products.py::TestLowStockEndpoint::test_default",
+        "tests/test_products.py::TestLowStockEndpoint::test_custom",
+    ]
+    output = "\n".join([
+        "../site-packages/sqlalchemy/orm/session.py:4353: in flush",
+        "    self._flush(objects)",
+        "../site-packages/sqlalchemy/engine/default.py:952: in do_execute",
+        "    cursor.execute(statement, parameters)",
+        (
+            "E   sqlalchemy.exc.IntegrityError: (sqlite3.IntegrityError) "
+            "NOT NULL constraint failed: products.price"
+        ),
+        "E   [parameters: ('P1', None, None, 5.0, 5, None)]",
+        "---------------------------- Captured stdout setup -----------------------------",
+        "database initialized",
+        "=========================== short test summary info ============================",
+        *(f"FAILED {identifier}" for identifier in failures),
+        "=================== 2 failed, 9 passed in 1.73s ===================",
+    ])
+
+    diagnostics = failure_diagnostics(output, failing_tests(output))
+
+    assert list(diagnostics) == [failures[0]]
+    assert "IntegrityError" in diagnostics[failures[0]]
+    assert "products.price" in diagnostics[failures[0]]
+
+
 def test_failure_diagnostics_are_bounded_and_redacted() -> None:
     sections = []
     summary = []

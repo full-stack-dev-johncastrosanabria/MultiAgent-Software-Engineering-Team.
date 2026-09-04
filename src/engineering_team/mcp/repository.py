@@ -198,6 +198,25 @@ class RepositoryMCP:
             if not create and not path.exists():
                 return self._result(role, tool, ToolStatus.FAIL, error="file not found")
             normalized = path.relative_to(self.root).as_posix()
+            # Strip trailing WS per line and always end with a newline so LLM
+            # omissions cannot loop Reviewer→HITL (apply-474c7045 / apply-30fc75c0).
+            lines = [line.rstrip(" \t") for line in content.splitlines()]
+            normalized_content = "\n".join(lines) + "\n"
+            # Veto whitespace-only churn against an existing file (apply-399a301c /
+            # product.py trailing-WS and blank-line noise). Same after normalize,
+            # or identical once all whitespace is ignored → SUCCESS no-op: do not
+            # write, and do not record a spurious change in `_originals` when this
+            # path was not already tracked.
+            if path.exists():
+                existing = path.read_text(encoding="utf-8", errors="ignore")
+                existing_lines = [line.rstrip(" \t") for line in existing.splitlines()]
+                normalized_existing = "\n".join(existing_lines) + "\n"
+                if (
+                    normalized_content == normalized_existing
+                    or "".join(normalized_content.split())
+                    == "".join(normalized_existing.split())
+                ):
+                    return self._result(role, tool, ToolStatus.SUCCESS, relative)
             if normalized not in self._originals:
                 self._originals[normalized] = (
                     path.read_text(encoding="utf-8", errors="ignore")
@@ -205,7 +224,7 @@ class RepositoryMCP:
                     else None
                 )
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            path.write_text(normalized_content, encoding="utf-8")
             return self._result(role, tool, ToolStatus.SUCCESS, relative)
         except (OSError, ValueError) as exc:
             return self._result(role, tool, ToolStatus.DENIED, error=str(exc))

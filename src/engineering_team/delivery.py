@@ -60,6 +60,13 @@ class Proposal:
     documentation for a secret that file said had no default and failed at
     startup without. Adding to a file and replacing it are different acts, and
     nothing here should be able to do the second by accident."""
+    updates: dict[str, str] = field(default_factory=dict)
+    """Full replace of existing tracked files (APPROVED code-change delivery).
+
+    Unlike `files` (create-only) and `extends` (append-only), `updates` is the
+    intentional overwrite path for Reviewer-APPROVED implementation changes that
+    modify code already in the project. Still subject to `_check_no_secret` and
+    never pushed with `--force`."""
 
 
 def clone_repository(url: str, destination: Path) -> Path:
@@ -97,11 +104,12 @@ class GitDelivery:
                 "delivery requires an explicit confirmation from the operator"
             )
         self._check_branch(proposal.branch)
-        if not proposal.files and not proposal.extends:
+        if not proposal.files and not proposal.extends and not proposal.updates:
             raise DeliveryRefused("a proposal with no files changes nothing")
         self._check_no_secret(proposal)
         created = self._resolve(repository, proposal.files, allow_missing_only=True)
         extended = self._resolve(repository, proposal.extends)
+        updated = self._resolve(repository, proposal.updates)
 
         # If this branch already exists on the remote, build on it. A second
         # delivery is then an ordinary commit and an ordinary fast-forward push,
@@ -142,8 +150,16 @@ class GitDelivery:
                 continue
             separator = "" if not existing or existing.endswith("\n") else "\n"
             path.write_text(existing + separator + content, encoding="utf-8")
+        # updates: full-file replace for APPROVED code-change delivery.
+        # Safe rule: always write the provided body to the path. If the path
+        # exists in the project base, replacement is intentional; if it does
+        # not (e.g. created earlier in this apply), still write — unlike
+        # `files`, which refuse paths already in base.
+        for path, content in zip(updated, proposal.updates.values(), strict=True):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
         self._git(
-            repository, "add", "--", *(str(p) for p in (*created, *extended))
+            repository, "add", "--", *(str(p) for p in (*created, *extended, *updated))
         )
         self._git(
             repository, "-c", "user.name=ASET",
@@ -189,7 +205,11 @@ class GitDelivery:
             ("body", proposal.body),
             *(
                 (f"file {name}", content)
-                for name, content in (*proposal.files.items(), *proposal.extends.items())
+                for name, content in (
+                    *proposal.files.items(),
+                    *proposal.extends.items(),
+                    *proposal.updates.items(),
+                )
             ),
         ):
             for match in _CREDENTIAL.finditer(text):

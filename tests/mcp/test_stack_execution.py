@@ -75,6 +75,17 @@ def _run_tests(workspace: Path, stack: str) -> tuple[ToolStatus, str]:
         quality.close()
 
 
+def _scan_dependencies(workspace: Path, stack: str) -> tuple[ToolStatus, str]:
+    profile = profile_for(stack)
+    runner = ContainerRunner(workspace, image=profile.image)
+    quality = QualityMCP(workspace, timeout_seconds=900, runner=runner, profile=profile)
+    try:
+        result = quality.scan_dependencies(AgentRole.SECURITY)
+        return result.status, result.output_summary
+    finally:
+        quality.close()
+
+
 @_needs("jvm")
 def test_a_maven_component_really_runs_its_tests(tmp_path: Path) -> None:
     (tmp_path / "pom.xml").write_text(POM, encoding="utf-8")
@@ -84,6 +95,15 @@ def test_a_maven_component_really_runs_its_tests(tmp_path: Path) -> None:
 
     status, output = _run_tests(tmp_path, "jvm")
     assert status is ToolStatus.SUCCESS, output[-1500:]
+
+
+@_needs("jvm")
+def test_a_maven_component_really_scans_its_dependency_tree(tmp_path: Path) -> None:
+    (tmp_path / "pom.xml").write_text(POM, encoding="utf-8")
+
+    status, output = _scan_dependencies(tmp_path, "jvm")
+    assert status is ToolStatus.SUCCESS, output[-1500:]
+    assert "org.junit.jupiter:junit-jupiter" in output
 
 
 @_needs("node")

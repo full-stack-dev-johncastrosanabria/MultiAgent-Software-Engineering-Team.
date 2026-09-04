@@ -7,7 +7,7 @@ to a component and not to a repository.
 
 from __future__ import annotations
 
-from engineering_team.components import Component, detect_components
+from engineering_team.components import Component, components_in, detect_components
 
 PRUEBA = [
     "docker-compose.yml", "init/init.sql",
@@ -110,3 +110,24 @@ def test_detection_is_deterministic() -> None:
 def test_a_component_reports_the_manifest_that_identified_it() -> None:
     (component,) = detect_components(["svc/pom.xml"])
     assert component == Component(path="svc", stack="jvm", manifest="pom.xml")
+
+
+def test_components_in_reads_from_a_project_root(tmp_path) -> None:
+    (tmp_path / "svc").mkdir()
+    (tmp_path / "svc" / "pom.xml").write_text("<project/>", encoding="utf-8")
+    (tmp_path / "target" / "classes").mkdir(parents=True)
+    (tmp_path / "target" / "classes" / "pom.xml").write_text("<project/>", encoding="utf-8")
+    assert components_in(tmp_path) == [
+        Component(path="svc", stack="jvm", manifest="pom.xml")
+    ]
+
+
+def test_components_in_skips_vendored_manifests(tmp_path) -> None:
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "package.json").write_text("{}", encoding="utf-8")
+    nested = tmp_path / "web" / "node_modules" / "left-pad"
+    nested.mkdir(parents=True)
+    (nested / "package.json").write_text("{}", encoding="utf-8")
+    assert components_in(tmp_path) == [
+        Component(path="web", stack="node", manifest="package.json")
+    ]

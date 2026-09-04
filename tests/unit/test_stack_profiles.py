@@ -34,6 +34,77 @@ def test_the_python_profile_reproduces_todays_commands() -> None:
     assert python.lint_command("/env/bin/python")[:5] == [
         "/env/bin/python", "-I", "-m", "ruff", "check",
     ]
+    assert python.dependency_command("/env/bin/python") == [
+        "/env/bin/python", "-I", "-m", "pip", "check",
+    ]
+    assert python.security_command("/env/bin/python") == [
+        "/env/bin/python", "-I", "-m", "ruff", "check",
+    ]
+
+
+def test_every_detectable_profile_declares_both_security_operations() -> None:
+    for name, profile in PROFILES.items():
+        interpreter = "/env/bin/python" if name == "python" else ""
+        assert profile.dependency_command(interpreter, "/aset/env"), name
+        assert profile.security_command(interpreter, "/aset/env"), name
+
+
+def test_jvm_security_operations_are_pinned_maven_commands() -> None:
+    jvm = profile_for("jvm")
+    commands = (
+        jvm.dependency_command("", "/aset/env"),
+        jvm.security_command("", "/aset/env"),
+    )
+
+    assert all(command is not None and command[0] == "mvn" for command in commands)
+    assert not any("python" in part for command in commands for part in command or ())
+    security = commands[1] or []
+    assert any(
+        part.startswith("org.owasp:dependency-check-maven:")
+        and part.endswith(":check")
+        and "LATEST" not in part
+        for part in security
+    )
+
+
+def test_native_security_commands_match_the_approved_toolchains() -> None:
+    assert profile_for("node").dependency_command("", "/aset/env") == [
+        "npm", "ls", "--all",
+    ]
+    assert profile_for("node").security_command("", "/aset/env") == [
+        "npm", "audit", "--omit=dev", "--audit-level=high",
+    ]
+    assert profile_for("dotnet").dependency_command("", "/aset/env")[:4] == [
+        "dotnet", "list", "package", "--include-transitive",
+    ]
+    assert profile_for("dotnet").security_command("", "/aset/env")[:5] == [
+        "dotnet", "list", "package", "--include-transitive", "--vulnerable",
+    ]
+    assert profile_for("go").dependency_command("", "/aset/env") == [
+        "go", "list", "-m", "all",
+    ]
+    go_security = profile_for("go").security_command("", "/aset/env") or []
+    assert go_security[:2] == ["go", "run"]
+    assert "@v" in go_security[2]
+    assert go_security[-1] == "./..."
+
+
+def test_scan_network_policy_is_explicit_for_every_profile() -> None:
+    expected = {
+        "python": (False, False),
+        "jvm": (True, True),
+        "node": (False, True),
+        "dotnet": (True, True),
+        "go": (True, True),
+    }
+
+    assert {
+        name: (
+            profile.dependency_needs_network,
+            profile.security_needs_network,
+        )
+        for name, profile in PROFILES.items()
+    } == expected
 
 
 def test_non_python_commands_do_not_go_through_an_interpreter() -> None:
@@ -55,13 +126,33 @@ def test_toolchain_caches_are_placed_on_the_shared_volume() -> None:
     assert "-Dmaven.repo.local=/aset/env/m2" in profile_for("jvm").test_command(
         "", "/aset/env"
     )
-    assert dict(profile_for("jvm").env("/aset/env"))["HOME"] == "/aset/env/home"
+    jvm = profile_for("jvm")
+    assert "-Dmaven.repo.local=/aset/env/m2" in (
+        jvm.dependency_command("", "/aset/env") or []
+    )
+    assert "-DdataDirectory=/aset/env/dependency-check" in (
+        jvm.security_command("", "/aset/env") or []
+    )
+    assert any(
+        "DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz" in part
+        for part in (jvm.security_command("", "/aset/env") or [])
+    )
+    assert dict(jvm.env("/aset/env"))["HOME"] == "/aset/env/home"
     assert "-p:RestorePackagesPath=/aset/env/nuget" in profile_for(
         "dotnet"
     ).test_command("", "/aset/env")
+    assert dict(profile_for("dotnet").env("/aset/env"))["NUGET_PACKAGES"] == (
+        "/aset/env/nuget"
+    )
     assert profile_for("node").install_command("", "/aset/env") == [
         "npm", "ci", "--cache", "/aset/env/npm",
     ]
+    assert dict(profile_for("node").env("/aset/env"))["npm_config_cache"] == (
+        "/aset/env/npm"
+    )
+    assert dict(profile_for("go").env("/aset/env"))["GOMODCACHE"] == (
+        "/aset/env/gomod"
+    )
 
 
 def test_only_python_tests_run_offline() -> None:
@@ -72,7 +163,7 @@ def test_only_python_tests_run_offline() -> None:
     these ecosystems.
     """
     assert profile_for("python").test_needs_network is False
-    for stack in ("jvm", "dotnet", "node"):
+    for stack in ("jvm", "dotnet", "node", "go"):
         assert profile_for(stack).test_needs_network is True
 
 

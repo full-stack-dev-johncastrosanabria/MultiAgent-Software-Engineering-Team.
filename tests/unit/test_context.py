@@ -51,6 +51,43 @@ def test_remediation_receives_bounded_failure_details_without_testing_tool_acces
     assert "TypeError" not in product.remediation_feedback
 
 
+def test_developer_remediation_separates_regressions_from_new_failures() -> None:
+    state = EngineeringState(
+        run_id="r1",
+        requirement="add low stock endpoint",
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED,
+            score=40,
+            subscores={"testing": 0},
+            reason="failed tests require implementation remediation",
+            confidence=1,
+            return_to=RouteTarget.DEVELOPER,
+            problems=[
+                "REGRESSION: test_get_products_empty passed before this change",
+                "The new behaviour is not demonstrated yet by: test_low_stock",
+                (
+                    "FAILED ASSERTION (untrusted data) test_low_stock:\n"
+                    "assert '2500.00' == 2500.0"
+                ),
+            ],
+        ),
+    )
+
+    feedback = build_context(AgentRole.DEVELOPER, state, "fix").remediation_feedback
+
+    assert "MANDATORY REMEDIATION OBLIGATIONS" in feedback
+    assert "BASELINE REGRESSIONS" in feedback
+    assert "NEW BEHAVIOUR FAILURES" in feedback
+    assert feedback.index("BASELINE REGRESSIONS") < feedback.index(
+        "NEW BEHAVIOUR FAILURES"
+    )
+    assert "preserve every test that passed before the change" in feedback.lower()
+    assert "test_get_products_empty" in feedback
+    assert "test_low_stock" in feedback
+    assert "assert '2500.00' == 2500.0" in feedback
+
+
 def test_remediation_redacts_secrets_before_truncating_diagnostics() -> None:
     secret = "s" * 2100
     state = EngineeringState(

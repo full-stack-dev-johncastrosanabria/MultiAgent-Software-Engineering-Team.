@@ -6,10 +6,21 @@ import httpx
 import pytest
 
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import AgentRole
-from engineering_team.contracts.models import ProductSpecification
+from engineering_team.contracts.enums import (
+    ActionMode,
+    AgentRole,
+    RemediationCategory,
+    ReviewerStatus,
+    RouteTarget,
+)
+from engineering_team.contracts.models import (
+    ImplementationResult,
+    ProductSpecification,
+    ReviewerDecision,
+)
+from engineering_team.contracts.state import EngineeringState
 from engineering_team.llm.cloud import CloudModelRuntime
-from engineering_team.models.context import ContextEnvelope
+from engineering_team.models.context import ContextEnvelope, build_context
 
 
 def cloud_envelope() -> ContextEnvelope:
@@ -113,6 +124,61 @@ def test_governed_contradiction_reports_field_names_without_provider_values() ->
             runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
     assert runtime.attempts[-1].error_category == "governed_contradiction"
     assert "private-provider-value" not in runtime.attempts[-1].error
+
+
+def test_governed_cloud_model_rejects_unchanged_developer_remediation() -> None:
+    prior = ImplementationResult(
+        action_mode=ActionMode.APPLIED,
+        changed_files=["app.py"],
+        diff="pending",
+        evidence=["read:app.py"],
+        validation_result="pytest failed",
+        security_surface_changed=False,
+        file_contents={"app.py": "value = 'wrong'\n"},
+    )
+    candidate = prior.model_copy(update={"file_contents": {}})
+    state = EngineeringState(
+        run_id="cloud",
+        requirement="fix app.py",
+        implementation=prior,
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED,
+            score=45,
+            subscores={"testing": 0},
+            reason="failed tests require implementation remediation",
+            problems=["FAILED ASSERTION: assert 'wrong' == 1"],
+            remediation_category=RemediationCategory.TESTING,
+            return_to=RouteTarget.DEVELOPER,
+            confidence=1,
+        ),
+    )
+    envelope = build_context(AgentRole.DEVELOPER, state, "remediate")
+    settings = Settings(
+        cloud_enabled=True,
+        local_first=False,
+        groq_api_key="fixture-key",
+        cloud_chain_developer="groq:openai/gpt-oss-120b",
+    )
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": prior.model_dump_json()}}]},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        with pytest.raises(RuntimeError, match="unchanged developer remediation"):
+            runtime.invoke_artifact(AgentRole.DEVELOPER, envelope, candidate)
+
+    assert len(calls) == 1
+    assert runtime.attempts[0].error == (
+        "LLM_QUALITY_ERROR: unchanged developer remediation"
+    )
+    assert runtime.attempts[0].error_category == "ineffective_remediation"
 
 
 @pytest.mark.parametrize("provider,model,key", [
