@@ -10,6 +10,7 @@ Archive of ASET debugger apply runs (failed + successful). Kept for future remed
 | `apply-debugger-flask-writes-v5.json` | `apply-399a301c-fe29-459d-b565-8a37f108b2a2` | HUMAN_REVIEW_REQUIRED | 3 | REJECTED | 45.0 | — |
 | `apply-debugger-flask-writes-v6.json` | `apply-569d0793-ac09-424e-894d-6d9c8455d00b` | HUMAN_REVIEW_REQUIRED | 5 | REJECTED | 45.0 | — |
 | `apply-debugger-flask-writes-v7.json` | `apply-54541042-b076-447f-9a4f-b952b77097e2` | APPROVED | 3 | APPROVED | 100.0 | https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/2 |
+| `apply-debugger-flask-writes-v8.json` | `apply-4045dc0e-bf45-4a43-867e-69b3a4469da3` | APPROVED | 3 | APPROVED | 100.0 | https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/3 |
 | `apply-debugger-flask-writes.json` | `apply-59c97440-7984-4311-a8a5-8c798e50dcd8` | HUMAN_REVIEW_REQUIRED | 4 | REJECTED | 45.0 | — |
 
 ## Lessons
@@ -20,3 +21,5 @@ Archive of ASET debugger apply runs (failed + successful). Kept for future remed
 - v5 HITL: coverage dimension security missing
 - v6 HITL: assert count 1==2 (bad seed counts)
 - v7 APPROVED + delivery PR https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/2
+
+- v8 APPROVED + delivery PR #3 (polish: empty list + thr=abc + inclusive counts)
