@@ -40,3 +40,9 @@ then proceed to the ASET experiment. No existing tests may be disabled to meet i
 Narrow backend success is useful evidence but does not justify a claim of full-stack
 readiness. Any manual prerequisite change is identified separately from ASET-authored
 output. Fresh clones protect unrelated local work and pin the source of each result.
+
+The first Ingresos experiment exposed a false rejection of already redacted YAML:
+the outbound guard treated `password=[REDACTED]` as a credential. The guard now
+recognizes only a complete canonical redaction marker, including inside decoded
+JSON source strings. Actual values, marker suffixes and remaining assignments are
+still rejected. Disabling the guard would have hidden the evidence boundary defect.

@@ -128,13 +128,24 @@ _QUOTED_SECRET_VALUE = re.compile(
 _UNQUOTED_SECRET_VALUE = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*[^\s,]+"
 )
+_REDACTED_ASSIGNMENT = re.compile(
+    rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*"
+    r'''(?:\[REDACTED\]|"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}])'''
+)
+
+
+def _mask_non_secret_syntax(text: str) -> str:
+    # Repository evidence is redacted before prompt construction. Only a complete
+    # canonical marker has no credential value; a prefix/suffix remains visible.
+    # Do this on decoded JSON source too, where newlines are actual boundaries.
+    return _REDACTED_ASSIGNMENT.sub(r"\1 [REDACTED]", _without_plain_string_annotations(text))
 
 
 def _scan_text(text: str) -> str:
-    text = _without_plain_string_annotations(text)
+    text = _mask_non_secret_syntax(text)
     text = re.sub(
         r"(```python\n)(.*?)(\n```)",
-        lambda match: match[1] + _without_plain_string_annotations(match[2]) + match[3],
+        lambda match: match[1] + _mask_non_secret_syntax(match[2]) + match[3],
         text, flags=re.DOTALL,
     )
     # Prompt envelopes contain JSON-encoded source strings. Decode only complete
@@ -144,7 +155,7 @@ def _scan_text(text: str) -> str:
             decoded = json.loads(match.group())
         except ValueError:
             return match.group()
-        return json.dumps(_without_plain_string_annotations(decoded), ensure_ascii=False)
+        return json.dumps(_mask_non_secret_syntax(decoded), ensure_ascii=False)
     return re.sub(r'"(?:\\.|[^"\\])*"', mask, text)
 
 

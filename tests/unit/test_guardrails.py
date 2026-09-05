@@ -12,6 +12,35 @@ def test_secret_redactor_removes_known_secret_values() -> None:
     assert "secret-value" not in redact_secrets("token=secret-value", {"secret-value"})
 
 
+@pytest.mark.parametrize("source", [
+    "spring:\n  datasource:\n    password: database-credential\n    username: orders\n",
+    "environment:\n  POSTGRES_PASSWORD: database-credential\n  POSTGRES_DB: orders\n",
+    'password = "database credential with spaces"\n',
+    "password: '[REDACTED]'\n",
+    'password: "[REDACTED]"\n',
+])
+def test_cloud_guard_accepts_completely_redacted_repository_evidence(source):
+    redacted = redact_secrets(source)
+    assert "database-credential" not in redacted
+    assert "database credential with spaces" not in redacted
+    require_safe_cloud_context(redacted)
+    require_safe_cloud_context("Repository data: " + json.dumps({"content": redacted}))
+
+
+@pytest.mark.parametrize("source", [
+    "password=[REDACTED]suffix",
+    "password=prefix[REDACTED]",
+    'password="[REDACTED]suffix"',
+    "password=[REDACTED]\nsecret=real-value",
+    "password=[REDACTED], api_key=real-value",
+])
+def test_redaction_marker_does_not_hide_remaining_credentials(source):
+    with pytest.raises(ValueError, match="sensitive"):
+        require_safe_cloud_context(source)
+    with pytest.raises(ValueError, match="sensitive"):
+        require_safe_cloud_context("Repository data: " + json.dumps({"content": source}))
+
+
 def test_cloud_context_rejects_secondary_gemini_credential_name() -> None:
     with pytest.raises(ValueError, match="sensitive content"):
         require_safe_cloud_context({"gemini_api_key_2": "secondary-secret"})
