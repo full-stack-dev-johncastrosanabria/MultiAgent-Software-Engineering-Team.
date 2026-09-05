@@ -2,7 +2,9 @@
 
 These results distinguish actual model runs from manual infrastructure preparation.
 Run `run_trial.py` with a unique report path; its shared journal and process lock
-enforce 180 seconds from completion of the previous experiment, across repositories.
+enforce 180 seconds from completion of the previous experiment, across repositories
+in the same workspace. The journal and lock live in `<workspace>/evidence`, so
+choosing another report directory cannot bypass the interval or an active run.
 The same interval includes the saved Gemini credential probes.
 
 ## Ingresos
@@ -16,6 +18,11 @@ The same interval includes the saved Gemini credential probes.
   because the actual OWASP scan reported vulnerable existing dependencies.
   This is not an approved run. Dependency migration and full integration validation
   are prerequisites for retrying; no scan threshold or test was disabled.
+- Prerequisite commit `6c8b722`: Spring Boot 4.1.1 migration passed all 83 tests
+  (75 order, 8 payment), including nine real integration tests with no skips.
+  Both OWASP scans passed the existing CVSS 7 gate. The Kafka timestamp wire
+  format is preserved by explicit configuration and regression tests. The
+  model-authored `Order.java` and `OrderTest.java` remain outside that commit.
 
 ## Northgate
 

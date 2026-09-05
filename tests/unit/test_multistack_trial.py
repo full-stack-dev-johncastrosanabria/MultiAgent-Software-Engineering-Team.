@@ -51,12 +51,13 @@ def test_crash_preserves_failure_evidence_and_terminal_journal(trial, tmp_path, 
     with pytest.raises(ValueError):
         trial.main()
     evidence = json.loads(report.read_text())
-    journal = json.loads((tmp_path / "experiments.json").read_text())
+    journal_path = tmp_path / "evidence/experiments.json"
+    journal = json.loads(journal_path.read_text())
     assert evidence["final_status"] == "ERROR"
     assert evidence["exception_type"] == "ValueError"
     assert journal[-1]["finished_epoch"] == 2_000_000_000
     assert "must-not-appear" not in report.read_text()
-    assert "must-not-appear" not in (tmp_path / "experiments.json").read_text()
+    assert "must-not-appear" not in journal_path.read_text()
 
 
 def test_existing_report_is_never_overwritten(trial, tmp_path, monkeypatch):
@@ -68,4 +69,44 @@ def test_existing_report_is_never_overwritten(trial, tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         trial.main()
     assert json.loads(report.read_text()) == {"original": True}
-    assert not (tmp_path / "experiments.json").exists()
+    assert not (tmp_path / "evidence/experiments.json").exists()
+
+
+def test_report_directory_cannot_bypass_interval(trial, tmp_path, monkeypatch):
+    monkeypatch.setattr(trial, "Settings", lambda **_: SimpleNamespace(gemini_api_key_2=None))
+    monkeypatch.setattr(trial.time, "time", lambda: 2_000_000_000)
+    calls = []
+
+    def completed(**kwargs):
+        calls.append(kwargs["project_path"])
+        return {"final_status": "APPROVED"}
+
+    monkeypatch.setattr(trial, "run_on_project", lambda _settings, **kw: completed(**kw))
+    for index, case in enumerate(("ingresos", "northgate")):
+        monkeypatch.setattr(sys, "argv", [
+            "run_trial.py", case, "--workspace", str(tmp_path),
+            "--report", str(tmp_path / f"reports-{index}/result.json"),
+        ])
+        if index == 0:
+            trial.main()
+        else:
+            with pytest.raises(SystemExit, match="wait at least 180"):
+                trial.main()
+    assert len(calls) == 1
+    journal = json.loads((tmp_path / "evidence/experiments.json").read_text())
+    assert len(journal) == 1
+
+
+def test_report_directory_cannot_bypass_running_experiment(trial, tmp_path, monkeypatch):
+    import fcntl
+
+    state_dir = tmp_path / "evidence"
+    state_dir.mkdir()
+    monkeypatch.setattr(sys, "argv", [
+        "run_trial.py", "interview", "--workspace", str(tmp_path),
+        "--report", str(tmp_path / "other-reports/result.json"),
+    ])
+    with (state_dir / "experiments.lock").open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(BlockingIOError):
+            trial.main()

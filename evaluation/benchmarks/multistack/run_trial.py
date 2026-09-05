@@ -45,8 +45,12 @@ def main() -> None:
     if args.report.exists():
         parser.error("Choose a new report path; existing experiment evidence is preserved.")
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    state_path = args.report.parent / "experiments.json"
-    with (args.report.parent / "experiments.lock").open("a+") as lock:
+    # All repository cases in this workspace share one lock and journal,
+    # regardless of where each caller chooses to write its report.
+    state_dir = args.workspace.resolve() / "evidence"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / "experiments.json"
+    with (state_dir / "experiments.lock").open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         records = json.loads(state_path.read_text()) if state_path.exists() else []
         probes = json.loads(Path(__file__).with_name("gemini-key2-probes.json").read_text())
