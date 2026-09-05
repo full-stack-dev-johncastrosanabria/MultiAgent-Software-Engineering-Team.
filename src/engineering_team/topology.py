@@ -387,7 +387,8 @@ def environment_variables_example(dependencies: tuple[Dependency, ...]) -> str:
 
 
 def environment_overrides(
-    dependencies: tuple[Dependency, ...], stack: str
+    dependencies: tuple[Dependency, ...], stack: str, *,
+    hosts: dict[str, str] | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """Point a component at the service instead of at localhost.
 
@@ -397,7 +398,7 @@ def environment_overrides(
     overrides: list[tuple[str, str]] = []
     for dependency in dependencies:
         engine = ENGINES[dependency.engine]
-        host = engine.service
+        host = (hosts or {}).get(dependency.engine, engine.service)
         if stack == "jvm" and engine.jdbc_scheme:
             overrides.append((
                 "SPRING_DATASOURCE_URL",
@@ -408,9 +409,10 @@ def environment_overrides(
             if dependency.password:
                 overrides.append(("SPRING_DATASOURCE_PASSWORD", dependency.password))
         elif stack == "jvm" and dependency.engine == "mongo":
-            overrides.append((
-                "SPRING_DATA_MONGODB_URI",
-                f"mongodb://{host}:{engine.port}/{dependency.database}",
+            uri = f"mongodb://{host}:{engine.port}/{dependency.database}"
+            overrides.extend((
+                ("SPRING_DATA_MONGODB_URI", uri),
+                ("SPRING_MONGODB_URI", uri),
             ))
         elif stack == "dotnet" and dependency.engine == "postgres":
             connection = (

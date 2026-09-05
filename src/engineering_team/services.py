@@ -145,6 +145,7 @@ def override_document(
     services: tuple[str, ...],
     networks: tuple[str, ...] = ("default",),
     project: str = "",
+    volumes: tuple[str, ...] = (),
 ) -> str:
     """The override compose is given as its second `-f`.
 
@@ -154,13 +155,15 @@ def override_document(
     `!override []` removes it. Writing four keys of YAML needs no library --
     parsing is what finding 2 removed pyyaml for.
     """
-    for name in (*services, *networks):
+    for name in (*services, *networks, *volumes):
         if not _SERVICE_NAME.match(name):
             raise ComposeError(f"refusing to override a name like {name!r}")
     lines = ["services:"]
     for name in services:
         # `!override` and not an empty list: an empty list would be merged.
         lines += [f"  {name}:", "    ports: !override []"]
+        if project:
+            lines.append(f"    container_name: {project}-{name}")
     lines.append("networks:")
     for name in networks or ("default",):
         lines.append(f"  {name}:")
@@ -170,6 +173,10 @@ def override_document(
             # either one's teardown would remove it under the other.
             lines.append(f"    name: {project}-{name}")
         lines.append("    internal: true")
+    if volumes and project:
+        lines.append("volumes:")
+        for name in volumes:
+            lines += [f"  {name}:", f"    name: {project}-{name}"]
     lines.append("")
     return "\n".join(lines)
 
@@ -230,9 +237,12 @@ class ServiceStack:
         self._derived_file: Path | None = None
         self._override: Path | None = None
         self._running = False
+        self._model: dict = {}
         if self._compose_file is not None:
             model = read_compose_model(self._compose_file)
+            self._model = model
             self._services = classify_services(model).infrastructure
+            self._validate_isolation(model)
             self._networks = network_names(model)
         else:
             # Only when the project declares nothing. A file it wrote itself
@@ -261,6 +271,65 @@ class ServiceStack:
     def environment_for(self, stack: str) -> tuple[tuple[str, str], ...]:
         """Point a component at the services instead of at localhost."""
         return environment_overrides(self._dependencies, stack)
+
+    def environment_for_component(
+        self, stack: str, component_root: Path
+    ) -> tuple[tuple[str, str], ...]:
+        """Use the application's resolved Compose environment, matched by build context."""
+        if not self.declared:
+            return self.environment_for(stack)
+        matches = []
+        for name in classify_services(self._model).application:
+            service = self._model["services"][name]
+            build = service["build"]
+            context = build.get("context", ".") if isinstance(build, dict) else build
+            if (self.root / context).resolve() == component_root.resolve():
+                matches.append(service.get("environment") or {})
+        if len(matches) > 1:
+            raise ComposeError(
+                f"multiple Compose applications match component {component_root.name}"
+            )
+        if not matches:
+            dependencies = extract_dependencies(configuration_sources(component_root))
+            hosts: dict[str, str] = {}
+            for dependency in dependencies:
+                candidates = []
+                for name in self._services:
+                    image = self._model["services"][name].get("image", "")
+                    engine = image.rsplit("/", 1)[-1].split(":")[0].split("@")[0]
+                    if engine == dependency.engine:
+                        candidates.append(name)
+                if len(candidates) != 1:
+                    raise ComposeError(
+                        f"cannot unambiguously map {dependency.engine} to a Compose service"
+                    )
+                hosts[dependency.engine] = candidates[0]
+            return environment_overrides(dependencies, stack, hosts=hosts)
+        return tuple(sorted(
+            (key, str(value)) for key, value in (matches[0] if matches else {}).items()
+            if value is not None
+        ))
+
+    def _validate_isolation(self, model: dict) -> None:
+        """Refuse topology contracts that cannot be isolated by our override."""
+        if any((spec or {}).get("external") for spec in (model.get("networks") or {}).values()):
+            raise ComposeError("external Compose networks cannot be isolated per run")
+        for name in self._services:
+            service = model["services"][name]
+            if service.get("privileged") or service.get("network_mode"):
+                raise ComposeError(f"service {name} requests non-isolated container settings")
+            for volume in service.get("volumes") or []:
+                source = (
+                    str(volume.get("source", ""))
+                    if isinstance(volume, dict) and volume.get("type") == "bind"
+                    else str(volume).split(":", 1)[0]
+                )
+                if "docker.sock" in source or "containerd.sock" in source:
+                    raise ComposeError(f"service {name} requests a host runtime socket")
+        for name, spec in (model.get("volumes") or {}).items():
+            spec = spec or {}
+            if spec.get("external"):
+                raise ComposeError("external Compose volumes cannot be isolated per run")
 
     def delivery_artifacts(self) -> tuple[str, str]:
         """The compose and .env.example a developer would receive.
@@ -296,12 +365,15 @@ class ServiceStack:
 
     def up(self, deadline: float) -> None:
         """Start the project's dependencies and wait for them to report healthy."""
-        if not self._services or self._compose_file is None:
+        if self._running or not self._services or self._compose_file is None:
             return
         descriptor, name = tempfile.mkstemp(suffix="-aset-override.yml", text=True)
         with os.fdopen(descriptor, "w", encoding="utf-8") as writer:
             writer.write(
-                override_document(self._services, self._networks, self.project)
+                override_document(
+                    self._services, self._networks, self.project,
+                    tuple((self._model.get("volumes") or {}).keys()),
+                )
             )
         self._override = Path(name)
         completed = self._compose(

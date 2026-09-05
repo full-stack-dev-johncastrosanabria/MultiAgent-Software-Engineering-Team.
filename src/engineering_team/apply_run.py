@@ -15,6 +15,7 @@ import json
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +37,6 @@ from engineering_team.observability.langfuse import LangfuseTracer
 from engineering_team.rag import build_retriever
 from engineering_team.run_events import EventForwardingTrace
 from engineering_team.testing_evidence import passing_tests
-
 
 
 def quality_selection_is_explicit(settings: Settings) -> bool:
@@ -99,6 +99,9 @@ def open_project_quality(
     from engineering_team.stacks import profile_for
 
     targets = quality_targets_for(settings, project_root)
+    container_run = settings.quality_runner == "container" and runner is None
+    if container_run:
+        return _ProjectInfrastructureQuality(project_root, settings, targets, timeout_seconds)
     if len(targets) == 1 and runner is None:
         component = targets[0]
         adjusted = settings.model_copy(
@@ -153,6 +156,71 @@ def open_project_quality(
 
         return _SingleQuality()
     return CompositeQuality(backends)
+
+
+class _ProjectInfrastructureQuality:
+    """Own infrastructure once, outside the lifetime of individual components."""
+
+    transport = "direct-backend"
+
+    def __init__(self, root, settings, targets, timeout_seconds):
+        self.root = root
+        self.settings = settings
+        self.targets = targets
+        self.timeout_seconds = timeout_seconds
+        self.services = None
+        self.backends = []
+        self.quality = None
+        self._closed = False
+
+    def __enter__(self):
+        from engineering_team.mcp.quality import CompositeQuality, QualityMCP
+        from engineering_team.services import ServiceStack, ServiceStartupError
+        from engineering_team.stacks import profile_for
+
+        try:
+            self.services = ServiceStack(self.root, str(uuid.uuid4()))
+            self.services.up(time.monotonic() + self.timeout_seconds)
+            for component in self.targets:
+                component_root = self.root / component.path
+                child_settings = self.settings.model_copy(update={
+                    "quality_stack": component.stack,
+                    "quality_component_path": component.path,
+                })
+                backend = QualityMCP(
+                    component_root,
+                    timeout_seconds=self.timeout_seconds,
+                    settings=child_settings,
+                    profile=profile_for(component.stack),
+                    component=component.path or ("." if len(self.targets) > 1 else ""),
+                    services=self.services,
+                )
+                self.backends.append(backend)
+                backend._services_started = True
+                backend._runner.network = self.services.network
+                backend.service_environment = self.services.environment_for_component(
+                    component.stack, component_root
+                )
+            self.quality = (
+                self.backends[0] if len(self.backends) == 1 else CompositeQuality(self.backends)
+            )
+            return self.quality
+        except Exception as exc:
+            self.close()
+            raise ServiceStartupError(f"INFRASTRUCTURE_ERROR: {exc}") from exc
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        with ExitStack() as cleanup:
+            if self.services is not None:
+                cleanup.callback(self.services.down)
+            for backend in self.backends:
+                cleanup.callback(backend.close)
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
 
 
 def execute_on_project(

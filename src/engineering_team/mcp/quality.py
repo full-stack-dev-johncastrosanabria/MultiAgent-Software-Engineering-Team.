@@ -125,6 +125,7 @@ class QualityMCP:
         self.component = component
         # The dependencies this project declares. They live for the run, so they
         # are started once, before the first phase that could need them.
+        self.service_environment: tuple[tuple[str, str], ...] = ()
         self.services = services
         self._services_started = False
         self.timeout_seconds = float(timeout_seconds)
@@ -175,7 +176,7 @@ class QualityMCP:
                 deadline=deadline,
                 allow_network=allow_network,
                 allow_subprocesses=allow_subprocesses,
-                env=env,
+                env=tuple({**dict(env), **dict(self.service_environment)}.items()),
             )
         )
 
