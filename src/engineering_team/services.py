@@ -286,10 +286,21 @@ class ServiceStack:
             context = build.get("context", ".") if isinstance(build, dict) else build
             if (self.root / context).resolve() == component_root.resolve():
                 matches.append(service.get("environment") or {})
-        if len(matches) > 1:
-            raise ComposeError(
-                f"multiple Compose applications match component {component_root.name}"
-            )
+        merged: dict[str, str] = {}
+        for environment in matches:
+            for key, value in environment.items():
+                if value is None:
+                    continue
+                value = str(value)
+                if key in merged and merged[key] != value:
+                    # Several modules can share one Docker build context. Their
+                    # disjoint settings are usable by the reactor together, but
+                    # selecting either value of a conflict would be guessing.
+                    raise ComposeError(
+                        f"conflicting Compose environment key {key} for "
+                        f"component {component_root.name}"
+                    )
+                merged[key] = value
         if not matches:
             dependencies = extract_dependencies(configuration_sources(component_root))
             hosts: dict[str, str] = {}
@@ -306,10 +317,7 @@ class ServiceStack:
                     )
                 hosts[dependency.engine] = candidates[0]
             return environment_overrides(dependencies, stack, hosts=hosts)
-        return tuple(sorted(
-            (key, str(value)) for key, value in (matches[0] if matches else {}).items()
-            if value is not None
-        ))
+        return tuple(sorted(merged.items()))
 
     def _validate_isolation(self, model: dict) -> None:
         """Refuse topology contracts that cannot be isolated by our override."""

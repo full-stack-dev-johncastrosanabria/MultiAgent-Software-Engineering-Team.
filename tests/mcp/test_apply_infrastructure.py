@@ -190,10 +190,32 @@ def test_declared_database_mapping_uses_image_and_supports_both_spring_versions(
 def test_ambiguous_build_context_fails_instead_of_selecting_arbitrary_env(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
     monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
-        "services": {"one": {"build": "."}, "two": {"build": "."}}
+        "services": {
+            "one": {"build": ".", "environment": {"DB_HOST": "database-one"}},
+            "two": {"build": ".", "environment": {"DB_HOST": "database-two"}},
+        }
     })
-    with pytest.raises(ComposeError, match="multiple Compose applications"):
+    with pytest.raises(ComposeError, match="conflicting Compose environment key DB_HOST"):
         ServiceStack(tmp_path, "test").environment_for_component("jvm", tmp_path)
+
+
+def test_shared_maven_context_merges_compatible_service_environment(tmp_path, monkeypatch):
+    (tmp_path / "compose.yaml").write_text("services: {}")
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+        "services": {
+            "postgres": {"image": "postgres"},
+            "mongo": {"image": "mongo"},
+            "toll": {"build": {"context": "./backend", "args": {"SERVICE": "toll"}},
+                     "environment": {"DB_HOST": "postgres", "JWT_SECRET": "same-value"}},
+            "audit": {"build": {"context": "./backend", "args": {"SERVICE": "audit"}},
+                      "environment": {"MONGO_HOST": "mongo", "JWT_SECRET": "same-value",
+                                      "OPTIONAL": None}},
+        }
+    })
+    stack = ServiceStack(tmp_path, "test")
+    assert dict(stack.environment_for_component("jvm", tmp_path / "backend")) == {
+        "DB_HOST": "postgres", "MONGO_HOST": "mongo", "JWT_SECRET": "same-value",
+    }
 
 
 def test_prueba_services_get_isolated_names_without_rejecting_multiple_networks(

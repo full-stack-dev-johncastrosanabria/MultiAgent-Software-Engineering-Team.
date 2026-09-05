@@ -46,3 +46,8 @@ the outbound guard treated `password=[REDACTED]` as a credential. The guard now
 recognizes only a complete canonical redaction marker, including inside decoded
 JSON source strings. Actual values, marker suffixes and remaining assignments are
 still rejected. Disabling the guard would have hidden the evidence boundary defect.
+
+Northgate's two Maven services share one build context. Compatible environment
+maps must be combined for that reactor; duplicate keys with conflicting values
+remain an infrastructure error. Docker Compose's resolved model selects active
+profiles, so ASET does not activate the optional test jobs itself.
