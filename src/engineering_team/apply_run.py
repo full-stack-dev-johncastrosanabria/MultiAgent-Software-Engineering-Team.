@@ -210,8 +210,10 @@ class _ProjectInfrastructureQuality:
                 self.backends[0] if len(self.backends) == 1 else CompositeQuality(self.backends)
             )
             return self.quality
-        except Exception as exc:
+        except BaseException as exc:
             self.close()
+            if not isinstance(exc, Exception):
+                raise
             raise ServiceStartupError(f"INFRASTRUCTURE_ERROR: {exc}") from exc
 
     def close(self):

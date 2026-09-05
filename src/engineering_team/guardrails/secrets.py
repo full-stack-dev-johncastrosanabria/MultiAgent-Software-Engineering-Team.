@@ -119,7 +119,7 @@ def _without_documented_parameters(text: str) -> str:
 
 _ENV_FILE = re.compile(r"\.env\b", re.IGNORECASE)
 _SECRET_KEY_PATTERN = (
-    r"api[_-]?key|access[_-]?token|token|password|secret(?:[_-]?key)?"
+    r"api[_-]?key(?:[_-]?\d+)?|access[_-]?token|token|password|secret(?:[_-]?key)?"
 )
 _QUOTED_SECRET_VALUE = re.compile(
     rf"(?i)(?P<prefix>['\"]?(?:{_SECRET_KEY_PATTERN})['\"]?\s*[=:]\s*)"
@@ -128,9 +128,14 @@ _QUOTED_SECRET_VALUE = re.compile(
 _UNQUOTED_SECRET_VALUE = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*[^\s,]+"
 )
+_UNQUOTED_LINE_SECRET_VALUE = re.compile(
+    rf"(?im)^([ \t]*[A-Za-z0-9_.-]*(?:{_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*)"
+    r'''[^\s"'][^\r\n]*'''
+)
 _REDACTED_ASSIGNMENT = re.compile(
-    rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*"
-    r'''(?:\[REDACTED\]|"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}])'''
+    rf"(?i)({_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*"
+    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n]))'''
+    r'''|(?:"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}]))'''
 )
 
 
@@ -168,6 +173,10 @@ def redact_secrets(value: str, known_values: Iterable[str] = ()) -> str:
         quote = '"' if match.group("double") else "'"
         return match.group("prefix") + quote + "[REDACTED]" + quote
 
+    # Properties and YAML plain scalars may contain spaces and punctuation.
+    # Redact the complete line value before the generic inline-assignment pass;
+    # otherwise a canonical marker could conceal a partially retained password.
+    redacted = _UNQUOTED_LINE_SECRET_VALUE.sub(r"\1[REDACTED]", redacted)
     redacted = _QUOTED_SECRET_VALUE.sub(redact_quoted, redacted)
     return _UNQUOTED_SECRET_VALUE.sub(r"\1=[REDACTED]", redacted)
 
@@ -215,7 +224,8 @@ def require_safe_cloud_context(value: Any) -> None:
     # and `is_credential_path` excludes .env by name on top of that. Refusing the
     # mention as well bought nothing and cost every project that has one.
     if re.search(
-        r"(?i)(api[_-]?key|access[_-]?token|password|secret)\s*[=:]\s*[^\s,]+",
+        r"(?i)(api[_-]?key(?:[_-]?\d+)?|access[_-]?token|password|secret)"
+        r"\s*[=:]\s*[^\s,]+",
         _scan_text(text),
     ):
         raise ValueError("sensitive content is not allowed in cloud context")

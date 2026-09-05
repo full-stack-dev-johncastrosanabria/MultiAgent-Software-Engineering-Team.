@@ -328,17 +328,31 @@ class ServiceStack:
             if service.get("privileged") or service.get("network_mode"):
                 raise ComposeError(f"service {name} requests non-isolated container settings")
             for volume in service.get("volumes") or []:
-                source = (
-                    str(volume.get("source", ""))
-                    if isinstance(volume, dict) and volume.get("type") == "bind"
-                    else str(volume).split(":", 1)[0]
-                )
+                if isinstance(volume, dict):
+                    source = str(volume.get("source", ""))
+                    is_bind = volume.get("type") == "bind"
+                else:
+                    source = str(volume).split(":", 1)[0]
+                    is_bind = source.startswith(("/", ".", "~"))
                 if "docker.sock" in source or "containerd.sock" in source:
                     raise ComposeError(f"service {name} requests a host runtime socket")
+                if is_bind:
+                    try:
+                        resolved = (self.root / Path(source).expanduser()).resolve()
+                        resolved.relative_to(self.root)
+                    except (OSError, RuntimeError, ValueError) as exc:
+                        raise ComposeError(
+                            f"service {name} requests a bind outside the project checkout"
+                        ) from exc
         for name, spec in (model.get("volumes") or {}).items():
             spec = spec or {}
             if spec.get("external"):
                 raise ComposeError("external Compose volumes cannot be isolated per run")
+            if spec.get("driver_opts"):
+                # Renaming a volume does not isolate the host path or remote
+                # device selected by its driver. Only Docker-managed storage is
+                # safe to create and remove under this per-run contract.
+                raise ComposeError(f"volume {name} requests non-isolated driver options")
 
     def delivery_artifacts(self) -> tuple[str, str]:
         """The compose and .env.example a developer would receive.

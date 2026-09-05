@@ -24,7 +24,7 @@ from pathlib import Path
 # ROOT_PASSWORD -- and `\bpassword` matches none of them, because `_` and `P`
 # are both word characters. Over-matching is the safe direction here.
 _CREDENTIAL = re.compile(
-    r"(?i)[A-Za-z0-9_.-]*(api[_-]?key|token|password|secret|pwd)"
+    r"(?i)[A-Za-z0-9_.-]*(api[_-]?key(?:[_-]?\d+)?|token|password|secret|pwd)"
     r"\s*[=:]\s*(?P<value>[^\s,;]*)"
 )
 # Values these artefacts are supposed to carry. A .env.example whose password
@@ -332,9 +332,9 @@ class GitHubPullRequests:
         return (
             f"{proposal.body}\n\n"
             "---\n\n"
-            f"Opened by ASET from run `{proposal.run_id}`. Every file in this "
-            "branch was generated; nothing in the project was edited by hand. "
-            "The branch lives under `aset/` and can be deleted without trace.\n"
+            f"Opened by ASET from run `{proposal.run_id}`. "
+            "The branch may include prerequisite commits already present in the checkout. "
+            "Review the complete diff and the validation described above before merging.\n"
         )
 
 

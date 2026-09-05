@@ -134,6 +134,29 @@ def test_failed_start_cleans_and_reports_infrastructure(tmp_path, monkeypatch, i
     assert not runners
 
 
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_interrupted_start_cleans_and_preserves_interruption(
+    tmp_path, monkeypatch, infrastructure, interruption
+):
+    events, _, runners = infrastructure
+    failure = interruption("cancelled startup")
+
+    def interrupt(self, deadline):
+        events.append("up")
+        raise failure
+
+    monkeypatch.setattr("engineering_team.services.ServiceStack.up", interrupt)
+    handle = apply_run.open_project_quality(
+        tmp_path, Settings(quality_runner="container"), timeout_seconds=30
+    )
+    with pytest.raises(interruption) as caught, handle:
+        pytest.fail("baseline must not run")
+    assert caught.value is failure
+    handle.close()
+    assert events == ["up", "down"]
+    assert not runners
+
+
 def test_declared_compose_environment_matches_build_context(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
     monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
@@ -161,6 +184,53 @@ def test_declared_unsafe_infrastructure_is_refused(tmp_path, monkeypatch, servic
         "services": {"db": {"image": "postgres", **service}}
     })
     with pytest.raises(ComposeError):
+        ServiceStack(tmp_path, "test")
+
+
+@pytest.mark.parametrize("source_kind", ["absolute", "relative", "symlink"])
+@pytest.mark.parametrize("read_only", [False, True])
+def test_bind_outside_checkout_is_refused(tmp_path, monkeypatch, source_kind, read_only):
+    root = tmp_path / "checkout"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "compose.yaml").write_text("services: {}")
+    (root / "link").symlink_to(outside, target_is_directory=True)
+    source = {"absolute": str(outside), "relative": "../outside", "symlink": "./link"}[
+        source_kind
+    ]
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+        "services": {"db": {"image": "postgres", "volumes": [{
+            "type": "bind", "source": source, "target": "/data", "read_only": read_only,
+        }]}}
+    })
+    with pytest.raises(ComposeError, match="bind outside the project checkout"):
+        ServiceStack(root, "test")
+
+
+def test_bind_inside_checkout_is_available_for_database_initialization(tmp_path, monkeypatch):
+    (tmp_path / "compose.yaml").write_text("services: {}")
+    (tmp_path / "init.sql").write_text("CREATE DATABASE orders;")
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+        "services": {"db": {"image": "postgres", "volumes": [{
+            "type": "bind", "source": str(tmp_path / "init.sql"),
+            "target": "/docker-entrypoint-initdb.d/init.sql", "read_only": True,
+        }]}}
+    })
+    assert ServiceStack(tmp_path, "test").services == ("db",)
+
+
+def test_volume_driver_cannot_escape_checkout_by_renaming_a_bind(tmp_path, monkeypatch):
+    (tmp_path / "compose.yaml").write_text("services: {}")
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+        "services": {"db": {"image": "postgres", "volumes": [{
+            "type": "volume", "source": "database", "target": "/data",
+        }]}},
+        "volumes": {"database": {
+            "driver": "local", "driver_opts": {"type": "none", "o": "bind", "device": "/tmp"},
+        }},
+    })
+    with pytest.raises(ComposeError, match="non-isolated driver options"):
         ServiceStack(tmp_path, "test")
 
 

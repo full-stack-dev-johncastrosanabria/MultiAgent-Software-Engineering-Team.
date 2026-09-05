@@ -33,6 +33,8 @@ def test_cloud_guard_accepts_completely_redacted_repository_evidence(source):
     'password="[REDACTED]suffix"',
     "password=[REDACTED]\nsecret=real-value",
     "password=[REDACTED], api_key=real-value",
+    "password=[REDACTED] credential with spaces",
+    "password=[REDACTED] \tcredential with spaces",
 ])
 def test_redaction_marker_does_not_hide_remaining_credentials(source):
     with pytest.raises(ValueError, match="sensitive"):
@@ -41,9 +43,50 @@ def test_redaction_marker_does_not_hide_remaining_credentials(source):
         require_safe_cloud_context("Repository data: " + json.dumps({"content": source}))
 
 
+@pytest.mark.parametrize("source", [
+    "password=multiword credential with spaces\nusername=orders\n",
+    "spring:\n  datasource:\n    password: multiword credential with spaces\n    username: orders\n",
+    "  POSTGRES_PASSWORD: multiword credential, with; punctuation\n  POSTGRES_USER: orders\n",
+])
+def test_redactor_removes_complete_unquoted_line_values(source):
+    redacted = redact_secrets(source)
+    for fragment in ("multiword", "credential", "spaces", "punctuation"):
+        assert fragment not in redacted
+    assert "orders" in redacted
+    require_safe_cloud_context(redacted)
+    require_safe_cloud_context("Repository data: " + json.dumps({"content": redacted}))
+
+
 def test_cloud_context_rejects_secondary_gemini_credential_name() -> None:
     with pytest.raises(ValueError, match="sensitive content"):
         require_safe_cloud_context({"gemini_api_key_2": "secondary-secret"})
+
+
+@pytest.mark.parametrize("assignment", [
+    "GEMINI_API_KEY_2=fake-secondary-credential",
+    "gemini_api_key_2: 'fake-secondary-credential'",
+    'GEMINI_API_KEY_2="fake-secondary-credential"',
+])
+def test_secondary_credential_assignment_is_redacted_and_blocked(assignment):
+    with pytest.raises(ValueError, match="sensitive"):
+        require_safe_cloud_context(assignment)
+    with pytest.raises(ValueError, match="sensitive"):
+        require_safe_cloud_context("Context: " + json.dumps({"content": assignment}))
+    redacted = redact_secrets(assignment)
+    assert "fake-secondary-credential" not in redacted
+    require_safe_cloud_context(redacted)
+
+
+def test_delivery_refuses_secondary_credential_assignment():
+    from engineering_team.delivery import DeliveryRefused, GitDelivery, Proposal
+
+    proposal = Proposal(
+        run_id="secondary-key-test", branch="aset/secondary-key-test",
+        title="Test proposal", body="GEMINI_API_KEY_2=fake-secondary-credential",
+        files={},
+    )
+    with pytest.raises(DeliveryRefused, match="secret"):
+        GitDelivery._check_no_secret(proposal)
 
 
 def test_cloud_context_rejects_env_content() -> None:
