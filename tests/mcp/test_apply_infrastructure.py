@@ -26,6 +26,7 @@ def infrastructure(tmp_path, monkeypatch):
     class Stack:
         services = ("db",)
         network = "aset-test-default"
+        networks = ("aset-test-default", "aset-test-admin")
 
         def __init__(self, root, run_id):
             assert root == tmp_path
@@ -44,6 +45,7 @@ def infrastructure(tmp_path, monkeypatch):
         environment = None
         closing = False
         network = None
+        networks = ()
 
         def __init__(self, root):
             self.root = root
@@ -51,6 +53,7 @@ def infrastructure(tmp_path, monkeypatch):
 
         def execute(self, request):
             assert self.network == Stack.network
+            assert self.networks == Stack.networks
             assert dict(request.env)["DB_HOST"] == "db"
             assert dict(request.env)["COMPONENT"] == self.root.name
             assert events[0] == "up"

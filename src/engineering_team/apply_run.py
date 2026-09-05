@@ -198,6 +198,11 @@ class _ProjectInfrastructureQuality:
                 self.backends.append(backend)
                 backend._services_started = True
                 backend._runner.network = self.services.network
+                backend._runner.networks = getattr(
+                    self.services,
+                    "networks",
+                    (self.services.network,) if self.services.network else (),
+                )
                 backend.service_environment = self.services.environment_for_component(
                     component.stack, component_root
                 )

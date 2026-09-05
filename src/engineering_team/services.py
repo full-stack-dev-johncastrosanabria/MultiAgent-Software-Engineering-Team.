@@ -233,6 +233,7 @@ class ServiceStack:
         self._services: tuple[str, ...] = ()
         self._networks: tuple[str, ...] = ("default",)
         self._network: str | None = None
+        self._discovered_networks: tuple[str, ...] = ()
         self._dependencies: tuple[Dependency, ...] = ()
         self._derived_file: Path | None = None
         self._override: Path | None = None
@@ -363,6 +364,11 @@ class ServiceStack:
         """
         return self._network
 
+    @property
+    def networks(self) -> tuple[str, ...]:
+        """Every isolated network used by the running infrastructure."""
+        return self._discovered_networks
+
     def up(self, deadline: float) -> None:
         """Start the project's dependencies and wait for them to report healthy."""
         if self._running or not self._services or self._compose_file is None:
@@ -386,7 +392,8 @@ class ServiceStack:
                 f"services did not become ready: {detail or 'no output'}"
             )
         self._running = True
-        self._network = self._discover_network()
+        self._discovered_networks = self._discover_networks()
+        self._network = self._discovered_networks[0] if self._discovered_networks else None
         if self._network is None:
             raise ServiceStartupError("services started on no discoverable network")
 
@@ -395,18 +402,21 @@ class ServiceStack:
         if self._compose_file is not None:
             self._compose(["down", "-v", "--remove-orphans"], timeout=180)
         self._running = False
+        self._network = None
+        self._discovered_networks = ()
         if self._override is not None:
             self._override.unlink(missing_ok=True)
             self._override = None
         if self._derived_file is not None:
             self._derived_file.unlink(missing_ok=True)
 
-    def _discover_network(self) -> str | None:
-        """Ask a running service which network it is on."""
+    def _discover_networks(self) -> tuple[str, ...]:
+        """Ask every running service which isolated networks it joined."""
         listed = self._compose(["ps", "-q", *self._services], timeout=60)
         if listed is None or listed.returncode != 0:
-            return None
+            return ()
         identifiers = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+        networks: set[str] = set()
         for identifier in identifiers:
             inspected = subprocess.run(
                 [self.runtime, "inspect", "-f",
@@ -416,8 +426,8 @@ class ServiceStack:
             )
             for name in inspected.stdout.split():
                 if name:
-                    return name
-        return None
+                    networks.add(name)
+        return tuple(sorted(networks))
 
     def _compose(
         self, arguments: list[str], *, timeout: float

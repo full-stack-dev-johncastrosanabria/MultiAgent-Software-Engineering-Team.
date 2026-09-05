@@ -65,6 +65,7 @@ class ContainerRunner:
         limits: ContainerLimits | None = None,
         allow_unpinned_image: bool = False,
         network: str | None = None,
+        networks: tuple[str, ...] = (),
     ) -> None:
         if not allow_unpinned_image and not _DIGEST_PINNED.match(image):
             raise ValueError(
@@ -83,7 +84,8 @@ class ContainerRunner:
         # The run's service network, when the project declares dependencies. It
         # is internal, so a command that also needs the registry is attached to
         # the default bridge as well -- see _run_container.
-        self.network = network
+        self.networks = tuple(dict.fromkeys(networks or ((network,) if network else ())))
+        self.network = network or (self.networks[0] if self.networks else None)
         self._token = uuid.uuid4().hex[:12]
         self._volume = f"aset-env-{self._token}"
         self._sequence = 0
@@ -168,6 +170,9 @@ class ContainerRunner:
         try:
             return self._run_container(name, args, request)
         finally:
+            # A failed network attachment leaves a created, never-started container;
+            # --rm only handles a container that actually ran.
+            self._quiet([self.runtime, "rm", "--force", name], timeout=_KILL_GRACE_SECONDS)
             with self._lock:
                 self._live_containers.discard(name)
 
@@ -247,9 +252,13 @@ class ContainerRunner:
             return self.network
         return "bridge" if request.allow_network else "none"
 
-    def _needs_extra_route(self, request: CommandRequest) -> bool:
-        """Whether a second, external network has to be attached after creation."""
-        return bool(self.network) and request.allow_network
+    def _additional_networks(self, request: CommandRequest) -> tuple[str, ...]:
+        """Networks attached after create, excluding the primary network."""
+        primary = self._primary_network(request)
+        additional = [network for network in self.networks if network != primary]
+        if self.network and request.allow_network and "bridge" != primary:
+            additional.append("bridge")
+        return tuple(dict.fromkeys(additional))
 
     def _container_path(self, path: Path) -> PurePosixPath:
         """Translate a host path under the workspace to its path in the container."""
@@ -327,10 +336,18 @@ class ContainerRunner:
         if created is None or created.returncode != 0:
             detail = "" if created is None else created.stderr.strip()[-400:]
             raise RuntimeError(f"container was not created: {detail}")
-        if self._needs_extra_route(request):
-            # The service network is internal by construction, so a command that
-            # also resolves dependencies needs a second attachment.
-            self._quiet([self.runtime, "network", "connect", "bridge", name], timeout=60)
+        for network in self._additional_networks(request):
+            # Service networks are internal. Commands that resolve external
+            # dependencies additionally receive the registry bridge.
+            connected = self._quiet(
+                [self.runtime, "network", "connect", network, name],
+                timeout=min(60, _remaining(request.deadline)),
+            )
+            if connected is None or connected.returncode != 0:
+                detail = "" if connected is None else connected.stderr.strip()[-400:]
+                raise RuntimeError(
+                    f"container could not join network {network}: {detail or 'no output'}"
+                )
         process = subprocess.Popen(
             [self.runtime, "start", "--attach", name],
             stdout=subprocess.PIPE,
@@ -352,7 +369,7 @@ class ContainerRunner:
             reader.start()
         timed_out = False
         try:
-            process.wait(timeout=timeout)
+            process.wait(timeout=_remaining(request.deadline))
         except subprocess.TimeoutExpired:
             timed_out = True
             # Killing the container kills everything it contains. There is no

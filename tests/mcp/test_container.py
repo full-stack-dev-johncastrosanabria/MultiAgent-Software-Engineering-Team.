@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import time
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -62,10 +63,67 @@ def test_offline_by_default_and_networked_only_when_asked(tmp_path: Path) -> Non
     assert installing[installing.index("--network") + 1] == "bridge"
 
 
+def test_container_connects_all_service_networks_before_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runner = _runner(
+        tmp_path,
+        network="aset-orders",
+        networks=("aset-orders", "aset-admin"),
+    )
+    calls: list[list[str]] = []
+
+    def fake_quiet(args, *, timeout):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    class Process:
+        stdout = BytesIO()
+        stderr = BytesIO()
+        returncode = 0
+
+        def __init__(self, args, **kwargs):
+            calls.append(list(args))
+
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(runner, "_quiet", fake_quiet)
+    monkeypatch.setattr(subprocess, "Popen", Process)
+    request = _request(tmp_path, "true", allow_network=True)
+    runner._run_container("probe", runner._container_command("probe", request), request)
+
+    assert calls[0][1] == "create"
+    assert calls[0][calls[0].index("--network") + 1] == "aset-orders"
+    assert calls[1] == ["docker", "network", "connect", "aset-admin", "probe"]
+    assert calls[2] == ["docker", "network", "connect", "bridge", "probe"]
+    assert calls[3] == ["docker", "start", "--attach", "probe"]
+
+
 def test_privileges_are_dropped_and_cannot_be_regained(tmp_path: Path) -> None:
     command = _runner(tmp_path)._container_command("c1", _request(tmp_path, "true"))
     assert command[command.index("--cap-drop") + 1] == "ALL"
     assert command[command.index("--security-opt") + 1] == "no-new-privileges"
+
+
+def test_failed_network_attachment_removes_the_created_container(tmp_path, monkeypatch):
+    runner = _runner(tmp_path, networks=("aset-orders", "aset-admin"))
+    calls = []
+    monkeypatch.setattr(runner, "_ensure_volume", lambda: None)
+
+    def fake_quiet(args, *, timeout):
+        calls.append(list(args))
+        failed = args[1:3] == ["network", "connect"]
+        return subprocess.CompletedProcess(args, 1 if failed else 0, "", "network gone")
+
+    monkeypatch.setattr(runner, "_quiet", fake_quiet)
+    with pytest.raises(RuntimeError, match="could not join network aset-admin"):
+        runner.execute(_request(tmp_path, "true"))
+
+    assert calls[0][calls[0].index("--network") + 1] == "aset-orders"
+    name = calls[0][calls[0].index("--name") + 1]
+    assert calls[-1] == ["docker", "rm", "--force", name]
+    assert not runner._live_containers
 
 
 def test_only_the_workspace_and_the_environment_are_mounted(tmp_path: Path) -> None:
