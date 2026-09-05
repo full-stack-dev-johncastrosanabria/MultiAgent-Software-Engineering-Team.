@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     cloud_role_timeout_seconds: float = Field(default=120, gt=0)
     ollama_timeout_seconds: float = Field(default=600, gt=0)
     gemini_api_key: str | None = None
+    gemini_api_key_2: str | None = None
     groq_api_key: str | None = None
     mistral_api_key: str | None = None
     open_router_api_key: str | None = None

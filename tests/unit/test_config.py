@@ -78,3 +78,11 @@ def test_langfuse_base_url_precedes_legacy_host(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.langfuse_base_url == "https://canonical.example"
+
+
+def test_secondary_gemini_credential_loads_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY_2", "secondary-fixture-key")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.gemini_api_key_2 == "secondary-fixture-key"

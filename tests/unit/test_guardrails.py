@@ -12,6 +12,11 @@ def test_secret_redactor_removes_known_secret_values() -> None:
     assert "secret-value" not in redact_secrets("token=secret-value", {"secret-value"})
 
 
+def test_cloud_context_rejects_secondary_gemini_credential_name() -> None:
+    with pytest.raises(ValueError, match="sensitive content"):
+        require_safe_cloud_context({"gemini_api_key_2": "secondary-secret"})
+
+
 def test_cloud_context_rejects_env_content() -> None:
     with pytest.raises(ValueError, match="sensitive"):
         require_safe_cloud_context({"file": ".env", "content": "KEY=value"})

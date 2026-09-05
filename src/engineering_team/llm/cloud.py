@@ -27,6 +27,14 @@ _OPENAI_COMPATIBLE = {
     "openrouter": ("https://openrouter.ai/api/v1/chat/completions", "open_router_api_key"),
 }
 
+# Both logical providers use Google's official API. Keeping the second route
+# distinct gives its credential and cooldown independent state while ensuring
+# the key can never be sent to an OpenAI-compatible destination.
+_GOOGLE_CREDENTIALS = {
+    "google": "gemini_api_key",
+    "google2": "gemini_api_key_2",
+}
+
 # Selected from observed role-level results, not catalogue size. See the model
 # evaluation in banca-demo-support. Primaries span three providers and the first
 # fallback always crosses providers. Google quotas can be model scoped: a 3.6 quota
@@ -194,8 +202,8 @@ class CloudRouter:
         return tuple(chain)
 
     def enabled_for(self, selection: ModelSelection) -> bool:
-        if selection.provider == "google":
-            key = self._settings.gemini_api_key
+        if selection.provider in _GOOGLE_CREDENTIALS:
+            key = getattr(self._settings, _GOOGLE_CREDENTIALS[selection.provider], None)
         else:
             entry = _OPENAI_COMPATIBLE.get(selection.provider)
             key = getattr(self._settings, entry[1], None) if entry else None
@@ -327,10 +335,11 @@ class CloudModelRuntime:
         client = self.client or httpx.Client(timeout=request_timeout)
         started = time.perf_counter()
         try:
-            if selection.provider == "google":
+            if selection.provider in _GOOGLE_CREDENTIALS:
+                credential = _GOOGLE_CREDENTIALS[selection.provider]
                 response = client.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{selection.model}:generateContent",
-                    headers={"x-goog-api-key": self.settings.gemini_api_key or ""},
+                    headers={"x-goog-api-key": getattr(self.settings, credential, None) or ""},
                     timeout=request_timeout,
                     json={
                         "systemInstruction": {"parts": [{"text": system_prompt}]},
