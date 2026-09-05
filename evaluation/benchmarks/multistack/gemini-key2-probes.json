@@ -1,0 +1,42 @@
+{
+  "credential_alias": "GEMINI_API_KEY_2",
+  "catalogue_http_status": 200,
+  "probe_type": "bounded structured JSON generation; ok=true, models_checked=1",
+  "minimum_interval_seconds": 180,
+  "attempts": [
+    {
+      "model": "gemini-3.5-flash",
+      "started_utc": "2026-09-05T03:17:26.057533+00:00",
+      "ended_epoch": 1788578251.825703,
+      "http_status": 503,
+      "error_status": "UNAVAILABLE",
+      "structured_output_valid": false
+    },
+    {
+      "model": "gemini-3.7-flash",
+      "started_utc": "2026-09-05T03:21:41.185963+00:00",
+      "ended_epoch": 1788578502.523853,
+      "http_status": 503,
+      "error_status": "UNAVAILABLE",
+      "structured_output_valid": false
+    },
+    {
+      "model": "gemini-3.1-flash-lite",
+      "started_utc": "2026-09-05T03:25:12.209136+00:00",
+      "ended_epoch": 1788578716.6118212,
+      "http_status": 200,
+      "structured_output_valid": true,
+      "response": {"ok": true, "models_checked": 1},
+      "usage": {"prompt_tokens": 13, "completion_tokens": 13, "total_tokens": 26}
+    },
+    {
+      "model": "gemini-2.5-flash",
+      "started_utc": "2026-09-05T03:29:17.382430+00:00",
+      "ended_epoch": 1788578958.659845,
+      "http_status": 404,
+      "error_status": "NOT_FOUND",
+      "structured_output_valid": false
+    }
+  ],
+  "interpretation": "Flash-Lite passed one simple structured probe. This does not establish role-level ASET quality. The two Flash models were temporarily unavailable, not proven invalid credentials."
+}

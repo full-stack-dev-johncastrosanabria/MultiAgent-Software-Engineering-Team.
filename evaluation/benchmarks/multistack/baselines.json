@@ -1,0 +1,53 @@
+{
+  "kind": "independent baseline, not ASET model-run success",
+  "date_utc": "2026-09-05",
+  "repositories": [
+    {
+      "repository": "InterviewCleanApi",
+      "base_ref": "main",
+      "source_sha": "c86d9705cf778c915c96e015bb1ff100c119f3b2",
+      "runner": "native .NET SDK 10.0.201, isolated Docker MySQL 8.4",
+      "commands": ["dotnet restore CleanArchitectureAPI.sln", "dotnet ef database update --project InterviewCleanApi.Infrastructure/InterviewCleanApi.Infrastructure.csproj --startup-project InterviewCleanApi.Api/InterviewCleanApi.Api.csproj", "dotnet test CleanArchitectureAPI.sln --no-restore --logger trx"],
+      "setup": "fresh test schema, throwaway credentials through ConnectionStrings__DefaultConnection, initial EF migration applied before tests",
+      "exit_code": 0,
+      "runner_reported": {"tests": 20, "passed": 20, "failures": 0, "skipped": 0},
+      "effective_non_browser_tests": 16,
+      "silent_browser_returns": 4,
+      "real_mysql_use": "test execution created 9 users and 1 product",
+      "cleanup": "owned MySQL container removed, source Git clean",
+      "limitations": ["four Selenium tests report passed after returning early because frontends are absent", "NU1903 high-severity Microsoft.OpenApi 2.4.1 advisory", "MSB3277 EF Core Relational 10.0.1 vs 10.0.5 conflict", "application not yet containerized"]
+    },
+    {
+      "repository": "NorthgateTollPlaza",
+      "base_ref": "aset/compose-mongo-postgres",
+      "source_sha": "ee11e11e1e4d2b289f4099c6369b25f30f237bc4",
+      "runner": "native Maven, Docker PostgreSQL and MongoDB",
+      "command": "cd northgate-backend && ./mvnw -B test",
+      "setup": "docker compose -p aset-baseline-northgate up -d --wait; create northgate_toll_test; set NORTHGATE_DB_USER and NORTHGATE_DB_PASSWORD to the throwaway container credentials",
+      "infrastructure_healthy": ["postgres", "mongo"],
+      "exit_code": 0,
+      "components": [
+        {"path": "northgate-backend/toll-service", "tests": 40, "failures": 0, "errors": 0, "skipped": 0},
+        {"path": "northgate-backend/audit-service", "tests": 21, "failures": 0, "errors": 0, "skipped": 0}
+      ],
+      "total_tests": 61,
+      "limitations": ["frontend not checked in this baseline", "applications not yet containerized", "existing integration test hardcodes localhost"]
+    },
+    {
+      "repository": "PruebaNuevosIngresosBackend",
+      "base_ref": "main",
+      "source_sha": "73099ab3958e253dc1c1bca4f8fa648b77104772",
+      "runner": "native Maven with JDK 21 and real Docker Testcontainers",
+      "commands": ["cd order-ms && mvn test", "cd payment-ms && mvn test"],
+      "exit_code": 0,
+      "components": [
+        {"path": "order-ms", "tests": 70, "failures": 0, "errors": 0, "skipped": 0},
+        {"path": "payment-ms", "tests": 7, "failures": 0, "errors": 0, "skipped": 0}
+      ],
+      "total_tests": 77,
+      "observed_services": ["apache/kafka:4.3.1", "postgres:17-alpine"],
+      "cleanup": "no Testcontainers containers remained",
+      "limitations": ["frontend not checked in this baseline", "full Compose application smoke not run"]
+    }
+  ]
+}

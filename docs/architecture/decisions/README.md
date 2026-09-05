@@ -15,6 +15,7 @@ rotates it out.
 | [6](0006-github-origin-pull-request-delivery.md) | GitHub is an origin, and a pull request is how work is delivered | accepted |
 | [7](0007-declared-coverage-decides-remediation.md) | A stage declares what it could not see, and the router believes the count | accepted |
 | [8](0008-security-evidence-per-stack.md) | Security evidence belongs to the component toolchain | accepted |
+| [9](0009-real-multistack-validation.md) | Validate infrastructure before expanding model tasks | accepted |
 
 A decision here outranks the same claim made anywhere untracked. When they
 disagree, this directory is right and the other file is stale.
