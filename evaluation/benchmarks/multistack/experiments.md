@@ -7,6 +7,12 @@ in the same workspace. The journal and lock live in `<workspace>/evidence`, so
 choosing another report directory cannot bypass the interval or an active run.
 The same interval includes the saved Gemini credential probes.
 
+Before retrying a feature, preserve the previous report and compare its saved
+source with the checkout. A benchmark intended to prove a new applied diff must
+start from the committed prerequisite baseline, not from the previous attempt's
+already-applied feature. Restore only confirmed benchmark-generated paths after
+preserving their exact content; never reset unrelated user changes.
+
 ## Ingresos
 
 - Attempt 1, 2026-09-05 03:54 UTC: failed in Architecture before a change was
@@ -23,6 +29,14 @@ The same interval includes the saved Gemini credential probes.
   Both OWASP scans passed the existing CVSS 7 gate. The Kafka timestamp wire
   format is preserved by explicit configuration and regression tests. The
   model-authored `Order.java` and `OrderTest.java` remain outside that commit.
+- Attempt 3, 2026-09-05 22:45 UTC, run
+  `apply-b8d22dd5-ecb7-4623-8550-f7d1569ac902`: rejected because the working tree
+  already contained the exact feature from attempt 2. The deterministic gate
+  correctly required a non-empty resulting diff. The secondary Gemini route
+  answered the Developer retry but was rejected for unchanged remediation;
+  this is not an approved fallback implementation. Before attempt 4, both feature
+  files were verified byte-for-byte against the saved report and restored to the
+  committed prerequisite baseline. Commit `79779f4` fixes the migration README.
 
 ## Northgate
 
