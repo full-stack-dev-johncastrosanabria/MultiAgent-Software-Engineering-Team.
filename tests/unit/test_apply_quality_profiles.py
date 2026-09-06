@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -179,3 +179,36 @@ def test_open_quality_fans_out_when_several_components_exist(tmp_path: Path) -> 
     assert names.count("mvn") == 2
     assert "python" not in names
     assert all("-v" not in req.args for req in recorder.requests)
+
+
+@pytest.mark.parametrize("stack", ["jvm", "dotnet"])
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_profile_attaches_fresh_report_cases_and_keeps_cached_result(tmp_path, stack, exit_code):
+    from engineering_team.mcp.quality import QualityMCP
+    from engineering_team.stacks import profile_for
+
+    class ReportingRunner(FakeRunner):
+        def execute(self, request):
+            result = super().execute(request)
+            if "test" in request.args:
+                if stack == "jvm":
+                    path = tmp_path / "target/surefire-reports/TEST-Example.xml"
+                    report = '<testsuite><testcase classname="Example" name="boundary"/></testsuite>'
+                else:
+                    assert list(request.args)[-2:] == ["--logger", "trx"]
+                    path = tmp_path / "TestResults/run/results.trx"
+                    report = ('<TestRun><Results><UnitTestResult testId="1" '
+                              'testName="boundary" outcome="Passed"/></Results></TestRun>')
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(report)
+                result.returncode = exit_code
+            return result
+
+    runner = ReportingRunner()
+    quality = QualityMCP(tmp_path, runner=runner, profile=profile_for(stack))
+    result = quality.run_tests(AgentRole.TESTING)
+    assert result.test_cases is not None
+    assert len(result.test_cases) == (1 if exit_code == 0 else 0)
+    if exit_code == 0:
+        assert "boundary" in result.test_cases[0].identifier
+    assert quality.get_test_results(AgentRole.TESTING).test_cases == result.test_cases

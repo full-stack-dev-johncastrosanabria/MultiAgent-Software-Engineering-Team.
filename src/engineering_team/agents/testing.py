@@ -118,26 +118,35 @@ class TestingAgent(AgentBase[TestResult]):
             required |= _categories_for(_normalise(sentence), business_terms)
 
         # 2. What the run actually executed, named by the evidence it produced.
-        executed = [item.evidence_reference or item.tool_name for item in run_tests]
+        executed = [item.evidence_reference or item.tool_name for item in components]
         summary = _normalise(
             " ".join(
                 item.output_summary
                 for item in components
-                if item.status is ToolStatus.SUCCESS
+                if item.status is ToolStatus.SUCCESS and item.test_cases is None
             )
         )
 
         # 3. Which required dimension each piece of evidence demonstrates.
         coverage: dict[str, list[str]] = {name: [] for name in sorted(required)}
-        for item in run_tests:
+        for item in components:
             name = item.evidence_reference or item.tool_name
-            # A failed execution proves nothing, so only its identifier is read; a
-            # successful one also speaks through what it observed.
-            spoken = f"{name} {item.output_summary}" if item.status is ToolStatus.SUCCESS else name
+            if item.status is not ToolStatus.SUCCESS:
+                continue
+            if item.test_cases is not None:
+                # Only fresh passing cases speak. Source belongs to the exact
+                # reported test, not an unexecuted neighbor or whole source file.
+                spoken = " ".join(
+                    f"{case.identifier} {case.source_excerpt}" for case in item.test_cases
+                )
+                if item.test_cases:
+                    coverage["happy_path"].append(name)
+            else:
+                spoken = f"{name} {item.output_summary}"
             for dimension in _categories_for(_normalise(spoken), business_terms) & required:
                 if name not in coverage[dimension]:
                     coverage[dimension].append(name)
-        if latest is not None and status is ToolStatus.SUCCESS:
+        if latest is not None and status is ToolStatus.SUCCESS and latest.test_cases is None:
             # A green suite is direct evidence of the happy path even when the runner
             # reports one aggregate result instead of per-test identifiers.
             reference = latest.evidence_reference or latest.tool_name

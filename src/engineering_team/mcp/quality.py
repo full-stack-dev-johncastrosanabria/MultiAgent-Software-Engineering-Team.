@@ -29,6 +29,7 @@ from engineering_team.mcp.runner import (
     CommandRunner,
     ProcessRunner,
 )
+from engineering_team.mcp.test_evidence import collect_test_cases, snapshot_reports
 from engineering_team.stacks import INTERPRETER, StackProfile, profile_for
 
 _DISTRIBUTION_NAME = "autonomous-engineering-team"
@@ -825,6 +826,7 @@ class QualityMCP:
             output_summary=previous.output_summary if previous else f"no {source} result",
             duration_ms=0,
             error=previous.error if previous else f"{source} has not executed",
+            test_cases=previous.test_cases if previous else None,
         )
 
     def run_tests(self, role: AgentRole, paths: list[str] | None = None) -> ToolResult:
@@ -852,9 +854,19 @@ class QualityMCP:
             )
             if installed.status is not ToolStatus.SUCCESS:
                 return installed
-        return self._run_profile(
-            role, "run_tests", "test", paths or [], allowed, deadline
-        )
+        report_aware = self.profile.name in {"jvm", "dotnet"}
+        before = snapshot_reports(self.root, self.profile.name) if report_aware else {}
+        extra = list(paths or [])
+        if self.profile.name == "dotnet":
+            extra.extend(["--logger", "trx"])
+        result = self._run_profile(role, "run_tests", "test", extra, allowed, deadline)
+        if report_aware:
+            result = result.model_copy(update={
+                "test_cases": collect_test_cases(self.root, self.profile.name, before)
+                if result.status is ToolStatus.SUCCESS else [],
+            })
+            self._last["run_tests"] = result
+        return result
 
     def get_test_results(self, role: AgentRole) -> ToolResult:
         return self._get_last(
@@ -1139,6 +1151,10 @@ class CompositeQuality:
             duration_ms=duration,
             evidence_reference=None,
             error="; ".join(errors) if errors else None,
+            test_cases=(
+                [case for result in results for case in result.test_cases or []]
+                if all(result.test_cases is not None for result in results) else None
+            ),
         )
 
     def run_tests(self, role: AgentRole, paths: list[str] | None = None) -> ToolResult:

@@ -148,6 +148,17 @@ class RetrievedEvidence(StrictModel):
     retrieved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class ExecutedTestCase(StrictModel):
+    """A passing case from a fresh runner report, with its matching test source.
+
+    Source is context for the named test, never a claim of statement/branch coverage.
+    """
+
+    identifier: str
+    report: str
+    source_excerpt: str = ""
+
+
 class ToolResult(StrictModel):
     tool_name: str
     allowed_role: AgentRole
@@ -157,6 +168,9 @@ class ToolResult(StrictModel):
     duration_ms: int = Field(ge=0)
     evidence_reference: str | None = None
     error: str | None = None
+    # None preserves legacy stdout evidence. [] means report-aware execution
+    # produced no passing cases; a zero exit code alone cannot fill coverage.
+    test_cases: list[ExecutedTestCase] | None = None
 
 
 class ModelExecutionInfo(StrictModel):
