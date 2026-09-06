@@ -38,5 +38,15 @@
       "structured_output_valid": false
     }
   ],
-  "interpretation": "Flash-Lite passed one simple structured probe. This does not establish role-level ASET quality. The two Flash models were temporarily unavailable, not proven invalid credentials."
+  "role_validation": {
+    "run_id": "apply-7f67441d-697a-4da2-b415-e6b6237a8462",
+    "role": "Developer",
+    "provider_alias": "google2",
+    "actual_model": "gemini-3.1-flash-lite",
+    "structured_output_success": true,
+    "preceding_primary_google_result": "gemini-3.5-flash provider_unavailable",
+    "overall_run_status": "HUMAN_REVIEW_REQUIRED",
+    "overall_rejection": "deterministic Testing did not receive executed JUnit case evidence"
+  },
+  "interpretation": "Flash-Lite passed the structured probe and later produced a valid real ASET Developer response on the secondary credential after primary Google unavailability. This establishes that observed fallback path, not universal model reliability or an approved end-to-end run. The two Flash probe failures do not demonstrate invalid credentials."
 }
