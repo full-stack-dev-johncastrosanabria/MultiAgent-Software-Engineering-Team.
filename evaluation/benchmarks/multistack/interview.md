@@ -30,6 +30,11 @@ InterviewCleanApi.Tests/ProductLowStockTests.cs (new).
 6. Authenticated integration requests with threshold N exclude Stock == N and include
    Stock < N; unauthenticated requests return 401. Use the real MySQL test environment.
 
-Use existing xUnit, Moq and FluentAssertions dependencies. Run dotnet test on the solution
-against a fresh Docker MySQL schema prepared with existing EF migrations. Record any
-existing Selenium tests that silently return separately from the endpoint evidence.
+Use existing xUnit, Moq and FluentAssertions dependencies. Reuse MySqlApiFactory for
+integration requests and unique fixture data; the factory applies the existing EF
+migrations to INTERVIEW_TEST_CONNECTION_STRING and requires a dedicated *_tests schema.
+Compose supplies that connection with an account restricted to the test schema.
+Run endpoint tests through ASET with `--filter FullyQualifiedName!~E2ETests`.
+The complete solution suite, including the four real Selenium cases, must also pass
+through `scripts/test-docker.sh` with its browser-equipped image and live frontends.
+Do not restore the former early-return behavior when a frontend is unavailable.
