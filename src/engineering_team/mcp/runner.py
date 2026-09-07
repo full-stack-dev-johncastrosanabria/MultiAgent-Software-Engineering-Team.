@@ -279,19 +279,28 @@ class ProcessRunner:
     def closing(self) -> bool:
         return self._closing.is_set()
 
-    def prepare_environment(self, deadline: float) -> str:
-        """Build one strict, ephemeral interpreter on the host and return its path.
+    def prepare_scratch(self) -> Path:
+        """Create the private directory every sandboxed command needs, and return it.
 
-        The path is a host path because this runner executes on the host. A
-        backend whose boundary is elsewhere returns a path in its own namespace;
-        the caller only ever passes it back to `execute`.
+        HOME, TMPDIR and the sandbox's writable root all live here, so a jvm or
+        node component needs one exactly as much as a Python one does. Building
+        the virtual environment used to be the only way this directory came into
+        existence, which left every non-Python profile with no environment at
+        all: the sandbox refused the command it was asked to wrap before Maven
+        or npm ever ran. Creating the directory belongs here, at the point the
+        sandbox needs it, rather than in a caller that has to know to ask --
+        every caller that forgets is a component that cannot run its tests.
         """
+        existing = self.environment
+        if existing is not None:
+            return existing
+        if self._closing.is_set():
+            raise RuntimeError("quality runner is closed")
         self._scavenge_environments()
         base = self._prepare_environment_root()
         directory = Path(tempfile.mkdtemp(prefix="env-", dir=base))
         self.environment = directory
         try:
-            base_interpreter = self._base_interpreter()
             uid = os.getuid() if hasattr(os, "getuid") else 0
             (directory / _ENVIRONMENT_MARKER).write_text(
                 json.dumps({
@@ -301,6 +310,25 @@ class ProcessRunner:
                 }, separators=(",", ":")),
                 encoding="utf-8",
             )
+        except Exception:
+            self.environment = None
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
+        return directory
+
+    def prepare_environment(self, deadline: float) -> str:
+        """Build one strict, ephemeral interpreter on the host and return its path.
+
+        The path is a host path because this runner executes on the host. A
+        backend whose boundary is elsewhere returns a path in its own namespace;
+        the caller only ever passes it back to `execute`.
+
+        The interpreter is built inside the scratch directory, which is a
+        Python-only concern layered on top of a directory every profile shares.
+        """
+        directory = self.prepare_scratch()
+        try:
+            base_interpreter = self._base_interpreter()
             created = self._execute_process(
                 [
                     base_interpreter, "-I", "-m", "venv", "--without-pip",
@@ -418,9 +446,7 @@ class ProcessRunner:
     ) -> list[str]:
         """Wrap a command in a write-confined sandbox inherited by descendants."""
         backend, executable = self._sandbox_backend()
-        environment = self.environment
-        if environment is None:
-            raise RuntimeError("quality environment has not been created")
+        environment = self.prepare_scratch()
         if backend == "linux":
             return self._bubblewrap_command(
                 executable,
@@ -443,9 +469,7 @@ class ProcessRunner:
         allow_network: bool,
         allow_subprocesses: bool,
     ) -> list[str]:
-        environment = self.environment
-        if environment is None:
-            raise RuntimeError("quality environment has not been created")
+        environment = self.prepare_scratch()
         workspace_literal = json.dumps(str(self.workspace), ensure_ascii=False)
         environment_literal = json.dumps(str(environment), ensure_ascii=False)
         path_literals = [
@@ -521,9 +545,7 @@ class ProcessRunner:
         cwd: Path,
     ) -> list[str]:
         """Build a minimal Linux mount namespace without exposing host root/home."""
-        environment = self.environment
-        if environment is None:
-            raise RuntimeError("quality environment has not been created")
+        environment = self.prepare_scratch()
 
         writable = (self.workspace, environment)
         readonly_candidates = [
@@ -636,9 +658,7 @@ class ProcessRunner:
         return command
 
     def _subprocess_environment(self) -> dict[str, str]:
-        directory = self.environment
-        if directory is None:
-            raise RuntimeError("quality environment has not been created")
+        directory = self.prepare_scratch()
         home = directory / "home"
         temporary = directory / "tmp"
         home.mkdir(exist_ok=True)

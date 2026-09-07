@@ -218,6 +218,28 @@ class QualityMCP:
             return self._python
         finally:
             self._environment_lock.release()
+
+    def _sandbox_directory(self) -> str:
+        """The boundary's writable directory, created first if it does not exist.
+
+        Profiles interpolate this into the command itself -- Maven's
+        `repo.local` and HOME, npm's cache -- so it has to exist before the
+        command is composed, not when it runs. An empty value would point Maven
+        at `/m2` and `HOME=/home`, outside the sandbox entirely.
+
+        `_interpreter` already covers the profiles whose templates name an
+        interpreter. Maven and npm name their own binary, so nothing used to
+        create this directory for them and every jvm and node component failed
+        with `quality environment has not been created` before running anything.
+        `CommandRunner` is structural and its test doubles carry a fixed
+        directory rather than creating one, so creation is asked for only where
+        it is offered.
+        """
+        prepare = getattr(self._runner, "prepare_scratch", None)
+        if prepare is not None and self._runner.environment is None:
+            prepare()
+        return str(self._runner.environment or "")
+
     def close(self) -> None:
         """Close the runner, which owns both the processes and the environment."""
         self._runner.close()
@@ -373,12 +395,12 @@ class QualityMCP:
         if template is None:
             return self._missing_profile_operation(role, tool, phase, started)
         interpreter = ""
-        if any(INTERPRETER in part for part in template):
-            try:
+        try:
+            if any(INTERPRETER in part for part in template):
                 interpreter = self._interpreter(deadline)
-            except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
-                return self._unavailable(role, tool, exc, started)
-        environment = str(self._runner.environment or "")
+            environment = self._sandbox_directory()
+        except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
+            return self._unavailable(role, tool, exc, started)
         command = getattr(self.profile, f"{phase}_command")(interpreter, environment)
         if command is None:
             return self._missing_profile_operation(role, tool, phase, started)

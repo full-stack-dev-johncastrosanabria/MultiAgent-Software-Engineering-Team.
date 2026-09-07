@@ -39,8 +39,13 @@ class RecordingRunner:
     def require_available(self) -> None:
         return None
 
+    def prepare_scratch(self) -> Path:
+        if self.environment is None:
+            self.environment = Path("/recorded/env")
+        return self.environment
+
     def prepare_environment(self, deadline: float) -> str:
-        self.environment = Path("/recorded/env")
+        self.prepare_scratch()
         return "/recorded/env/bin/python"
 
     @property
