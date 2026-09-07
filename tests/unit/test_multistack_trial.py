@@ -55,7 +55,12 @@ def test_crash_preserves_failure_evidence_and_terminal_journal(trial, tmp_path, 
     journal = json.loads(journal_path.read_text())
     assert evidence["final_status"] == "ERROR"
     assert evidence["exception_type"] == "ValueError"
+    assert evidence.get("exception_message")
+    assert evidence.get("raise_site")
+    assert "process_path" in evidence
+    assert "docker_which" in evidence
     assert journal[-1]["finished_epoch"] == 2_000_000_000
+    assert journal[-1].get("exception_message")
     assert "must-not-appear" not in report.read_text()
     assert "must-not-appear" not in journal_path.read_text()
 

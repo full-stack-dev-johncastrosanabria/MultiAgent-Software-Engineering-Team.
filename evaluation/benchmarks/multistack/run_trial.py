@@ -5,14 +5,38 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
+import shutil
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
 from engineering_team.apply_run import run_on_project
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole
+from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.llm.cloud import CloudRouter
+
+def _anonymised_path(value: str | None) -> str | None:
+    """A PATH-like value with the operator's home directory replaced by `~`.
+
+    Whether docker resolves at all is the diagnostic worth keeping; the absolute
+    location of the home directory only names the person who ran the trial, and
+    an evidence packet is written to be shared. `redact_secrets` looks for
+    credential keys and would not touch a home directory, so the substitution is
+    made here and the redactor still runs for a PATH entry that embeds one.
+    """
+    if not value:
+        return value
+    home = str(Path.home())
+    entries = []
+    for entry in value.split(os.pathsep):
+        if entry == home or entry.startswith(home + os.sep):
+            entry = "~" + entry[len(home):]
+        entries.append(redact_secrets(entry))
+    return os.pathsep.join(entries)
+
 
 CASES = {
     "ingresos": ("PruebaNuevosIngresosBackend", "jvm", "order-ms"),
@@ -94,15 +118,31 @@ def main() -> None:
         except BaseException as exc:
             record["exception_type"] = type(exc).__name__
             record["final_status"] = "ERROR"
-            # A guard or infrastructure exception can precede ASET's normal
-            # evidence serializer. Arbitrary exception text can contain secrets.
+            # Persist enough to discriminate ServiceStartupError raise sites and
+            # PATH/docker resolution without leaking secrets into evidence.
+            tb = traceback.extract_tb(exc.__traceback__)
+            raise_frame = tb[-1] if tb else None
+            raise_site = (
+                f"{raise_frame.filename}:{raise_frame.lineno} in {raise_frame.name}"
+                if raise_frame is not None
+                else None
+            )
+            docker_path = shutil.which("docker")
+            capture = {
+                "benchmark_case": args.case,
+                "final_status": "ERROR",
+                "exception_type": type(exc).__name__,
+                "exception_message": redact_secrets(str(exc)),
+                "raise_site": raise_site,
+                "process_path": _anonymised_path(os.environ.get("PATH", "")),
+                "docker_which": _anonymised_path(docker_path),
+                "started_utc": record["started_utc"],
+            }
+            record["exception_message"] = capture["exception_message"]
+            record["raise_site"] = raise_site
+            record["docker_which"] = capture["docker_which"]
             if not args.report.exists():
-                args.report.write_text(json.dumps({
-                    "benchmark_case": args.case,
-                    "final_status": "ERROR",
-                    "exception_type": type(exc).__name__,
-                    "started_utc": record["started_utc"],
-                }, indent=2))
+                args.report.write_text(json.dumps(capture, indent=2))
             raise
         finally:
             record["finished_epoch"] = time.time()
