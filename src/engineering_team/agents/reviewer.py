@@ -99,6 +99,16 @@ def _implementation_evidence_problems(
         problems.append(
             "authorized apply run requires a successful non-empty resulting diff"
         )
+        # Also surface missing writes on this early return: otherwise a claim of
+        # APPLIED with no get_diff only reports the empty-diff problem and hides
+        # which allowlisted paths never got a Repository write
+        # (test_reviewer_rejects_applied_content_without_write_evidence).
+        missing_writes = sorted(targets - written_paths)
+        if missing_writes:
+            problems.append(
+                "no successful Repository write exists for: "
+                + ", ".join(missing_writes)
+            )
         return problems
 
     # Paths that appear in the resulting diff (+++ b/...). A Repository._write
