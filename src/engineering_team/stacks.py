@@ -56,6 +56,29 @@ class StackProfile:
     """Whether dependency integrity may resolve the component dependency graph."""
     security_needs_network: bool = False
     """Whether the scanner needs a registry or advisory database."""
+    java_agents: tuple[str, ...] = ()
+    """Globs, under the environment's package cache, for jars to load as agents.
+
+    Mockito's inline mock maker -- its default since 5.0 -- attaches itself to
+    the JVM already running the tests. That handshake needs to signal the target
+    and reach it over a Unix socket, and a sandbox that grants neither turns
+    every mocking test in a component into `Could not initialize plugin:
+    MockMaker`. Loading the same jar with `-javaagent` is the path Mockito's own
+    warning points at, and the one the JDK will require once self-attachment is
+    removed. The glob keeps it conditional: a component that does not depend on
+    Mockito matches nothing and is passed no flag.
+    """
+    needs_subprocesses: bool = False
+    """Whether this toolchain's own launcher forks before it runs anything.
+
+    Forking and reaching the network are unrelated permissions, but the sandbox
+    granted the first only alongside the second, so an offline phase could not
+    fork at all. `mvn` is a shell script that forks: an offline Maven phase died
+    on `fork: Operation not permitted` before a single test ran. Declared per
+    toolchain because it describes how the launcher starts, not what a phase
+    does. Python's entry points exec without forking, so it stays false and its
+    offline phases keep the tighter sandbox they already had.
+    """
 
     def _expand(
         self, template: _Template, interpreter: str, environment: str
@@ -155,6 +178,10 @@ PROFILES: dict[str, StackProfile] = {
         test_needs_network=True,
         dependency_needs_network=True,
         security_needs_network=True,
+        # Measured: `mvn` is a shell script, and an offline phase without this
+        # dies on `fork: Operation not permitted` before running a single test.
+        needs_subprocesses=True,
+        java_agents=("org/mockito/mockito-core/*/mockito-core-*.jar",),
     ),
     "dotnet": StackProfile(
         name="dotnet",

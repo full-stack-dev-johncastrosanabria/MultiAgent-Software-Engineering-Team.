@@ -219,6 +219,27 @@ class QualityMCP:
         finally:
             self._environment_lock.release()
 
+    def _java_agent_arguments(self, phase: str, environment: str) -> list[str]:
+        """Load as agents the jars this toolchain must not attach to itself.
+
+        Only the test phase: nothing else runs the component's own JVM. The jar
+        is looked up rather than named so a component that does not depend on it
+        is passed nothing, and an ambiguous match is skipped instead of guessed
+        at. Note that `-DargLine` sets Surefire's property, so a project that
+        configures `argLine` inside the plugin rather than as a property keeps
+        its own value and gets no agent -- that stays a visible test failure,
+        not a silent one.
+        """
+        if phase != "test" or not environment or not self.profile.java_agents:
+            return []
+        cache = Path(environment) / "m2"
+        agents: list[str] = []
+        for pattern in self.profile.java_agents:
+            found = sorted(cache.glob(pattern))
+            if len(found) == 1:
+                agents.append(f"-javaagent:{found[0]}")
+        return [f"-DargLine={' '.join(agents)}"] if agents else []
+
     def _sandbox_directory(self) -> str:
         """The boundary's writable directory, created first if it does not exist.
 
@@ -404,6 +425,7 @@ class QualityMCP:
         command = getattr(self.profile, f"{phase}_command")(interpreter, environment)
         if command is None:
             return self._missing_profile_operation(role, tool, phase, started)
+        command = [*command, *self._java_agent_arguments(phase, environment)]
         # Network access belongs to the phase declaration, not to Quality's
         # opinion about a toolchain. The explicit override remains for preparation
         # operations such as npm ci.
@@ -451,7 +473,10 @@ class QualityMCP:
                 cwd=cwd,
                 deadline=deadline,
                 allow_network=allow_network,
-                allow_subprocesses=allow_network,
+                # Not `allow_network` again: a phase that has to fork does not
+                # thereby need the network, and one that is deliberately offline
+                # still has to start its own launcher.
+                allow_subprocesses=allow_network or self.profile.needs_subprocesses,
                 env=env,
             )
         except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
