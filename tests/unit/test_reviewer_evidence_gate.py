@@ -388,3 +388,58 @@ def test_reviewer_ignores_whitespace_noop_writes_outside_diff() -> None:
     assert decision.status is ReviewerStatus.APPROVED
     assert not any("product.py" in problem for problem in decision.problems)
 
+
+
+def _baseline_security_review(description: str = "Residual baseline dependency risk CVE-2024-BASE") -> SecurityReview:
+    from engineering_team.contracts.models import SecurityFinding
+    return SecurityReview(
+        status=SecurityStatus.PASS,
+        highest_severity=SecuritySeverity.HIGH,
+        findings=[
+            SecurityFinding(
+                category="baseline dependencies",
+                severity=SecuritySeverity.HIGH,
+                description=description,
+                affected_evidence=["scan_dependencies"],
+                recommendation="track baseline dependency risk separately",
+                sources=[],
+            )
+        ],
+        recommendations=["track baseline dependency risk separately"],
+        sources=[],
+        checklist=_SECURITY_CHECKLIST,
+        requires_hitl=False,
+    )
+
+
+def test_reviewer_pass_with_baseline_findings_keeps_security_visible_when_covered() -> None:
+    """Test A: PASS + baseline findings + security evidenced -> APPROVED with baseline in problems."""
+    baseline_text = "Residual baseline dependency risk CVE-2024-BASELINE-A"
+    decision = _review(
+        _test_result(coverage={
+            "happy_path": [_TEST_REFERENCE],
+            "security": [_TEST_REFERENCE],
+        }),
+        [_run_tests_tool()],
+        security_review=_baseline_security_review(baseline_text),
+    )
+    assert decision.status is ReviewerStatus.APPROVED
+    assert any(baseline_text in problem for problem in decision.problems)
+    assert decision.subscores["security"] != 0
+
+
+def test_reviewer_pass_with_baseline_findings_does_not_exempt_security_coverage() -> None:
+    """Test B: PASS + baseline findings + empty security coverage -> REJECTED for gap, baseline visible."""
+    baseline_text = "Residual baseline dependency risk CVE-2024-BASELINE-B"
+    decision = _review(
+        _test_result(coverage={
+            "happy_path": [_TEST_REFERENCE],
+            "security": [],
+        }),
+        [_run_tests_tool()],
+        security_review=_baseline_security_review(baseline_text),
+    )
+    assert decision.status is ReviewerStatus.REJECTED
+    joined = "\n".join(decision.problems)
+    assert baseline_text in joined
+    assert "required coverage dimension has no evidence: security" in joined

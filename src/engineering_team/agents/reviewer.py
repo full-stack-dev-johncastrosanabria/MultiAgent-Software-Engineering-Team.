@@ -99,10 +99,6 @@ def _implementation_evidence_problems(
         problems.append(
             "authorized apply run requires a successful non-empty resulting diff"
         )
-        # Also surface missing writes on this early return: otherwise a claim of
-        # APPLIED with no get_diff only reports the empty-diff problem and hides
-        # which allowlisted paths never got a Repository write
-        # (test_reviewer_rejects_applied_content_without_write_evidence).
         missing_writes = sorted(targets - written_paths)
         if missing_writes:
             problems.append(
@@ -209,6 +205,19 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 return_to=None if security.requires_hitl else RouteTarget.DEVELOPER, confidence=1,
                 evidence_references=evidence,
             )
+        # PASS + nonempty findings (e.g. baseline dependencies): keep residual
+        # risk visible in problems without Security FAIL / Developer remediation.
+        baseline_visible_problems: list[str] = []
+        if (
+            security is not None
+            and security.status is SecurityStatus.PASS
+            and security.findings
+        ):
+            baseline_visible_problems = [
+                finding.description
+                for finding in security.findings
+                if finding.description
+            ]
         implementation_problems = _implementation_evidence_problems(
             projection, envelope.tool_results
         )
@@ -238,6 +247,7 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                         for item in _DIMENSIONS
                     },
                     problems=[
+                        *baseline_visible_problems,
                         f"the design was produced from incomplete evidence: {gap}",
                         *latest_test.failures,
                     ],
@@ -264,6 +274,7 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 # A break and a not-yet-working feature are different news, and
                 # naming them the same is why three cycles went to the wrong one.
                 problems=[
+                    *baseline_visible_problems,
                     *(
                         describe_failures(
                             failed_identifiers,
@@ -294,7 +305,7 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                     item: (0 if item == "implementation" else 75)
                     for item in _DIMENSIONS
                 },
-                problems=hard_implementation_problems,
+                problems=[*baseline_visible_problems, *hard_implementation_problems],
                 reason="implementation evidence gate requires an applied workspace change",
                 remediation_category=RemediationCategory.IMPLEMENTATION,
                 return_to=RouteTarget.DEVELOPER,
@@ -334,17 +345,20 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 if item.status is ToolStatus.SUCCESS
             }
             valid_coverage_evidence = executed_evidence & recorded_evidence
-            # Security PASS is its own evidence for the `security` coverage
-            # dimension (apply-399a301c / v5). Mapping security_review into
-            # coverage_mapping would fail "cites unexecuted evidence" against
-            # run_tests, so Reviewer exempts an empty/unexecuted `security`
-            # dimension when SecurityStatus.PASS — other dimensions stay strict.
-            security_pass = (
-                security is not None and security.status is SecurityStatus.PASS
+            # Security PASS with empty findings is its own evidence for the
+            # `security` coverage dimension (apply-399a301c / v5). Mapping
+            # security_review into coverage_mapping would fail "cites unexecuted
+            # evidence" against run_tests, so Reviewer exempts an empty/
+            # unexecuted `security` dimension only when PASS and findings are
+            # empty. Nonempty findings (baseline risk) keep the dimension gated.
+            security_pass_clean = (
+                security is not None
+                and security.status is SecurityStatus.PASS
+                and not security.findings
             )
 
             def _security_exempt(dimension: str) -> bool:
-                return dimension == "security" and security_pass
+                return dimension == "security" and security_pass_clean
 
             gaps = sorted(
                 dimension
@@ -376,7 +390,7 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
             return ReviewerDecision(
                 status=ReviewerStatus.REJECTED, score=45,
                 subscores={item: (0 if item == "testing" else 75) for item in _DIMENSIONS},
-                problems=test_evidence_problems,
+                problems=[*baseline_visible_problems, *test_evidence_problems],
                 reason="testing evidence gate requires a real successful run and complete coverage",
                 remediation_category=RemediationCategory.TESTING,
                 return_to=RouteTarget.DEVELOPER, confidence=1,
@@ -384,6 +398,8 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
             )
         return ReviewerDecision(
             status=ReviewerStatus.APPROVED, score=100,
-            subscores={item: 100 for item in _DIMENSIONS}, reason="validated evidence satisfies acceptance checks",
+            subscores={item: 100 for item in _DIMENSIONS},
+            problems=list(baseline_visible_problems),
+            reason="validated evidence satisfies acceptance checks",
             confidence=1, evidence_references=evidence,
         )
