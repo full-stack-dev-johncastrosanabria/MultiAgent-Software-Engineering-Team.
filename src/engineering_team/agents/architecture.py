@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from pathlib import PurePosixPath
 from typing import Any, ClassVar
 
@@ -16,6 +17,26 @@ from engineering_team.repository_evidence import (
 )
 
 from .base import AgentBase
+
+# Which files carry logic worth reading. Missing a language does not lower a
+# file's rank a little -- it hands two points to every file in a language that is
+# listed, so a .NET repository ranked its three front-ends above its own domain.
+_SOURCE_SUFFIXES = frozenset({
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".rs",
+    ".cs", ".fs", ".vb", ".kt", ".kts", ".scala", ".swift", ".rb", ".php",
+    ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm", ".ex", ".exs",
+    ".dart", ".vue", ".svelte",
+})
+_MANIFEST_NAMES = frozenset({
+    "pyproject.toml", "package.json", "go.mod", "cargo.toml",
+    "pom.xml", "build.gradle", "build.gradle.kts", "composer.json",
+    "gemfile", "build.sbt", "pubspec.yaml",
+})
+_MANIFEST_SUFFIXES = frozenset({".csproj", ".fsproj", ".vbproj", ".sln"})
+
+
+def suffix_of(path: str) -> str:
+    return PurePosixPath(path).suffix.casefold()
 
 
 class ArchitectureAgent(AgentBase[ArchitectureProposal]):
@@ -55,12 +76,34 @@ class ArchitectureAgent(AgentBase[ArchitectureProposal]):
             elif resource.endswith("s") and len(resource) > 1:
                 resource_stems.add(resource[:-1])
 
+        # A specification names types, not paths: "Product gains a factory",
+        # "ProductService delegates to it", "DomainErrors.Product already
+        # declares them". None of that is a route or a filename, so a domain
+        # task produced no boundaries at all and its own entity was never
+        # mandatory evidence. Match a declared type to the file that defines it.
+        named_types = {
+            token.casefold()
+            for token in re.findall(r"(?<![A-Za-z0-9_])([A-Z][A-Za-z0-9]{3,})", requirement)
+        }
+        # Only where the name picks out one file. Three `productService` files
+        # across a backend and two front-ends make the mention ambiguous, and
+        # choosing among them is the guess this function exists to avoid. The
+        # ranking still favours them; they are simply not made mandatory.
+        stem_counts: Counter[str] = Counter(
+            PurePosixPath(path).stem.casefold()
+            for path in available
+            if PurePosixPath(path).suffix.casefold() in _SOURCE_SUFFIXES
+        )
+        named_types = {name for name in named_types if stem_counts[name] == 1}
+
         candidates: list[tuple[int, str]] = []
         for path in available:
             folded = path.casefold()
             stem = PurePosixPath(path).stem.casefold()
             if path in mentioned:
                 candidates.append((0, path))
+            elif stem in named_types and suffix_of(path) in _SOURCE_SUFFIXES:
+                candidates.append((3, path))
             if stem not in resource_stems:
                 continue
             if "/routes/" in f"/{folded}" or "/controllers/" in f"/{folded}":
@@ -127,10 +170,12 @@ class ArchitectureAgent(AgentBase[ArchitectureProposal]):
             lexical = sum(term in folded for term in terms)
             source = hits[path]
             suffix = PurePosixPath(path).suffix.casefold()
-            code = suffix in {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".rs"}
-            manifest = PurePosixPath(path).name.casefold() in {
-                "pyproject.toml", "package.json", "go.mod", "cargo.toml",
-            }
+            code = suffix in _SOURCE_SUFFIXES
+            name = PurePosixPath(path).name.casefold()
+            manifest = name in _MANIFEST_NAMES or suffix in _MANIFEST_SUFFIXES
+            # The shorter path wins a tie deliberately: a repository that
+            # generates `payment_00001.py` alongside `service.py` scores them
+            # alike, and brevity is what tells the hand-written one apart.
             return (source * 20 + lexical * 5 + int(code) * 2 + int(manifest), -len(path), path)
 
         return sorted(paths, key=score, reverse=True)

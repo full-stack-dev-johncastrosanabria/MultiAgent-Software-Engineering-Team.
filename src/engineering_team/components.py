@@ -23,6 +23,12 @@ EXCLUDED_DIRECTORIES = frozenset({
     ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", "dist", "build",
     "target", "bin", "obj", "vendor", "site-packages", ".gradle", "Pods",
+    # Test and build output. `TestResults` matters more than it looks: the
+    # dotnet profile writes its TRX reports there, so the gate produced files
+    # that outranked the repository's own source as evidence on the next cycle
+    # -- a run competing with itself for a bounded reading budget.
+    "TestResults", "coverage", "htmlcov", "DerivedData",
+    ".next", ".nuxt", ".angular", ".svelte-kit", ".turbo", ".dart_tool",
 })
 
 # Exact filenames that identify a stack.
