@@ -1,4 +1,4 @@
-# Ingresos multistack series: eleven trials to one approval
+# Ingresos multistack series: twelve trials to a delivered change
 
 This evidence is sanitized: identifiers, SHAs and reproducible commands, no
 credentials, prompts or model responses. It records what ADR 9 asked for —
@@ -12,13 +12,15 @@ two decimals. Write allowlist: `Order.java` and `OrderTest.java` only.
 
 ## Outcome
 
-Trial 12 (`apply-bd79ab5a`, `990b894`) approved and opened the pull request:
-score 100, every subscore 100, one remediation cycle, 456 seconds, both writes
-inside the allowlist. Trial 10 (`apply-2c3c8e9b`, `b7180fe`) had approved first:
-score 100, every subscore 100,
-zero remediation cycles, 382 seconds, both writes inside the allowlist, `pom.xml`
-untouched. Its route reached `FinalReport` without a single return to the
-Developer.
+Trial 10 (`apply-2c3c8e9b`, `b7180fe`) approved first: score 100, every subscore
+100, zero remediation cycles, 382 seconds, both writes inside the allowlist,
+`pom.xml` untouched, and its route reached `FinalReport` without a single return
+to the Developer.
+
+Trial 12 (`apply-bd79ab5a`, `990b894`) took that configuration and armed
+delivery. It approved at 100 across every subscore after one remediation cycle,
+in 456 seconds, and opened the pull request -- the first time work left this
+system the way ADR 6 describes.
 
 Trials 5 through 9 measured no agent behaviour at all. Each ended on a defect in
 this harness, and each defect was closed before the next trial could reach
@@ -112,12 +114,17 @@ fan-out and executed it — 8 tests, no failures, no errors, the first time
 `payment-ms` ran in the series. `real PG/Kafka` is satisfied under the process
 runner through Testcontainers, not through `ServiceStack` (ADR 10).
 
-Trial 11 did not approve, and what stopped it was outside the experiment. The
-fan-out includes `frontend`, whose `package.json` declares `"test": "ng test"` —
-Angular under Karma, which wants a browser the sandbox does not have. `testing`
-scored zero over a component the manifest never claimed: `component` is
-`order-ms` and the allowlist names two files in it. Both JVM components were
-green in the same run.
+Trial 11 did not approve, and what stopped it was outside the experiment: the
+fan-out includes `frontend`, and `testing` scored zero over a component the
+manifest never claimed. `component` is `order-ms` and the allowlist names two
+files in it. Both JVM components were green in the same run.
+
+The first reading of that failure was that `ng test` wanted a browser the
+sandbox has no way to provide. That was wrong, and measuring it is what showed
+so: Angular 21's builder already runs vitest against jsdom. The suite failed to
+compile -- `codePointAt` returns `number | undefined` where `Uint8Array.from`
+requires `number` -- so TS2769 stopped the bundle and no spec ran at all. Fixed
+upstream; nine tests now pass headless in under a second.
 
 Its remediation cycle then hit `HTTPStatusError` from the model provider and the
 Developer returned its previous answer unchanged, which is how the run ended in
