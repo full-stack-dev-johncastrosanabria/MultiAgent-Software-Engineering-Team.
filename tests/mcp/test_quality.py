@@ -38,6 +38,7 @@ def _patch_executor(monkeypatch, callback) -> None:
         allow_network=False,
         allow_subprocesses=False,
         extra_env=(),
+        writable_paths=(),
     ):
         return callback(
             args,

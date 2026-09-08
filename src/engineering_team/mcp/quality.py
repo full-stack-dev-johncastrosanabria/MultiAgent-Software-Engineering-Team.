@@ -178,6 +178,7 @@ class QualityMCP:
                 allow_network=allow_network,
                 allow_subprocesses=allow_subprocesses,
                 env=tuple({**dict(env), **dict(self.service_environment)}.items()),
+                writable_paths=self.profile.toolchain_writable_paths,
             )
         )
 

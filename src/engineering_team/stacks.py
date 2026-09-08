@@ -66,6 +66,20 @@ class StackProfile:
     else published, which is why Security may hold it as baseline risk when the
     change left the manifests alone -- and why it must not do that for ruff.
     """
+    toolchain_writable_paths: tuple[str, ...] = ()
+    """Absolute host paths this toolchain writes to and cannot be told to move.
+
+    The boundary grants the workspace and the run's own environment, and a
+    toolchain that respects TMPDIR needs nothing else. The .NET runtime does not:
+    it keeps cross-process state under a fixed `/tmp/.dotnet` on macOS -- shared
+    memory backing its named mutexes, and per-session lock files beside it -- so
+    NuGet's migration runner, which every restore invokes, dies on
+    `open(...) == -1; errno == EPERM` before a single package resolves. The
+    grant is the directory the toolchain owns, not the temporary root it sits
+    in, and the sandbox keeps that root closed either way. A path here is
+    granted for reading as well as writing: the runtime opens the directory
+    itself, not only the files inside it.
+    """
     java_agents: tuple[str, ...] = ()
     """Globs, under the environment's package cache, for jars to load as agents.
 
@@ -233,6 +247,12 @@ PROFILES: dict[str, StackProfile] = {
         security_needs_network=True,
         # Its security phase is a vulnerability database lookup, not a linter.
         dependency_scan_phases=("dependency", "security"),
+        # Measured: without this every `dotnet restore` dies in NuGet's
+        # migration runner. The runtime keeps its cross-process state here --
+        # `shm` for named mutexes, `lockfiles` for per-session locks -- and
+        # names the directory itself, so the grant is the directory .NET owns
+        # rather than the temporary root it happens to sit in.
+        toolchain_writable_paths=("/tmp/.dotnet",),
     ),
     "go": StackProfile(
         name="go",

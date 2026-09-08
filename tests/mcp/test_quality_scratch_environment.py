@@ -19,7 +19,8 @@ from engineering_team.mcp.runner import ProcessRunner
 from engineering_team.stacks import profile_for
 
 
-def _stub_execute(self, args, *, cwd, deadline, allow_network=False, allow_subprocesses=False, extra_env=None):
+def _stub_execute(self, args, *, cwd, deadline, allow_network=False,
+                  allow_subprocesses=False, extra_env=None, writable_paths=()):
     return subprocess.CompletedProcess(list(args), 0, "ok", "")
 
 
@@ -69,7 +70,8 @@ def test_node_scan_dependencies_never_fails_for_missing_environment(
 def test_python_scan_dependencies_still_builds_a_venv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def execute(self, args, *, cwd, deadline, allow_network=False, allow_subprocesses=False, extra_env=None):
+    def execute(self, args, *, cwd, deadline, allow_network=False,
+                allow_subprocesses=False, extra_env=None, writable_paths=()):
         return subprocess.CompletedProcess(list(args), 0, "No broken requirements found.", "")
 
     monkeypatch.setattr(ProcessRunner, "_execute_process", execute)
