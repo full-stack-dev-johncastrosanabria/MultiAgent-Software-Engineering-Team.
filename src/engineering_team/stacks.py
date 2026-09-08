@@ -56,6 +56,16 @@ class StackProfile:
     """Whether dependency integrity may resolve the component dependency graph."""
     security_needs_network: bool = False
     """Whether the scanner needs a registry or advisory database."""
+    dependency_scan_phases: tuple[str, ...] = ("dependency",)
+    """Which phases report on third-party dependencies rather than our own code.
+
+    Python's security phase is a linter, so the two concerns line up with the
+    two phase names there and nowhere else: the JVM runs OWASP dependency-check
+    under `security`, Node runs `npm audit`, .NET lists vulnerable packages, Go
+    runs govulncheck. A finding from one of these is about a version someone
+    else published, which is why Security may hold it as baseline risk when the
+    change left the manifests alone -- and why it must not do that for ruff.
+    """
     java_agents: tuple[str, ...] = ()
     """Globs, under the environment's package cache, for jars to load as agents.
 
@@ -178,6 +188,8 @@ PROFILES: dict[str, StackProfile] = {
         test_needs_network=True,
         dependency_needs_network=True,
         security_needs_network=True,
+        # Its security phase is a vulnerability database lookup, not a linter.
+        dependency_scan_phases=("dependency", "security"),
         # Measured: `mvn` is a shell script, and an offline phase without this
         # dies on `fork: Operation not permitted` before running a single test.
         needs_subprocesses=True,
@@ -214,6 +226,8 @@ PROFILES: dict[str, StackProfile] = {
         test_needs_network=True,
         dependency_needs_network=True,
         security_needs_network=True,
+        # Its security phase is a vulnerability database lookup, not a linter.
+        dependency_scan_phases=("dependency", "security"),
     ),
     "go": StackProfile(
         name="go",
@@ -236,6 +250,8 @@ PROFILES: dict[str, StackProfile] = {
         test_needs_network=True,
         dependency_needs_network=True,
         security_needs_network=True,
+        # Its security phase is a vulnerability database lookup, not a linter.
+        dependency_scan_phases=("dependency", "security"),
     ),
     "node": StackProfile(
         name="node",
@@ -254,6 +270,8 @@ PROFILES: dict[str, StackProfile] = {
         environment=(("npm_config_cache", f"{ENVIRONMENT}/npm"),),
         test_needs_network=True,
         security_needs_network=True,
+        # Its security phase is a vulnerability database lookup, not a linter.
+        dependency_scan_phases=("dependency", "security"),
     ),
 }
 

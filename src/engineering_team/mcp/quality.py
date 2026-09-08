@@ -447,6 +447,7 @@ class QualityMCP:
             cwd=cwd or self.root, started=started, allow_network=needs_network,
             env=self.profile.env(environment), fail_on_output=fail_on_output,
             unavailable_on_output=unavailable_on_output,
+            scans_dependencies=phase in self.profile.dependency_scan_phases,
         )
 
     def _run(
@@ -463,6 +464,7 @@ class QualityMCP:
         env: tuple[tuple[str, str], ...] = (),
         fail_on_output: Callable[[str], bool] | None = None,
         unavailable_on_output: Callable[[str], str | None] | None = None,
+        scans_dependencies: bool = False,
     ) -> ToolResult:
         if role not in allowed:
             return self._denied(role, tool)
@@ -515,6 +517,7 @@ class QualityMCP:
                 if infrastructure_error is not None
                 else None
             ),
+            scans_dependencies=scans_dependencies,
         )
         self._last[tool] = result
         return result

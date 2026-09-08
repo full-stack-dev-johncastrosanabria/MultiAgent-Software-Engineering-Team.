@@ -15,6 +15,13 @@ _SECURITY_CATEGORIES = (
 
 # Untouched dependency scanner findings are residual baseline risk, not a
 # Security FAIL that routes remediation to Developer.
+#
+# Reported by the result, never inferred from the tool name. `run_security_scan`
+# is ruff on Python but OWASP dependency-check on the JVM, npm audit on Node and
+# govulncheck on Go, so a name-based list held for the one stack where that phase
+# is a linter and failed for the four where it is not: order-ms was rejected over
+# CVEs in kafka-clients and swagger-ui, published long before this change and in
+# a pom it never opened.
 _BASELINE_DEPENDENCY_TOOLS = frozenset({"scan_dependencies", "get_security_report"})
 _DEPENDENCY_MANIFEST_BASENAMES = frozenset({
     "pom.xml",
@@ -86,9 +93,13 @@ class SecurityAgent(AgentBase[SecurityReview]):
         ]
         baseline_dependency_findings: list[SecurityFinding] = []
         if failed_tools:
-            failed_names = {item.tool_name for item in failed_tools}
             implementation = envelope.state_projection.get("implementation")
-            only_baseline_dependency_tools = failed_names <= _BASELINE_DEPENDENCY_TOOLS
+            # A result that says so outranks its own name; the name is the
+            # fallback for results produced before the flag existed.
+            only_baseline_dependency_tools = all(
+                item.scans_dependencies or item.tool_name in _BASELINE_DEPENDENCY_TOOLS
+                for item in failed_tools
+            )
             # Fail closed when implementation is absent: cannot prove manifests
             # were untouched, so do not reclassify scanner failures as baseline.
             changed_files = (
