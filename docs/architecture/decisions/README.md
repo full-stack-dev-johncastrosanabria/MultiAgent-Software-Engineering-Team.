@@ -16,6 +16,7 @@ rotates it out.
 | [7](0007-declared-coverage-decides-remediation.md) | A stage declares what it could not see, and the router believes the count | accepted |
 | [8](0008-security-evidence-per-stack.md) | Security evidence belongs to the component toolchain | accepted |
 | [9](0009-real-multistack-validation.md) | Validate infrastructure before expanding model tasks | accepted |
+| [10](0010-integration-tests-need-the-host-docker-api.md) | Integration tests run under the process sandbox, not the container runner | accepted |
 
 A decision here outranks the same claim made anywhere untracked. When they
 disagree, this directory is right and the other file is stale.
