@@ -56,7 +56,7 @@ of attaching to itself) and it must let a toolchain's launcher fork
 independently of whether the phase reaches the network (`needs_subprocesses`,
 because `mvn` is a shell script).
 
-## Accepted alongside this: the JDK is not pinned
+## Decided alongside this: the JDK is passed through when it is readable
 
 `ProcessRunner` rebuilds the child's PATH and passes through a small, fixed set
 of variables. `JAVA_HOME` was not among them, so Maven resolved whatever that
