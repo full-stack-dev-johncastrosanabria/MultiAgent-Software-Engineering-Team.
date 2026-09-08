@@ -35,6 +35,7 @@ around them was.
 | 8b v9 | Reviewer ×3 | `fp-t8b-v9-owasp-order-ms` |
 | 9 | Reviewer ×3 | trial 6 closed NOT_REPRODUCIBLE |
 | 10 | **APPROVED** | — |
+| 11 | Reviewer, 640 s | executed the payment-ms regression trial 10 had not |
 
 ## Defects this series closed
 
@@ -83,24 +84,70 @@ that error is Testcontainers finding no Docker daemon at that moment. The
 component's suite was never broken; every extra failure inside the pipeline came
 from the pipeline.
 
-## The approval attests to less than the manifest asks
+## The nine oracles
 
 The pipeline does not read `acceptance_cases`. Nothing in `src/` refers to them,
-so the Reviewer scored what it measured, not what the manifest specified. Of the
-nine declared oracles, eight have execution evidence in trial 10's surefire
-output; `suite_regression` asks for `payment-ms` regression, and trial 10 ran
-single-target — `payment-ms` has no surefire output in that workspace at all.
+so the Reviewer scores what it measured, not what the manifest specified. This
+table was assembled from surefire output, not produced by the system.
 
-Read the approval as: the change the agents wrote passes the tests the agents
-wrote, under a real Maven, with the declared allowlist respected. That is a real
-result. It is not the same claim as "the nine oracles hold", and the difference
-is worth keeping visible.
+| # | Oracle | Evidence | Trial |
+|---|---|---|---|
+| 1 | `quantity=0` throws | `quantity0Throws…` | 10 |
+| 2 | `quantity=-1` throws | `quantityNegativeThrows…` | 10 |
+| 3 | `unitPrice=null` throws | `unitPriceNullThrows…` | 10 |
+| 4 | `unitPrice=0` throws | `unitPriceZeroThrows…` | 10 |
+| 5 | `unitPrice=-0.01` throws | `unitPriceNegativeThrows…` | 10 |
+| 6 | 3 × 10.333 → 31.00, price kept | `quantity3AndUnitPrice10_333…` | 10 |
+| 7 | 1 × 0.005 → 0.01 | `quantity1AndUnitPrice0_005…` | 10 |
+| 8 | existing creation and transition tests still pass | `OrderTest` 12/0 in a suite of 78/0 | 10 |
+| 9 | full order-ms suite + payment-ms regression, real PG/Kafka | order-ms 78/0 incl. `OrderFlowIntegrationTest` 6/0; **payment-ms 8/0** | 10, 11 |
+
+Trial 10 left the ninth without evidence: it ran single-target, so `payment-ms`
+produced no surefire output at all. Trial 11 ran the same change with the
+fan-out and executed it — 8 tests, no failures, no errors, the first time
+`payment-ms` ran in the series. `real PG/Kafka` is satisfied under the process
+runner through Testcontainers, not through `ServiceStack` (ADR 10).
+
+Trial 11 did not approve, and what stopped it was outside the experiment. The
+fan-out includes `frontend`, whose `package.json` declares `"test": "ng test"` —
+Angular under Karma, which wants a browser the sandbox does not have. `testing`
+scored zero over a component the manifest never claimed: `component` is
+`order-ms` and the allowlist names two files in it. Both JVM components were
+green in the same run.
+
+Its remediation cycle then hit `HTTPStatusError` from the model provider and the
+Developer returned its previous answer unchanged, which is how the run ended in
+human review rather than a third cycle.
+
+So the oracles hold on evidence, across two runs of the same change, and the
+approval in trial 10 is a separate fact: the change the agents wrote passes the
+tests the agents wrote, under a real Maven, with the allowlist respected. Both
+statements are true and neither implies the other, because nothing in the system
+connects the manifest's oracles to the gate.
+
+## Delivery was armed and never fired
+
+ADR 6 makes a pull request the way work leaves the system, and the path exists:
+`authorize_writes`, `confirm_delivery`, an approved review and a configured
+backend, all four required together. Trial 11 was the first run set up for it,
+and the first whose clone pointed `origin` at GitHub rather than at another
+local clone — every earlier trial would have pushed a delivery branch into a
+directory on disk.
+
+It did not deliver because the review was not approved, which is the gate
+behaving as written: `delivery_error` is absent because the block never ran.
+What remains untested end to end is the last step, not the decision to take it.
 
 ## Open, with no owner
 
-- `fp-t9-testcontainers-no-docker-api`: integration tests inside the quality
-  container cannot reach the Docker API. Three appearances (6b, 9). Mounting the
-  host socket was considered and refused.
+- A fan-out run gates on components the manifest does not claim. Trial 11 scored
+  `testing` zero because `frontend` runs `ng test` without a browser, while both
+  components the experiment named were green. Either the gate should weigh the
+  component under test, or a manifest naming one component should select it —
+  the second is what trial 10 did, and it is why trial 10 approved.
+- `fp-t9-testcontainers-no-docker-api` is recorded as a limit of the container
+  runner rather than pending work; see ADR 10. Mounting the host socket was
+  considered and refused.
 - `JAVA_HOME` is not in the runner's passthrough environment, so Maven resolves
   whatever JDK the rebuilt `PATH` offers — Java 25 in these runs, not the 21 the
   launcher selected. Not a cause of any defect above; an integrity gap in what
