@@ -12,7 +12,10 @@ two decimals. Write allowlist: `Order.java` and `OrderTest.java` only.
 
 ## Outcome
 
-Trial 10 (`apply-2c3c8e9b`, `b7180fe`) approved: score 100, every subscore 100,
+Trial 12 (`apply-bd79ab5a`, `990b894`) approved and opened the pull request:
+score 100, every subscore 100, one remediation cycle, 456 seconds, both writes
+inside the allowlist. Trial 10 (`apply-2c3c8e9b`, `b7180fe`) had approved first:
+score 100, every subscore 100,
 zero remediation cycles, 382 seconds, both writes inside the allowlist, `pom.xml`
 untouched. Its route reached `FinalReport` without a single return to the
 Developer.
@@ -36,6 +39,7 @@ around them was.
 | 9 | Reviewer ×3 | trial 6 closed NOT_REPRODUCIBLE |
 | 10 | **APPROVED** | — |
 | 11 | Reviewer, 640 s | executed the payment-ms regression trial 10 had not |
+| 12 | **APPROVED + delivered** | — |
 
 ## Defects this series closed
 
@@ -125,18 +129,34 @@ tests the agents wrote, under a real Maven, with the allowlist respected. Both
 statements are true and neither implies the other, because nothing in the system
 connects the manifest's oracles to the gate.
 
-## Delivery was armed and never fired
+## Delivery, end to end
 
-ADR 6 makes a pull request the way work leaves the system, and the path exists:
-`authorize_writes`, `confirm_delivery`, an approved review and a configured
-backend, all four required together. Trial 11 was the first run set up for it,
-and the first whose clone pointed `origin` at GitHub rather than at another
-local clone — every earlier trial would have pushed a delivery branch into a
-directory on disk.
+ADR 6 makes a pull request the way work leaves the system, and all four of its
+conditions have to hold together: `authorize_writes`, `confirm_delivery`, an
+approved review, and a configured backend. Trial 11 armed them for the first
+time and did not deliver, because the review was not approved — the gate behaving
+as written, with `delivery_error` absent because the block never ran.
 
-It did not deliver because the review was not approved, which is the gate
-behaving as written: `delivery_error` is absent because the block never ran.
-What remains untested end to end is the last step, not the decision to take it.
+Trial 12 took trial 10's configuration, single-target `jvm`/`order-ms` under the
+process sandbox, and armed the same delivery. It approved with every subscore at
+100 after one remediation cycle, and pushed:
+
+```
+delivery_branch: aset/apply-bd79ab5a-110e-48c0-8a43-0b494df5038e
+delivery_pr_url: .../PruebaNuevosIngresosBackend/pull/2
+delivery_error: None
+```
+
+The agents wrote two files, both inside the allowlist, and `order-ms` finished at
+78 tests with no failures and no errors, `OrderTest` among them at 12. The run
+had a real failure on its first pass — `run_tests: FAIL` is in the errors — and
+the second cycle cleared it, which is the remediation loop doing its job rather
+than a clean run flattering the system.
+
+One property of that pull request is worth stating so nobody misreads it. Its
+diff shows twenty files, because the delivery branch descends from `d536f9d`,
+which is not on `main`: the diff carries the Spring Boot 4 prerequisite along
+with the change. `files_written` is the honest count, and it is two.
 
 ## The CVEs have no upgrade to take
 
