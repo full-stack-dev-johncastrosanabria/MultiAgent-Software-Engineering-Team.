@@ -18,6 +18,7 @@ rotates it out.
 | [9](0009-real-multistack-validation.md) | Validate infrastructure before expanding model tasks | accepted |
 | [10](0010-integration-tests-need-the-host-docker-api.md) | Integration tests run under the process sandbox, not the container runner | accepted |
 | [11](0011-the-operator-states-which-tests-the-gate-runs.md) | The operator states which tests the gate runs | accepted |
+| [12](0012-a-started-database-is-not-a-prepared-one.md) | A started database is not a prepared one | accepted |
 
 A decision here outranks the same claim made anywhere untracked. When they
 disagree, this directory is right and the other file is stale.

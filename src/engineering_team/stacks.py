@@ -24,6 +24,12 @@ INTERPRETER = "{interpreter}"
 # volume is gone before the next phase starts.
 ENVIRONMENT = "{environment}"
 
+# Replaced with the project that owns the migrations and the one that starts the
+# app. A migration tool needs both: the schema lives in one, the connection
+# string in the other.
+MIGRATIONS = "{migrations}"
+STARTUP = "{startup}"
+
 _Template = tuple[str, ...] | None
 
 
@@ -80,6 +86,24 @@ class StackProfile:
     granted for reading as well as writing: the runtime opens the directory
     itself, not only the files inside it.
     """
+    schema_tool_template: tuple[str, ...] = ()
+    """How this toolchain obtains its migration tool, if it does not ship one.
+
+    The .NET SDK image has no `dotnet-ef`, and installing it into the run's own
+    environment keeps it out of the image and out of the host.
+    """
+    schema_template: tuple[str, ...] = ()
+    """How this toolchain applies a project's migrations to a started database.
+
+    ADR 5 starts what a project declares; starting a database does not create
+    its tables. Without this a project whose schema comes from migrations meets
+    an empty database and reports a broken suite -- ten of InterviewCleanApi's
+    sixteen tests failed that way -- when what it actually met was an
+    unprepared schema.
+
+    Only stacks whose migration command is measured declare one. A project that
+    declares no migrations is not migrated, which is an answer, not a gap.
+    """
     test_filter_template: tuple[str, ...] = ()
     """How this toolchain narrows a test run, with `{filter}` for the expression.
 
@@ -126,6 +150,25 @@ class StackProfile:
         expanded = self._expand(self.test_template, interpreter, environment)
         assert expanded is not None
         return expanded
+
+    def schema_commands(
+        self, environment: str, migrations: str, startup: str
+    ) -> list[list[str]]:
+        """The commands that bring a started database up to the project's schema."""
+        if not self.schema_template:
+            return []
+
+        def expand(template: tuple[str, ...]) -> list[str]:
+            return [
+                part.replace(ENVIRONMENT, environment)
+                .replace(MIGRATIONS, migrations)
+                .replace(STARTUP, startup)
+                for part in template
+            ]
+
+        commands = [expand(self.schema_tool_template)] if self.schema_tool_template else []
+        commands.append(expand(self.schema_template))
+        return commands
 
     def test_filter_arguments(self, expression: str) -> list[str]:
         """The arguments that narrow a test run to `expression`, if any."""
@@ -286,6 +329,16 @@ PROFILES: dict[str, StackProfile] = {
         # rather than the temporary root it happens to sit in.
         toolchain_writable_paths=("/tmp/.dotnet",),
         test_filter_template=("--filter", "{filter}"),
+        schema_tool_template=(
+            # `update` rather than `install`: the environment is reused across a
+            # run's phases, and installing twice is an error where updating is not.
+            "dotnet", "tool", "update", "dotnet-ef",
+            "--tool-path", f"{ENVIRONMENT}/tools",
+        ),
+        schema_template=(
+            f"{ENVIRONMENT}/tools/dotnet-ef", "database", "update",
+            "--project", MIGRATIONS, "--startup-project", STARTUP,
+        ),
     ),
     "go": StackProfile(
         name="go",
