@@ -134,6 +134,32 @@ def _configured_tool_paths(
     return tuple(selected)
 
 
+def _readable_java_home(
+    workspace: Path | None = None,
+    environment: Path | None = None,
+) -> Path | None:
+    """The operator's JDK, when the boundary can actually read it.
+
+    Passing it through unconditionally would trade a reporting gap for a
+    toolchain that cannot start: the sandbox denies reads under HOME, so a JDK
+    installed by a per-user version manager would be named and then unreachable.
+    A JDK outside those roots -- the system locations JDKs usually occupy -- is
+    both readable and worth naming, so the run executes the toolchain it claims.
+    """
+    declared = os.environ.get("JAVA_HOME", "").strip()
+    if not declared:
+        return None
+    try:
+        resolved = Path(declared).resolve(strict=True)
+    except OSError:
+        return None
+    if not (resolved / "bin" / "java").exists():
+        return None
+    if _is_within(resolved, _sensitive_path_roots(workspace, environment)):
+        return None
+    return resolved
+
+
 def _system_path_entries(
     workspace: Path | None = None,
     environment: Path | None = None,
@@ -687,6 +713,17 @@ class ProcessRunner:
             "USERPROFILE": str(home),
             "VIRTUAL_ENV": str(directory),
         })
+        java_home = _readable_java_home(self.workspace, directory)
+        if java_home is not None:
+            # Which JDK Maven runs is a fact the evidence should state. Dropping
+            # the variable left it to whatever the rebuilt PATH offered first --
+            # Java 25 through a package manager, where the operator had selected
+            # 21 -- so a trial reported the toolchain it was configured with
+            # rather than the one that ran.
+            environment["JAVA_HOME"] = str(java_home)
+            environment["PATH"] = os.pathsep.join(
+                [str(java_home / "bin"), environment["PATH"]]
+            )
         return environment
 
     @staticmethod

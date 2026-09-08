@@ -219,6 +219,45 @@ class QualityMCP:
         finally:
             self._environment_lock.release()
 
+    # A suite that starts its own containers asks the Docker daemon for them
+    # while it runs. Named per ecosystem because the declaration lives in the
+    # component's own manifest.
+    _CONTAINER_API_MARKERS = (
+        ("pom.xml", "org.testcontainers"),
+        ("build.gradle", "testcontainers"),
+        ("build.gradle.kts", "testcontainers"),
+        ("package.json", "testcontainers"),
+        ("go.mod", "testcontainers-go"),
+    )
+
+    def _container_api_refusal(self) -> RuntimeError | None:
+        """Refuse up front when this suite needs a Docker API we cannot offer.
+
+        Inside the quality container there is no route to the daemon, so a
+        Testcontainers suite spends the run pulling an image it will never get
+        and fails on a `ContainerFetchException` that names neither cause nor
+        remedy. It did that three times in one benchmark before anyone read it
+        as a boundary rather than a flake. ADR 10 settles where such a suite
+        runs; saying so before the work starts is the whole point.
+        """
+        if not isinstance(self._runner, ContainerRunner):
+            return None
+        for manifest, marker in self._CONTAINER_API_MARKERS:
+            path = self.root / manifest
+            try:
+                declared = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if marker in declared:
+                return RuntimeError(
+                    f"{self.root.name} declares {marker} in {manifest}, and a "
+                    "suite that starts its own containers cannot reach the "
+                    "Docker API from inside the quality container. Run this "
+                    "component with quality_runner=process (ADR 10); mounting "
+                    "the host socket is refused."
+                )
+        return None
+
     def _java_agent_arguments(self, phase: str, environment: str) -> list[str]:
         """Load as agents the jars this toolchain must not attach to itself.
 
@@ -883,6 +922,10 @@ class QualityMCP:
         allowed = {AgentRole.TESTING}
         if role not in allowed:
             return self._denied(role, "run_tests")
+        started = time.perf_counter()
+        boundary = self._container_api_refusal()
+        if boundary is not None:
+            return self._unavailable(role, "run_tests", boundary, started)
         deadline = self._deadline()
         unavailable = self._ensure_services(role, "run_tests", deadline)
         if unavailable is not None:
