@@ -59,16 +59,19 @@ because `mvn` is a shell script).
 ## Accepted alongside this: the JDK is not pinned
 
 `ProcessRunner` rebuilds the child's PATH and passes through a small, fixed set
-of variables. `JAVA_HOME` is not among them, so Maven resolves whatever JDK that
-rebuilt PATH offers first — Java 25 in this series, where the launcher had
-selected 21. Nothing in the series failed because of it, and Mockito attaches
-correctly on both once the agent is loaded explicitly.
+of variables. `JAVA_HOME` was not among them, so Maven resolved whatever that
+rebuilt PATH offered first — Java 25 in this series, where the launcher had
+selected 21. Nothing failed because of it, and Mockito attaches correctly on
+both once the agent is loaded explicitly. But a trial reported the toolchain it
+was configured with rather than the one that ran, and that is not a claim
+evidence should make loosely.
 
-It is still a gap in what the evidence can claim: a trial reports the toolchain
-it was configured with, not the one that ran. We accept it for now rather than
-add `JAVA_HOME` to the passthrough, because the obvious fix has a failure mode
-of its own — the sandbox denies reads under `HOME`, so inheriting a JDK
-installed there would replace a reporting gap with tests that no longer run.
-Closing it properly means either recording the interpreter each phase actually
-used, or letting the profile declare its toolchain root and granting that path.
-Neither is guesswork we should do without measuring.
+Adding it unconditionally has a failure mode of its own: the sandbox denies
+reads under `HOME`, so a JDK installed by a per-user version manager would be
+named to Maven and then refused — trading a reporting gap for tests that cannot
+start. It is therefore passed through only when the boundary can read it, which
+covers the system locations JDKs usually occupy, and dropped otherwise, leaving
+the previous behaviour exactly as it was for the case that would break.
+
+A run now executes the toolchain it names, and where it cannot, it says nothing
+rather than something false.
