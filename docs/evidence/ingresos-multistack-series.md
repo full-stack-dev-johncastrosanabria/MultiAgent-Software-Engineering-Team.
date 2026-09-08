@@ -138,23 +138,54 @@ It did not deliver because the review was not approved, which is the gate
 behaving as written: `delivery_error` is absent because the block never ran.
 What remains untested end to end is the last step, not the decision to take it.
 
+## The CVEs have no upgrade to take
+
+`run_security_scan` fails on `order-ms` over CVE-2026-41115 in kafka-clients
+4.2.1 and CVE-2026-75838 in the DOMPurify 3.4.12 that Swagger UI bundles. Both
+are real. Neither has a published fix, and this was measured rather than
+assumed:
+
+- kafka-clients 4.3.0 is the newest release on Maven Central, and
+  dependency-check flags it for the same CVE.
+- Swagger UI is already newest. springdoc 3.1.0 resolves `org.webjars:swagger-ui`
+  5.32.11 on its own. Forcing the version Maven Central's search API reports as
+  latest — 5.25.3 — is a *downgrade* whose bundle carries DOMPurify 3.2.4 and
+  six additional CVEs.
+
+So the finding stands and the remedy does not exist yet. That is the case the
+baseline classification was built for: the risk stays visible in the Reviewer's
+problems, and the gate does not send a Developer to patch a version nobody has
+published. Scanning the whole component turns up twenty distinct CVEs at CVSS 7
+or above; the two named here are simply the ones the trials reported.
+
 ## Open, with no owner
 
 - A fan-out run gates on components the manifest does not claim. Trial 11 scored
-  `testing` zero because `frontend` runs `ng test` without a browser, while both
-  components the experiment named were green. Either the gate should weigh the
-  component under test, or a manifest naming one component should select it —
-  the second is what trial 10 did, and it is why trial 10 approved.
-- `fp-t9-testcontainers-no-docker-api` is recorded as a limit of the container
-  runner rather than pending work; see ADR 10. Mounting the host socket was
-  considered and refused.
-- `JAVA_HOME` is not in the runner's passthrough environment, so Maven resolves
-  whatever JDK the rebuilt `PATH` offers — Java 25 in these runs, not the 21 the
-  launcher selected. Not a cause of any defect above; an integrity gap in what
-  the evidence can claim about the toolchain that ran.
-- `run_security_scan` still fails on `order-ms`, now for the reason it should:
-  CVE-2026-41115 in kafka-clients and CVE-2026-75838 in swagger-ui are real and
-  unpatched at `d536f9d`.
+  `testing` zero over `frontend` while both components the experiment named were
+  green. Either the gate should weigh the component under test, or a manifest
+  naming one component should select it — the second is what trial 10 did, and
+  it is why trial 10 approved.
+
+Three items that were open here are now closed, and the record of how is worth
+keeping because two of them were closed by finding the diagnosis wrong.
+
+`JAVA_HOME` now reaches the command. It is passed through when the sandbox can
+read it and dropped when it cannot, so a JDK under HOME still does not get named
+and then refused. Verified inside the boundary: `java -version` reports 21.0.10,
+the version the launcher selects, where it used to report 25.
+
+The container runner refuses a Testcontainers suite before the work rather than
+during it. The component's own manifest declares the dependency, so the refusal
+arrives in zero milliseconds naming both the cause and ADR 10, instead of a
+`ContainerFetchException` after minutes — which is how the same boundary got
+read as a flake three times.
+
+`ng test` was never blocked on a browser. Angular 21's unit-test builder already
+runs vitest against jsdom, both already in `devDependencies`. The suite failed to
+*compile*: `codePointAt` returns `number | undefined` where `Uint8Array.from`
+requires `number`, so TS2769 stopped the bundle and no spec ran at all. With
+`charCodeAt` the three files and nine tests pass in under a second, headless.
+Fixed upstream in `PruebaNuevosIngresosBackend`.
 
 ## A note on method
 
