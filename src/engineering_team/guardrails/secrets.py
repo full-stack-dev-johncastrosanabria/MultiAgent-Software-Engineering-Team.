@@ -2,7 +2,6 @@
 
 import ast
 import json
-from pathlib import Path
 import re
 from collections.abc import Iterable
 from typing import Any
