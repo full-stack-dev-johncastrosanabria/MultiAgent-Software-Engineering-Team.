@@ -206,3 +206,26 @@ is behaviour, not test infrastructure, and it belongs in its own change rather
 than smuggled in as preparation for someone else's. It is a good candidate for a
 later run. Until then, a gate executed twice in one run may be red the second
 time for a reason that has nothing to do with the change under test.
+
+## What stopped the trial, twice, and neither was the harness
+
+With ADR 12 in place the gate is sound, and the run still did not reach a PR.
+Both blockers were environmental, and in both the guardrail that fired was right.
+
+**The secrets guardrail refused the cloud path.** `appsettings.json` carries the
+MySQL password inside the connection string and a 49-character JWT signing key,
+committed in `898ac77`. The Architecture step died on `sensitive content is not
+allowed in cloud context`. That is the guardrail doing its job: the repository's
+own configuration was about to become a cloud prompt. Loosening it was not
+considered. Worth saying plainly to whoever owns the repository — a signing key
+in version control is a finding on its own account, independent of this run.
+
+**The local path has no models.** Falling back to local inference put the run on
+`qwen3.5:9b`, and Ollama is installed with nothing in it: `~/.ollama/models` is
+0B and `ollama list` is empty. The run ended in `HUMAN_REVIEW_REQUIRED` after 33
+seconds with `LLM_AVAILABILITY_ERROR`, having produced no diff — which is the
+correct outcome for an agent that could not think, rather than a fabricated one.
+
+So the harness work for this repository is finished and the trial is waiting on
+one of two decisions that are not the harness's to make: pull local models, or
+move the credentials out of the committed configuration.
