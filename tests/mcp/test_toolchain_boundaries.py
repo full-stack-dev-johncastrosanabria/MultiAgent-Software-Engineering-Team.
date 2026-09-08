@@ -8,7 +8,9 @@ pull that was never going to succeed.
 
 from __future__ import annotations
 
+import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -130,3 +132,37 @@ def test_a_component_that_starts_no_containers_still_runs_in_one() -> None:
     )
 
     assert quality._container_api_refusal() is None
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin identity sandbox regression")
+def test_the_sandbox_can_still_resolve_who_is_running_the_command(
+    tmp_path: Path,
+) -> None:
+    """A denied identity lookup does not fail as a permission error.
+
+    macOS resolves a group list through opendirectoryd rather than the getgroups
+    syscall, and `(deny default)` covers the mach lookup it needs. .NET reads the
+    refusal as "buffer too small", doubles the buffer, and overflows a checked
+    multiply, so `dotnet test` died inside CreateAppHost with an arithmetic error
+    that named neither the sandbox nor the lookup. Nothing else about the run
+    hinted at the cause, so the boundary has to keep the lookup open.
+    """
+    quality = QualityMCP(tmp_path, timeout_seconds=60)
+    try:
+        interpreter = quality._interpreter()
+        completed = quality._execute_process(
+            [
+                interpreter,
+                "-c",
+                "import os, pwd;"
+                " os.getgrouplist(pwd.getpwuid(os.getuid()).pw_name, os.getgid())",
+            ],
+            cwd=Path(interpreter).parent.parent,
+            deadline=time.monotonic() + 45,
+            allow_network=False,
+            allow_subprocesses=True,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+    finally:
+        quality.close()

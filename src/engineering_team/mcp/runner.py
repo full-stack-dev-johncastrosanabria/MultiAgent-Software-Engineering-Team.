@@ -571,6 +571,17 @@ class ProcessRunner:
                 for path in writable_paths
             ),
             '  (literal "/dev/null"))',
+            # Identity lookup, not data. .NET resolves the caller's group list
+            # through opendirectoryd instead of the getgroups syscall, and a
+            # denied lookup never surfaces as a permission error: the runtime
+            # reads the failure as "buffer too small", doubles the buffer, and
+            # overflows a checked multiply, so the build dies inside
+            # CreateAppHost with an arithmetic error that names nothing.
+            # Read-only, and it reaches neither the filesystem nor the network.
+            "(allow mach-lookup",
+            '  (global-name "com.apple.system.opendirectoryd.membership")',
+            '  (global-name "com.apple.system.opendirectoryd.libinfo")',
+            '  (global-name "com.apple.system.opendirectoryd.api"))',
             *(
                 [
                     "(allow network*)",
