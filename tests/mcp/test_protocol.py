@@ -1,18 +1,51 @@
+import json
 import tempfile
 import threading
 import time
 from pathlib import Path
+
+import pytest
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.mcp.client import MCPQualityClient, MCPRepositoryClient
 
 
 def test_mcp_server_bootstrap_is_isolated_from_project_cwd(tmp_path: Path) -> None:
+    """Isolation is `-I` and a cwd of our own, whatever shape the launch takes.
+
+    Naming `-m engineering_team.mcp.server` pinned the spelling rather than the
+    property, so a change that strengthened the launch broke the assertion. `-I`
+    is what the isolation actually rests on.
+    """
     client = MCPQualityClient(tmp_path)
     parameters = client._parameters()
 
-    assert parameters.args[:3] == ["-I", "-m", "engineering_team.mcp.server"]
+    assert parameters.args[0] == "-I"
+    assert "engineering_team.mcp.server" in " ".join(parameters.args)
     assert Path(parameters.cwd) != tmp_path
+
+
+@pytest.mark.parametrize("client_type", [MCPQualityClient, MCPRepositoryClient])
+def test_mcp_server_runs_the_same_source_tree_as_its_parent(
+    client_type, tmp_path: Path
+) -> None:
+    """`-I` ignores PYTHONPATH, so the child used to resolve its own install.
+
+    Launched against a worktree -- which is the tree a trial exists to measure
+    -- the child fell back to the checkout instead, twenty commits behind and
+    without the fixes the run was there to exercise. Both clients spawn the same
+    way, so Repository was as affected as Quality and every packet's `aset_sha`
+    described only the parent.
+    """
+    import engineering_team
+
+    from engineering_team.mcp.client import _parent_aset_src
+
+    expected = Path(engineering_team.__file__).resolve().parents[1]
+    parameters = client_type(tmp_path)._parameters()
+
+    assert _parent_aset_src() == expected
+    assert json.dumps(str(expected)) in " ".join(parameters.args)
 
 
 def test_repository_tools_execute_through_real_stdio_mcp_session(tmp_path: Path) -> None:
