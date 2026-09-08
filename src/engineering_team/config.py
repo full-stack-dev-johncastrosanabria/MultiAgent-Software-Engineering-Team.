@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # (finding 19 / PruebaNuevosIngresosBackend).
     quality_stack: str = "python"
     quality_component_path: str = ""
+    # Which of a component's tests the gate runs. A boundary cannot host every
+    # suite a repository ships -- browser-driven tests need a real browser, and
+    # Chrome resolves its user data directory through a macOS API that ignores
+    # TMPDIR and lands in a root the sandbox denies. Narrowing the gate is the
+    # operator's call and is stated, never inferred; the expression is the
+    # toolchain's own syntax, and a stack that cannot express one refuses
+    # rather than silently running everything.
+    quality_test_filter: str = ""
     # A cold container may need the complete dependency graph before the first
     # quality command can run. This stays bounded, separately from MCP lookup.
     quality_timeout_seconds: float = Field(default=600, ge=30)

@@ -154,8 +154,10 @@ def test_the_sandbox_can_still_resolve_who_is_running_the_command(
             [
                 interpreter,
                 "-c",
-                "import os, pwd;"
-                " os.getgrouplist(pwd.getpwuid(os.getuid()).pw_name, os.getgid())",
+                (
+                    "import os, pwd; os.getgrouplist("
+                    "pwd.getpwuid(os.getuid()).pw_name, os.getgid())"
+                ),
             ],
             cwd=Path(interpreter).parent.parent,
             deadline=time.monotonic() + 45,

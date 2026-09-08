@@ -334,6 +334,13 @@ class ProcessRunner:
         directory = Path(tempfile.mkdtemp(prefix="env-", dir=base))
         self.environment = directory
         try:
+            # The two directories the environment advertises. Python's tempfile
+            # invents a missing TMPDIR, so nothing noticed they were never
+            # created -- until a Selenium suite asked Chrome for a user data
+            # directory and every browser test failed in a millisecond with
+            # "cannot create temp dir for user data dir".
+            (directory / "home").mkdir()
+            (directory / "tmp").mkdir()
             uid = os.getuid() if hasattr(os, "getuid") else 0
             (directory / _ENVIRONMENT_MARKER).write_text(
                 json.dumps({

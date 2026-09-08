@@ -105,6 +105,7 @@ class QualityMCP:
         profile: StackProfile | None = None,
         component: str = "",
         services: Any = None,
+        test_filter: str = "",
     ) -> None:
         self.root = Path(root).resolve()
         # Which ecosystem's commands to run. An explicit profile (how every
@@ -124,6 +125,11 @@ class QualityMCP:
         # run, which leaves evidence_reference unset exactly as before: the gates
         # group by it, and an unset reference is one bucket.
         self.component = component
+        # Which of this component's tests the gate runs. An explicit argument
+        # wins over settings, exactly as the profile and the runner do.
+        self.test_filter = test_filter or str(
+            getattr(settings, "quality_test_filter", "") or ""
+        )
         # The dependencies this project declares. They live for the run, so they
         # are started once, before the first phase that could need them.
         self.service_environment: tuple[tuple[str, str], ...] = ()
@@ -927,6 +933,13 @@ class QualityMCP:
         boundary = self._container_api_refusal()
         if boundary is not None:
             return self._unavailable(role, "run_tests", boundary, started)
+        if self.test_filter and not self.profile.test_filter_arguments(self.test_filter):
+            return self._unavailable(role, "run_tests", RuntimeError(
+                f"{self.profile.name} declares no test filter syntax, so "
+                f"quality_test_filter={self.test_filter!r} cannot be honoured. "
+                "Refusing before the run rather than executing the whole suite "
+                "the operator asked to narrow."
+            ), started)
         deadline = self._deadline()
         unavailable = self._ensure_services(role, "run_tests", deadline)
         if unavailable is not None:
@@ -951,6 +964,7 @@ class QualityMCP:
         report_aware = self.profile.name in {"jvm", "dotnet"}
         before = snapshot_reports(self.root, self.profile.name) if report_aware else {}
         extra = list(paths or [])
+        extra.extend(self.profile.test_filter_arguments(self.test_filter))
         if self.profile.name == "dotnet":
             extra.extend(["--logger", "trx"])
         result = self._run_profile(role, "run_tests", "test", extra, allowed, deadline)

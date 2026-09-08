@@ -80,6 +80,14 @@ class StackProfile:
     granted for reading as well as writing: the runtime opens the directory
     itself, not only the files inside it.
     """
+    test_filter_template: tuple[str, ...] = ()
+    """How this toolchain narrows a test run, with `{filter}` for the expression.
+
+    Only the stacks whose syntax is measured declare one. An operator who names
+    a filter for a stack that has none gets a refusal, not a full run that
+    quietly ignored the request -- a gate that ran more than it was asked to is
+    the one failure mode a narrowed gate must not have.
+    """
     java_agents: tuple[str, ...] = ()
     """Globs, under the environment's package cache, for jars to load as agents.
 
@@ -118,6 +126,12 @@ class StackProfile:
         expanded = self._expand(self.test_template, interpreter, environment)
         assert expanded is not None
         return expanded
+
+    def test_filter_arguments(self, expression: str) -> list[str]:
+        """The arguments that narrow a test run to `expression`, if any."""
+        if not expression or not self.test_filter_template:
+            return []
+        return [part.replace("{filter}", expression) for part in self.test_filter_template]
 
     def lint_command(self, interpreter: str, environment: str = "") -> list[str] | None:
         return self._expand(self.lint_template, interpreter, environment)
@@ -164,6 +178,7 @@ PROFILES: dict[str, StackProfile] = {
         build_template=(INTERPRETER, "-I", "-m", "compileall", "."),
         dependency_template=(INTERPRETER, "-I", "-m", "pip", "check"),
         security_template=(INTERPRETER, "-I", "-m", "ruff", "check"),
+        test_filter_template=("-k", "{filter}"),
     ),
     "jvm": StackProfile(
         name="jvm",
@@ -228,12 +243,29 @@ PROFILES: dict[str, StackProfile] = {
             ("DOTNET_NOLOGO", "1"),
             ("DOTNET_CLI_TELEMETRY_OPTOUT", "1"),
             ("NUGET_PACKAGES", f"{ENVIRONMENT}/nuget"),
+            # MSBuild keeps worker nodes alive between invocations and talks to
+            # them over a Unix socket in a directory the sandbox does not grant.
+            # Reuse is a warm-start optimisation across builds the boundary
+            # discards anyway, and leaving it on costs the run a SocketException
+            # instead of a build.
+            ("MSBUILDDISABLENODEREUSE", "1"),
         ),
+        # Two persistent build servers, both refused the same way. MSBuild
+        # reuses worker nodes over a socket (see MSBUILDDISABLENODEREUSE above);
+        # Roslyn keeps a shared compilation server and reaches it over a named
+        # pipe. Neither is granted, and neither fails cleanly -- the build sat
+        # at zero CPU with MSBuild blocked in WaitForMultipleObjects and
+        # VBCSCompiler idle on the other end, until the gate's whole budget
+        # expired. The server also outlives a build, so whether one was already
+        # running decided if a run took ten minutes or hung: the same command
+        # passed in 632s once and timed out past 2390s the next time.
         test_template=(
-            "dotnet", "test", "--nologo", f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
+            "dotnet", "test", "--nologo", "-m:1", "-p:UseSharedCompilation=false",
+            f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
         ),
         build_template=(
-            "dotnet", "build", "--nologo", f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
+            "dotnet", "build", "--nologo", "-m:1", "-p:UseSharedCompilation=false",
+            f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
         ),
         dependency_template=(
             "dotnet", "list", "package", "--include-transitive", "--format", "json",
@@ -253,6 +285,7 @@ PROFILES: dict[str, StackProfile] = {
         # names the directory itself, so the grant is the directory .NET owns
         # rather than the temporary root it happens to sit in.
         toolchain_writable_paths=("/tmp/.dotnet",),
+        test_filter_template=("--filter", "{filter}"),
     ),
     "go": StackProfile(
         name="go",
