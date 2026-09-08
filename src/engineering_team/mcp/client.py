@@ -21,6 +21,31 @@ from engineering_team.contracts.models import ToolResult
 _ClientT = TypeVar("_ClientT", bound="_MCPStdioClient")
 
 
+
+def _parent_aset_src() -> Path:
+    """Absolute `src/` of the engineering_team tree this process already loaded.
+
+    The MCP child is spawned with `-I`, which ignores PYTHONPATH. Without an
+    explicit pin it resolves `engineering_team` from the venv/editable install —
+    often the main checkout — while the parent was launched against a worktree
+    that already carries fixes (D2 `prepare_scratch`, …). Trials then measure
+    the wrong tree (`fp-mcp-isolated-loads-main`).
+    """
+    import engineering_team
+
+    return Path(engineering_team.__file__).resolve().parents[1]
+
+
+def _mcp_server_bootstrap() -> str:
+    """Keep `-I` isolation; put the parent's `src/` first on the child sys.path."""
+    src = _parent_aset_src()
+    return (
+        "import runpy, sys;"
+        f"sys.path.insert(0, {json.dumps(str(src))});"
+        "runpy.run_module('engineering_team.mcp.server', run_name='__main__')"
+    )
+
+
 class _MCPStdioClient:
     transport = "stdio"
 
@@ -47,11 +72,19 @@ class _MCPStdioClient:
         return StdioServerParameters(
             command=sys.executable,
             args=[
-                "-I", "-m", "engineering_team.mcp.server", "--kind", self.kind,
+                # `-I` keeps the scrubbed env; bootstrap pins the same `src/` the
+                # parent already imported so the child cannot fall back to MAIN.
+                "-I", "-c", _mcp_server_bootstrap(),
+                "--kind", self.kind,
                 "--root", str(self.root), "--timeout", str(self.timeout_seconds),
                 # Explicit, because the SDK gives the child almost no environment.
                 "--runner", getattr(self.settings, "quality_runner", None) or "process",
                 "--image", getattr(self.settings, "quality_container_image", None) or "",
+                # ADR 4 (finding 19): read only by the quality server; the
+                # repository server always sees the whole tree regardless.
+                "--stack", getattr(self.settings, "quality_stack", None) or "python",
+                "--component-root",
+                getattr(self.settings, "quality_component_path", None) or "",
             ],
             cwd=Path(sys.executable).resolve().parent,
         )

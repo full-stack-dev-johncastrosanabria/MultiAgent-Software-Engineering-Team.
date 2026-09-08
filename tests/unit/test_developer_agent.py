@@ -100,6 +100,100 @@ def test_requested_targets_adds_a_constant_test_when_requirement_requires_one() 
     assert targets == ["calculadora/__init__.py", "tests/test_version.py"]
 
 
+def test_requested_targets_resolves_unique_java_symbols_from_repository_paths() -> None:
+    """The Java run named classes, not literal paths, and consequently wrote nothing."""
+    targets = DeveloperAgent.requested_targets(
+        (
+            "Agrega GET /api/v1/orders/stats en OrderController y pruebas en "
+            "OrderControllerTest para todos los valores de OrderStatus."
+        ),
+        repository_paths=[
+            "order-ms/src/main/java/com/prueba/orderms/domain/OrderStatus.java",
+            "order-ms/src/main/java/com/prueba/orderms/web/OrderController.java",
+            "order-ms/src/test/java/com/prueba/orderms/web/OrderControllerTest.java",
+            "payment-ms/src/main/java/com/prueba/paymentms/PaymentController.java",
+        ],
+    )
+
+    assert targets == [
+        "order-ms/src/main/java/com/prueba/orderms/web/OrderController.java",
+        "order-ms/src/test/java/com/prueba/orderms/web/OrderControllerTest.java",
+        "order-ms/src/main/java/com/prueba/orderms/domain/OrderStatus.java",
+    ]
+
+
+def test_requested_targets_does_not_authorize_an_ambiguous_symbol() -> None:
+    targets = DeveloperAgent.requested_targets(
+        "Actualiza OrderController.",
+        repository_paths=[
+            "orders/src/main/java/example/OrderController.java",
+            "admin/src/main/java/example/OrderController.java",
+        ],
+    )
+
+    assert targets == []
+
+
+def test_search_terms_prioritize_identifiers_and_business_fields_over_generic_verbs() -> None:
+    specification = ProductSpecification(
+        objective=(
+            "Implementar endpoint GET /api/products/low-stock con threshold y "
+            "restock_value calculado a partir de cost"
+        ),
+        actors=[], business_rules=["restock_value usa cost y stock"], constraints=[],
+        acceptance_criteria=[], nfrs=[], ambiguities=[], assumptions=[],
+        source_requirement="Implementar endpoint de stock bajo",
+    )
+    architecture = ArchitectureProposal(
+        components=["Product (app/models/product.py)"], apis=[], data_changes=[],
+        integrations=[], dependencies=[], decisions=[], risks=[], impact="bounded",
+    )
+
+    terms = DeveloperAgent.search_terms(specification, architecture, "Implementar endpoint")
+
+    assert {"restock_value", "threshold", "cost"} <= set(terms[:6])
+    assert "implementar" not in terms[:6]
+    assert "endpoint" not in terms[:6]
+
+
+def test_dependency_targets_follow_only_unique_local_java_imports() -> None:
+    controller = "order-ms/src/main/java/com/example/orders/OrderController.java"
+    service = "order-ms/src/main/java/com/example/orders/OrderService.java"
+    repository = "order-ms/src/main/java/com/example/orders/OrderRepository.java"
+    paths = [
+        controller,
+        service,
+        repository,
+        "billing-ms/src/main/java/com/example/billing/OrderService.java",
+    ]
+
+    first_wave = DeveloperAgent.dependency_targets(
+        paths,
+        {
+            controller: (
+                "import com.example.orders.OrderService;\n"
+                "import org.springframework.http.ResponseEntity;\n"
+                "public class OrderController {}\n"
+            ),
+        },
+        already_read={controller},
+    )
+
+    # The duplicated OrderService basename is disambiguated by the fully-qualified import.
+    assert first_wave == [service]
+
+    second_wave = DeveloperAgent.dependency_targets(
+        paths,
+        {
+            controller: "import com.example.orders.OrderService;\n",
+            service: "import com.example.orders.OrderRepository;\n",
+        },
+        already_read={controller, service},
+    )
+
+    assert second_wave == [repository]
+
+
 def test_apply_adds_one_relevant_inspected_source_when_only_a_test_is_named() -> None:
     """A feature request must not authorize only its test by accident.
 

@@ -23,6 +23,9 @@ index says where each one stands.
 | 15 | high | Cold Quality provisioning expires before a real project reaches tests | **fixed** — with the separate bounded 600-second Quality budget, the fourth Flask run reached Security, Testing and Reviewer; its later failure was functional, not an install timeout |
 | 16 | high | A transient model outage ends a run before its deterministic gates | **fixed** — `1fcaf0d`; Flask v9 recovered from real provider failures and reached Testing and Reviewer three times |
 | 17 | high | Developer receives failing test names but not the failing assertions | **fixed** — Reviewer now attaches bounded, redacted pytest diagnostics while ContextEnvelope preserves role isolation and a 6 KiB total budget |
+| 18 | high | Developer repeats an identical defect across all three remediation cycles even with the failed assertion in hand | **open** — a clean FlaskApiProduct clone with finding 17 in place still stopped at `HUMAN_REVIEW_REQUIRED`; see the narrative below |
+| 19 | high | Profile per component ([ADR 4](../decisions/0004-profile-per-component.md)) is unit-tested but never reached by a real run | **fixed** — `quality_stack`/`quality_component_path` now travel from `Settings` through `MCPQualityClient`'s subprocess arguments to `QualityMCP`, exactly as `quality_runner`/`quality_container_image` already did; a non-Python external repository with no root manifest, given an explicit stack and component subdirectory, now reaches Security instead of failing before any agent runs |
+| 20 | high | Security's dependency and vulnerability scans are hardcoded to `pip`/`ruff` regardless of the component's profile | **open** — with finding 19 fixed, a JVM component reaches Security and fails there: `scan_dependencies` and `run_security_scan` assume a Python interpreter exists inside the component's own container image; see the narrative below |
 
 ## Two things worth remembering
 
@@ -143,3 +146,97 @@ own blocks, captured output is excluded, and Developer receives neither Testing
 tools nor complete `TestResult`/`ToolResult` payloads. Redaction happens before
 every truncation and preserves valid quoted JSON. The remaining evidence is an
 external Flask rerun that converges without operator repair.
+
+**Finding 18 is that rerun, and it did not converge.** A fresh clone of
+FlaskApiProduct (`main` @ `4cc7fc2`, PR #1 still open and unmerged) ran the same
+low-stock specification end to end in the container runner
+(`apply-1a667318-c715-4581-8f25-dd7bd8090e2c`, Python 3.12.14, 295 seconds).
+It reached Testing and Reviewer three times and stopped at
+`HUMAN_REVIEW_REQUIRED` with an identical `REJECTED` verdict on every cycle
+(`remediation_category: TESTING`, never `APPROVED`) — finding 17's bounded
+assertions were present in every remediation, and Developer still reproduced
+the same two defects at cycle three that were visible at cycle one. First, it
+edited the shared `autouse` `setup` fixture in `tests/test_products.py` to
+insert three baseline products so the new low-stock test would have data,
+which broke three previously passing tests that asserted an empty or specific
+count (`test_get_products_empty`, `test_filter_products_by_price`,
+`test_filter_products_by_category`) — Reviewer correctly labelled these
+`REGRESSION`, proving finding 13's fix works, but Developer never moved the
+new fixtures into the new test methods instead of the shared one. Second, its
+own generated assertion compared `restock_value` to a float
+(`500.00 * (10 - 5)`) while the route computed it from `product.cost`, a
+SQLAlchemy `Numeric` column that loads as `Decimal`; Flask's default JSON
+provider serializes an unconverted `Decimal` as a string, so the response held
+`"2500.00"` against an expected `2500.0`. The same file's own `to_dict()`
+already casts `float(self.cost)` for exactly this reason, one function away
+from where Developer wrote the route. Both defects, and the failed-assertion
+text describing them, were shown to Developer at every one of the three
+cycles without correction. This is now the open question finding 17 could not
+answer: bounded, correct diagnostic context does not by itself guarantee
+convergence within `MAX_ITERATIONS=3`, at least for this Developer model
+chain. The evidence is
+[`evaluation/reports/flask-retry-clean.json`](../../../evaluation/reports/flask-retry-clean.json)
+and its matching trace; no code in this repository was changed to produce it,
+and no fix is proposed here — the next step is to decide whether the answer is
+a narrower Developer prompt, a fixture-isolation rule, a serialization
+convention surfaced as evidence, or a documented limit on what three
+model-driven cycles can be expected to repair unattended.
+
+**Finding 19 is [ADR 4](../decisions/0004-profile-per-component.md) validated
+only where a test could construct it.** `QualityMCP.__init__` accepted an
+explicit `profile` argument and `build_runner()` could derive a pinned image
+from a stack, but only `tests/mcp/test_runner_selection.py` ever supplied that
+argument directly. `build_quality_server()`, the MCP server subprocess
+(`mcp/server.py`), and `MCPQualityClient` (`mcp/client.py`) had no way to carry
+a stack or a component subdirectory across the stdio boundary, so every real
+`run-project` invocation constructed `QualityMCP` with its unconditional
+`PROFILES["python"]` default. `detect_components()` (`components.py`) — fully
+deterministic, ADR-4-compliant, unit-tested — had zero callers outside its own
+module. This surfaced concretely against a real external repository: a fresh
+clone of PruebaNuevosIngresosBackend (Java/Maven, no root `pom.xml`, two
+independent modules `order-ms`/`payment-ms`) failed immediately with
+`ValueError: no container image is configured and none could be derived from
+this project`, before Product or any agent ran — `select_interpreter()` is
+Python-only and there was no other path to an image. The fix follows the
+project's stated convention rather than adding one: `quality_stack` and
+`quality_component_path`, two new explicit `Settings` fields, travel exactly
+the way `quality_runner`/`quality_container_image` already do — as CLI
+arguments to the MCP server subprocess (`--stack`, `--component-root`), not as
+anything auto-detected from repository contents. `build_runner()` now derives
+a non-Python image from `profile_for(settings.quality_stack).image` when none
+is given explicitly, and `main()` resolves the quality server's working root
+to `--root`/`--component-root` while leaving the Repository server (Developer
+read/write) rooted at the whole repository. With this in place, the same
+PruebaNuevosIngresosBackend clone, given `QUALITY_STACK=jvm
+QUALITY_COMPONENT_PATH=order-ms`, proceeded through Product, Architecture and
+Developer and reached Security (`apply-1b94a85d-cc5b-4118-a879-0632eb9c6d5f`) —
+see finding 20 for where it stopped next. `detect_components()` remains
+unwired; explicit configuration was chosen over auto-detection to stay
+consistent with the project's stated position that no routing decision comes
+from inferred repository shape, matching `quality_runner`'s own precedent.
+
+**Finding 20 is what finding 19's fix uncovered one stage later.** Once a JVM
+component could reach Security, both `scan_dependencies` and
+`run_security_scan` (`mcp/quality.py`) failed with `isolated environment
+unavailable: RuntimeError: venv creation failed in container: mkdir: cannot
+create directory '/root': Permission denied` and `exec: python: not found`.
+Unlike `run_tests()` and `run_linter()`, which branch on `self.profile.name`
+and dispatch to the profile's own command template, `scan_dependencies` and
+`run_security_scan` have no such branch: they unconditionally derive a Python
+interpreter (`self._interpreter(...)`) and invoke `pip check` and `ruff check`
+respectively, regardless of the component's actual stack. `StackProfile`
+(`stacks.py`) has `test_template`, `lint_template`, `build_template` and
+`install_template`, but no equivalent for a dependency or vulnerability scan —
+"profile per component" was completed for the test/lint path but never
+extended to Security's tools. The `maven:3.9-eclipse-temurin-21` image the JVM
+profile pins carries no `python` binary and runs as a non-root user, so both
+tool calls fail before Security can produce a verdict, and the run stops at
+`HUMAN_REVIEW_REQUIRED` after only `Product → Architecture → Developer →
+Security`, without ever reaching Testing or Reviewer. The evidence is
+[`evaluation/reports/kafka-retry.json`](../../../evaluation/reports/kafka-retry.json).
+No fix is proposed here: choosing what "scan dependencies" and "run a security
+scan" mean for Maven, npm, dotnet and Go (`mvn dependency-check`, `npm audit`,
+`dotnet list package --vulnerable`, `govulncheck`, or an explicit no-op with a
+documented reason) is an architecture decision for those stacks, not a
+mechanical extension of the wiring finding 19 already fixed, and belongs in an
+ADR before code changes it.

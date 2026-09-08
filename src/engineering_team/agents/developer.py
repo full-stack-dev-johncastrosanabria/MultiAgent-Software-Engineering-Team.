@@ -16,7 +16,12 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
     _STOP_WORDS: ClassVar[set[str]] = {
         "after", "allow", "authorized", "belonging", "bounded", "change",
         "exactly", "from", "latest", "only", "provide", "return", "safe",
-        "that", "their", "this", "using", "with",
+        "that", "their", "this", "using", "with", "agrega", "agregar",
+        "implementa", "implementar", "prueba", "pruebas", "todos", "valores",
+    }
+    _GENERIC_SEARCH_TERMS: ClassVar[set[str]] = {
+        "endpoint", "implementation", "implementaci", "implementar", "agrega",
+        "agregar", "change", "cambio", "feature", "funcionalidad", "prueba", "pruebas",
     }
 
     _TARGET_EXTENSIONS: ClassVar[set[str]] = {
@@ -27,7 +32,9 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
     _SOURCE_EXTENSIONS: ClassVar[set[str]] = _TARGET_EXTENSIONS - {"md", "txt"}
 
     @classmethod
-    def requested_targets(cls, requirement: str) -> list[str]:
+    def requested_targets(
+        cls, requirement: str, repository_paths: list[str] | None = None
+    ) -> list[str]:
         """File paths the requirement text explicitly names, in order of first mention.
 
         Used only when the caller opts into apply mode — a deterministic,
@@ -50,7 +57,63 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
         )
         if constant and re.search(r"\btests?/", requirement, flags=re.IGNORECASE):
             targets.append(f"tests/test_{constant.group(1).lower()}.py")
-        return list(dict.fromkeys(targets))
+
+        # Requirements commonly name a class rather than its full path. Resolve
+        # only exact, unique basenames from Repository MCP's inventory; an
+        # ambiguous name grants no write authority.
+        paths_by_stem: dict[str, list[str]] = {}
+        for path in repository_paths or []:
+            normalized = path.replace("\\", "/")
+            suffix = normalized.rsplit(".", 1)[-1].lower() if "." in normalized else ""
+            if suffix not in cls._TARGET_EXTENSIONS or not cls._safe_path(normalized):
+                continue
+            paths_by_stem.setdefault(Path(normalized).stem.casefold(), []).append(normalized)
+        for symbol in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", requirement):
+            if symbol.isupper():
+                continue
+            matches = list(dict.fromkeys(paths_by_stem.get(symbol.casefold(), [])))
+            if len(matches) == 1:
+                targets.append(matches[0])
+        # Bare basenames (e.g. products.py) must resolve to a unique inventory
+        # path (app/routes/products.py). Otherwise APPLY writes at repo root and
+        # Reviewer can falsely APPROVE (apply-5d1c2020).
+        paths_by_name: dict[str, list[str]] = {}
+        for path in repository_paths or []:
+            normalized = path.replace("\\", "/")
+            if not cls._safe_path(normalized):
+                continue
+            paths_by_name.setdefault(Path(normalized).name.casefold(), []).append(normalized)
+        resolved: list[str] = []
+        for path in targets:
+            normalized = path.replace("\\", "/")
+            if "/" in normalized:
+                resolved.append(normalized)
+                continue
+            matches = list(dict.fromkeys(paths_by_name.get(normalized.casefold(), [])))
+            if len(matches) == 1:
+                resolved.append(matches[0])
+            else:
+                resolved.append(normalized)
+        return list(dict.fromkeys(resolved))
+
+    @classmethod
+    def repository_paths(cls, repository_results: list[Any]) -> list[str]:
+        paths: list[str] = []
+        for item in repository_results:
+            if item.status is not ToolStatus.SUCCESS:
+                continue
+            if item.tool_name in {"list_files", "search_code"}:
+                paths.extend(item.output_summary.splitlines())
+            elif (
+                item.tool_name in {"read_file", "get_file_content"}
+                and item.input_summary.startswith("path=")
+            ):
+                paths.append(item.input_summary[5:])
+        return list(dict.fromkeys(
+            path.strip().replace("\\", "/")
+            for path in paths
+            if cls._safe_path(path.strip().replace("\\", "/"))
+        ))
 
     @classmethod
     def apply_targets(
@@ -139,6 +202,94 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
             if len(normalized) >= 4 and normalized not in cls._STOP_WORDS:
                 terms.append(normalized)
         return list(dict.fromkeys(terms))
+
+    @classmethod
+    def search_terms(
+        cls,
+        specification: Any,
+        architecture: Any,
+        requirement: str,
+        feedback: str = "",
+    ) -> list[str]:
+        """Rank bounded search queries by specificity instead of word order."""
+        terms = cls.relevance_terms(specification, architecture, f"{requirement} {feedback}")
+        corpus = " ".join([
+            requirement,
+            feedback,
+            getattr(specification, "objective", ""),
+            " ".join(getattr(specification, "business_rules", [])),
+            " ".join(getattr(architecture, "components", [])),
+        ]).casefold()
+        business_terms = set(cls.relevance_terms(
+            None,
+            None,
+            " ".join(getattr(specification, "business_rules", [])),
+        ))
+        objective_terms = set(cls.relevance_terms(
+            None, None, getattr(specification, "objective", "")
+        ))
+
+        def score(indexed: tuple[int, str]) -> tuple[int, int, int]:
+            index, term = indexed
+            occurrences = len(re.findall(
+                rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])", corpus
+            ))
+            shape = 4 * ("_" in term) + 3 * ("/" in term) + 2 * ("-" in term)
+            business = 12 if term in business_terms else 0
+            objective = 8 if term in objective_terms else 0
+            return (
+                occurrences * 5 + business + objective + shape + min(len(term), 12),
+                -index,
+                -len(term),
+            )
+
+        specific = [
+            (index, term) for index, term in enumerate(terms)
+            if term not in cls._GENERIC_SEARCH_TERMS
+        ]
+        return [term for _, term in sorted(specific, key=score, reverse=True)]
+
+    @classmethod
+    def dependency_targets(
+        cls,
+        repository_paths: list[str],
+        inspected_content: dict[str, str],
+        *,
+        already_read: set[str],
+        limit: int = 4,
+    ) -> list[str]:
+        """Resolve bounded Java imports against Repository MCP's safe inventory.
+
+        Fully-qualified imports disambiguate equal basenames across modules. The
+        result is read-only context: write authority remains exclusively with
+        ``requested_targets`` and ``apply_targets``.
+        """
+        if limit <= 0:
+            return []
+        safe_paths = [
+            path.replace("\\", "/")
+            for path in repository_paths
+            if cls._safe_path(path.replace("\\", "/"))
+        ]
+        resolved: list[str] = []
+        for source_path, content in inspected_content.items():
+            if not source_path.endswith(".java"):
+                continue
+            for imported in re.findall(
+                r"(?m)^\s*import\s+(?!static\b)([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\s*;",
+                content,
+            ):
+                suffix = f"{imported.replace('.', '/')}.java"
+                matches = [path for path in safe_paths if path.endswith(suffix)]
+                if len(matches) != 1:
+                    continue
+                target = matches[0]
+                if target in already_read or target in resolved:
+                    continue
+                resolved.append(target)
+                if len(resolved) == limit:
+                    return resolved
+        return resolved
 
     @staticmethod
     def rank_paths(paths: list[str], search_hits: list[str], terms: list[str]) -> list[str]:
@@ -244,7 +395,8 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
         repository_context = envelope.state_projection.get("repository_context") or {}
         if repository_context.get("apply_changes"):
             requested = self.requested_targets(
-                str(envelope.state_projection.get("requirement", ""))
+                str(envelope.state_projection.get("requirement", "")),
+                repository_paths=self.repository_paths(repository_results),
             )
             requested = self.apply_targets(
                 requested,

@@ -14,6 +14,7 @@ def test_settings_default_to_approved_local_model_policy() -> None:
     assert settings.max_cloud_escalations_per_agent == 1
     assert settings.max_cloud_escalations_per_run == 3
     assert settings.max_model_stage_retries == 1
+    assert settings.max_remediation_iterations == 5
     assert settings.llm_timeout_seconds == 60
     assert settings.quality_timeout_seconds == 600
 
@@ -44,6 +45,19 @@ def test_model_stage_retries_is_configurable_but_non_negative(monkeypatch) -> No
         raise AssertionError("negative model stage retries must be rejected")
 
 
+def test_remediation_iterations_are_configurable_but_positive(monkeypatch) -> None:
+    monkeypatch.setenv("MAX_REMEDIATION_ITERATIONS", "7")
+    assert Settings(_env_file=None).max_remediation_iterations == 7
+
+    monkeypatch.setenv("MAX_REMEDIATION_ITERATIONS", "0")
+    try:
+        Settings(_env_file=None)
+    except ValueError as error:
+        assert "max_remediation_iterations" in str(error)
+    else:
+        raise AssertionError("at least one remediation iteration is required")
+
+
 def test_settings_loads_canonical_langfuse_environment(monkeypatch) -> None:
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "public-test-value")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "secret-test-value")
@@ -64,3 +78,11 @@ def test_langfuse_base_url_precedes_legacy_host(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.langfuse_base_url == "https://canonical.example"
+
+
+def test_secondary_gemini_credential_loads_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY_2", "secondary-fixture-key")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.gemini_api_key_2 == "secondary-fixture-key"

@@ -134,6 +134,32 @@ def _configured_tool_paths(
     return tuple(selected)
 
 
+def _readable_java_home(
+    workspace: Path | None = None,
+    environment: Path | None = None,
+) -> Path | None:
+    """The operator's JDK, when the boundary can actually read it.
+
+    Passing it through unconditionally would trade a reporting gap for a
+    toolchain that cannot start: the sandbox denies reads under HOME, so a JDK
+    installed by a per-user version manager would be named and then unreachable.
+    A JDK outside those roots -- the system locations JDKs usually occupy -- is
+    both readable and worth naming, so the run executes the toolchain it claims.
+    """
+    declared = os.environ.get("JAVA_HOME", "").strip()
+    if not declared:
+        return None
+    try:
+        resolved = Path(declared).resolve(strict=True)
+    except OSError:
+        return None
+    if not (resolved / "bin" / "java").exists():
+        return None
+    if _is_within(resolved, _sensitive_path_roots(workspace, environment)):
+        return None
+    return resolved
+
+
 def _system_path_entries(
     workspace: Path | None = None,
     environment: Path | None = None,
@@ -279,19 +305,28 @@ class ProcessRunner:
     def closing(self) -> bool:
         return self._closing.is_set()
 
-    def prepare_environment(self, deadline: float) -> str:
-        """Build one strict, ephemeral interpreter on the host and return its path.
+    def prepare_scratch(self) -> Path:
+        """Create the private directory every sandboxed command needs, and return it.
 
-        The path is a host path because this runner executes on the host. A
-        backend whose boundary is elsewhere returns a path in its own namespace;
-        the caller only ever passes it back to `execute`.
+        HOME, TMPDIR and the sandbox's writable root all live here, so a jvm or
+        node component needs one exactly as much as a Python one does. Building
+        the virtual environment used to be the only way this directory came into
+        existence, which left every non-Python profile with no environment at
+        all: the sandbox refused the command it was asked to wrap before Maven
+        or npm ever ran. Creating the directory belongs here, at the point the
+        sandbox needs it, rather than in a caller that has to know to ask --
+        every caller that forgets is a component that cannot run its tests.
         """
+        existing = self.environment
+        if existing is not None:
+            return existing
+        if self._closing.is_set():
+            raise RuntimeError("quality runner is closed")
         self._scavenge_environments()
         base = self._prepare_environment_root()
         directory = Path(tempfile.mkdtemp(prefix="env-", dir=base))
         self.environment = directory
         try:
-            base_interpreter = self._base_interpreter()
             uid = os.getuid() if hasattr(os, "getuid") else 0
             (directory / _ENVIRONMENT_MARKER).write_text(
                 json.dumps({
@@ -301,6 +336,25 @@ class ProcessRunner:
                 }, separators=(",", ":")),
                 encoding="utf-8",
             )
+        except Exception:
+            self.environment = None
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
+        return directory
+
+    def prepare_environment(self, deadline: float) -> str:
+        """Build one strict, ephemeral interpreter on the host and return its path.
+
+        The path is a host path because this runner executes on the host. A
+        backend whose boundary is elsewhere returns a path in its own namespace;
+        the caller only ever passes it back to `execute`.
+
+        The interpreter is built inside the scratch directory, which is a
+        Python-only concern layered on top of a directory every profile shares.
+        """
+        directory = self.prepare_scratch()
+        try:
+            base_interpreter = self._base_interpreter()
             created = self._execute_process(
                 [
                     base_interpreter, "-I", "-m", "venv", "--without-pip",
@@ -418,9 +472,7 @@ class ProcessRunner:
     ) -> list[str]:
         """Wrap a command in a write-confined sandbox inherited by descendants."""
         backend, executable = self._sandbox_backend()
-        environment = self.environment
-        if environment is None:
-            raise RuntimeError("quality environment has not been created")
+        environment = self.prepare_scratch()
         if backend == "linux":
             return self._bubblewrap_command(
                 executable,
@@ -443,9 +495,7 @@ class ProcessRunner:
         allow_network: bool,
         allow_subprocesses: bool,
     ) -> list[str]:
-        environment = self.environment
-        if environment is None:
-            raise RuntimeError("quality environment has not been created")
+        environment = self.prepare_scratch()
         workspace_literal = json.dumps(str(self.workspace), ensure_ascii=False)
         environment_literal = json.dumps(str(environment), ensure_ascii=False)
         path_literals = [
@@ -521,9 +571,7 @@ class ProcessRunner:
         cwd: Path,
     ) -> list[str]:
         """Build a minimal Linux mount namespace without exposing host root/home."""
-        environment = self.environment
-        if environment is None:
-            raise RuntimeError("quality environment has not been created")
+        environment = self.prepare_scratch()
 
         writable = (self.workspace, environment)
         readonly_candidates = [
@@ -636,9 +684,7 @@ class ProcessRunner:
         return command
 
     def _subprocess_environment(self) -> dict[str, str]:
-        directory = self.environment
-        if directory is None:
-            raise RuntimeError("quality environment has not been created")
+        directory = self.prepare_scratch()
         home = directory / "home"
         temporary = directory / "tmp"
         home.mkdir(exist_ok=True)
@@ -667,6 +713,17 @@ class ProcessRunner:
             "USERPROFILE": str(home),
             "VIRTUAL_ENV": str(directory),
         })
+        java_home = _readable_java_home(self.workspace, directory)
+        if java_home is not None:
+            # Which JDK Maven runs is a fact the evidence should state. Dropping
+            # the variable left it to whatever the rebuilt PATH offered first --
+            # Java 25 through a package manager, where the operator had selected
+            # 21 -- so a trial reported the toolchain it was configured with
+            # rather than the one that ran.
+            environment["JAVA_HOME"] = str(java_home)
+            environment["PATH"] = os.pathsep.join(
+                [str(java_home / "bin"), environment["PATH"]]
+            )
         return environment
 
     @staticmethod

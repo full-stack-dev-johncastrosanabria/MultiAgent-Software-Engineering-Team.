@@ -148,6 +148,17 @@ class RetrievedEvidence(StrictModel):
     retrieved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class ExecutedTestCase(StrictModel):
+    """A passing case from a fresh runner report, with its matching test source.
+
+    Source is context for the named test, never a claim of statement/branch coverage.
+    """
+
+    identifier: str
+    report: str
+    source_excerpt: str = ""
+
+
 class ToolResult(StrictModel):
     tool_name: str
     allowed_role: AgentRole
@@ -157,6 +168,19 @@ class ToolResult(StrictModel):
     duration_ms: int = Field(ge=0)
     evidence_reference: str | None = None
     error: str | None = None
+    # None preserves legacy stdout evidence. [] means report-aware execution
+    # produced no passing cases; a zero exit code alone cannot fill coverage.
+    test_cases: list[ExecutedTestCase] | None = None
+    scans_dependencies: bool = False
+    """Whether this result is about third-party dependencies, not our own code.
+
+    Which command answers that belongs to the toolchain, not to the tool name:
+    `run_security_scan` is ruff on Python but OWASP dependency-check on the JVM,
+    npm audit on Node, govulncheck on Go. Reading it from the name generalised
+    the one stack where that phase is a linter to the four where it is not, and
+    Security routed a CVE in an untouched manifest back to the Developer as if
+    the change had introduced it.
+    """
 
 
 class ModelExecutionInfo(StrictModel):

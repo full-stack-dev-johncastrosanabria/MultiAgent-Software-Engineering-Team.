@@ -31,7 +31,26 @@ def test_third_failed_cycle_requires_human_review() -> None:
         return_to=RouteTarget.DEVELOPER,
         confidence=0.9,
     )
-    assert review_route(decision, iteration=3) == "HUMAN_REVIEW_REQUIRED"
+    assert review_route(decision, iteration=3, max_iterations=3) == "HUMAN_REVIEW_REQUIRED"
+
+
+def test_repeated_failure_expands_context_then_stops_if_still_unchanged() -> None:
+    decision = ReviewerDecision(
+        status=ReviewerStatus.REJECTED,
+        score=40,
+        subscores={},
+        reason="same failed assertion",
+        remediation_category=RemediationCategory.IMPLEMENTATION,
+        return_to=RouteTarget.DEVELOPER,
+        confidence=0.9,
+    )
+
+    assert review_route(
+        decision, iteration=2, max_iterations=5, repeated_failures=2
+    ) == "Architecture"
+    assert review_route(
+        decision, iteration=3, max_iterations=5, repeated_failures=3
+    ) == "HUMAN_REVIEW_REQUIRED"
 
 
 def test_critical_security_always_routes_to_hitl() -> None:

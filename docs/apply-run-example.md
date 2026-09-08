@@ -135,3 +135,25 @@ evidence = run_on_project(
 `.env` de este proyecto automáticamente (cloud-first si ya está configurado
 así) y la corrida queda instrumentada en Langfuse igual que el resto de
 ejecuciones.
+
+## Paso 3 — Delivery autónoma (`aset/…` PR)
+
+Por defecto `delivery_backend` es `none`: un `APPROVED` aplica a disco / reporta
+evidencia pero **no** abre PR. Para delivery con `gh` hace falta **configuración
+y confirmación explícita** (dos llaves):
+
+1. `DELIVERY_BACKEND=gh` en el entorno.
+2. `--confirm-delivery` en el mismo `run-project` (además de `--authorize-writes`).
+
+```bash
+DELIVERY_BACKEND=gh .venv/bin/engineering-team run-project /path/to/target \
+  --spec "…" \
+  --authorize-writes \
+  --confirm-delivery \
+  --report-path evaluation/reports/apply-run.json
+```
+
+Si falta cualquiera, no hay PR. Tras APPROVED el report puede incluir
+`delivery_branch` / `delivery_pr_url`, o `delivery_error` si `DeliveryRefused`.
+Evidencia autónoma Flask: PR #2 (`apply-debugger-flask-writes-v7`).
+

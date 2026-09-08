@@ -13,7 +13,8 @@ from engineering_team.guardrails.secrets import redact_secrets
 
 _SENSITIVE_KEYS = {
     "api_key", "apikey", "secret", "secret_key", "password", "access_token",
-    "authorization", "gemini_api_key", "groq_api_key", "langfuse_secret_key",
+    "authorization", "gemini_api_key", "gemini_api_key_2", "groq_api_key",
+    "langfuse_secret_key",
 }
 
 

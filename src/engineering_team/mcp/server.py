@@ -122,13 +122,13 @@ def build_quality_server(
     return server
 
 
-def settings_from_arguments(*, runner: str, image: str) -> Settings:
+def settings_from_arguments(*, runner: str, image: str, stack: str = "python") -> Settings:
     """Settings for a server told what to be, rather than left to infer it.
 
     The file-based settings still load, so everything else behaves as it does in
     the parent; only the choices that must not be lost are overridden.
     """
-    return Settings(quality_runner=runner, quality_container_image=image)
+    return Settings(quality_runner=runner, quality_container_image=image, quality_stack=stack)
 
 
 def main() -> None:
@@ -141,15 +141,25 @@ def main() -> None:
     # setting given as an environment variable never arrives.
     parser.add_argument("--runner", default="process")
     parser.add_argument("--image", default="")
+    # ADR 4: which ecosystem's commands to run, and where that component lives
+    # relative to --root. Both explicit, like --runner and --image: a repository
+    # with more than one buildable component (finding 19) has no single correct
+    # guess. Unused by the repository server, which always sees the whole tree.
+    parser.add_argument("--stack", default="python")
+    parser.add_argument("--component-root", default="")
     args = parser.parse_args()
-    server = (
-        build_repository_server(args.root)
-        if args.kind == "repository"
-        else build_quality_server(
-            args.root, args.timeout,
-            settings=settings_from_arguments(runner=args.runner, image=args.image),
+    if args.kind == "repository":
+        server = build_repository_server(args.root)
+    else:
+        quality_root = (
+            Path(args.root) / args.component_root if args.component_root else Path(args.root)
         )
-    )
+        server = build_quality_server(
+            quality_root, args.timeout,
+            settings=settings_from_arguments(
+                runner=args.runner, image=args.image, stack=args.stack
+            ),
+        )
     server.run("stdio")
 
 

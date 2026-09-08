@@ -130,3 +130,34 @@ def test_without_any_executed_suite_nothing_is_claimed_as_covered() -> None:
     assert result.executed_tests == ["no run_tests evidence recorded"]
     assert all(evidence == [] for evidence in result.coverage_mapping.values())
     assert result.actual_results == ["no suite executed"]
+
+
+def test_report_cases_supply_quiet_runner_coverage_without_stdout() -> None:
+    from engineering_team.contracts.models import ExecutedTestCase
+
+    tool = _tool("", evidence="quality://orders/run_tests").model_copy(update={
+        "test_cases": [ExecutedTestCase(
+            identifier="orders.OrderTest::permite",
+            report="target/surefire-reports/TEST-OrderTest.xml",
+            source_excerpt="void permite() { assertEquals(0, maximumConsecutiveAttempts()); }",
+        )],
+    })
+    result = _run(_specification(acceptance_criteria=["maximum consecutive attempts"]), [tool])
+    for dimension in ("happy_path", "boundary", "business_rule", "security"):
+        assert result.coverage_mapping[dimension] == ["quality://orders/run_tests"]
+    assert result.coverage_mapping["error"] == []
+
+
+def test_report_aware_zero_passes_never_uses_stdout_or_old_component_coverage() -> None:
+    from engineering_team.contracts.models import ExecutedTestCase
+
+    old = _tool("", evidence="quality://orders/run_tests").model_copy(update={
+        "test_cases": [ExecutedTestCase(identifier="boundary invalid password consecutive",
+                                        report="old.xml")],
+    })
+    current = _tool("boundary invalid password consecutive 100 passed",
+                    evidence="quality://orders/run_tests").model_copy(update={"test_cases": []})
+    result = _run(_specification(), [old, current])
+    assert result.status is ToolStatus.SUCCESS
+    assert all(not evidence for evidence in result.coverage_mapping.values())
+    assert result.executed_tests == ["quality://orders/run_tests"]

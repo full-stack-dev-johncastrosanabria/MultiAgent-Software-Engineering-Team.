@@ -1,7 +1,20 @@
 from engineering_team.agents.reviewer import ReviewerAgent
-from engineering_team.contracts.enums import AgentRole, ReviewerStatus, ToolStatus
+from engineering_team.contracts.enums import (
+    ActionMode,
+    AgentRole,
+    RemediationCategory,
+    ReviewerStatus,
+    RouteTarget,
+    SecuritySeverity,
+    SecurityStatus,
+    ToolStatus,
+)
+from engineering_team.contracts.models import (
+    ImplementationResult,
+    SecurityReview,
+    ToolResult,
+)
 from engineering_team.contracts.models import TestResult as ContractTestResult
-from engineering_team.contracts.models import ToolResult
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.models.context import build_context
 
@@ -43,14 +56,81 @@ def _run_tests_tool(
     )
 
 
-def _review(test_result: ContractTestResult, tools: list[ToolResult]):
+_SECURITY_CHECKLIST = {
+    "authentication": "PASS",
+    "authorization": "PASS",
+    "input_validation": "PASS",
+    "sensitive_information": "PASS",
+    "secrets": "PASS",
+    "injection": "PASS",
+    "access_control": "PASS",
+    "idor": "PASS",
+    "logging": "PASS",
+    "data_protection": "PASS",
+    "api_abuse": "PASS",
+    "rate_limiting": "PASS",
+    "owasp": "PASS",
+}
+
+
+def _security_review(*, status: SecurityStatus = SecurityStatus.PASS) -> SecurityReview:
+    return SecurityReview(
+        status=status,
+        highest_severity=SecuritySeverity.LOW,
+        findings=[],
+        recommendations=[],
+        sources=[],
+        checklist=_SECURITY_CHECKLIST,
+        requires_hitl=False,
+    )
+
+
+def _review(
+    test_result: ContractTestResult,
+    tools: list[ToolResult],
+    *,
+    implementation: ImplementationResult | None = None,
+    apply_changes: bool = False,
+    security_review: SecurityReview | None = None,
+):
     state = EngineeringState(
         run_id="review-evidence-gate",
         requirement="List accounts",
+        repository_context={"apply_changes": apply_changes, "authorized": apply_changes},
+        implementation=implementation,
+        security_review=security_review,
         test_results=[test_result],
         tool_results=tools,
     )
     return ReviewerAgent().execute(build_context(AgentRole.REVIEWER, state, "review"))
+
+
+def _implementation(
+    *,
+    mode: ActionMode = ActionMode.APPLIED,
+    contents: dict[str, str] | None = None,
+) -> ImplementationResult:
+    return ImplementationResult(
+        action_mode=mode,
+        changed_files=["app/accounts.py"],
+        diff="implement account listing",
+        evidence=["mcp://repository/read_file#app/accounts.py"],
+        validation_result="run tests",
+        security_surface_changed=False,
+        file_contents=contents or {},
+    )
+
+
+def _repository_tool(name: str, output: str) -> ToolResult:
+    return ToolResult(
+        tool_name=name,
+        allowed_role=AgentRole.DEVELOPER,
+        input_summary="path=app/accounts.py" if name == "update_file" else "git diff",
+        status=ToolStatus.SUCCESS,
+        output_summary=output,
+        duration_ms=10,
+        evidence_reference=f"mcp://repository/{name}",
+    )
 
 
 def test_reviewer_rejects_success_without_a_real_run_tests_execution() -> None:
@@ -119,3 +199,247 @@ def test_reviewer_approves_real_green_suite_with_complete_required_coverage() ->
     )
 
     assert decision.status is ReviewerStatus.APPROVED
+
+
+def test_reviewer_rejects_proposal_only_apply_with_green_baseline() -> None:
+    decision = _review(
+        _test_result(coverage={"happy_path": [_TEST_REFERENCE]}),
+        [_run_tests_tool()],
+        implementation=_implementation(mode=ActionMode.PROPOSED),
+        apply_changes=True,
+    )
+
+    assert decision.status is ReviewerStatus.REJECTED
+    assert decision.remediation_category is RemediationCategory.IMPLEMENTATION
+    assert decision.return_to is RouteTarget.DEVELOPER
+    assert any("APPLIED" in problem for problem in decision.problems)
+
+
+def test_reviewer_rejects_applied_content_without_write_evidence() -> None:
+    decision = _review(
+        _test_result(coverage={"happy_path": [_TEST_REFERENCE]}),
+        [_run_tests_tool()],
+        implementation=_implementation(contents={"app/accounts.py": "value = 2\n"}),
+        apply_changes=True,
+    )
+
+    assert decision.status is ReviewerStatus.REJECTED
+    assert any("write" in problem for problem in decision.problems)
+    assert any("diff" in problem for problem in decision.problems)
+
+
+def test_reviewer_rejects_successful_write_with_empty_resulting_diff() -> None:
+    decision = _review(
+        _test_result(coverage={"happy_path": [_TEST_REFERENCE]}),
+        [
+            _repository_tool("update_file", "app/accounts.py"),
+            _repository_tool("get_diff", ""),
+            _run_tests_tool(),
+        ],
+        implementation=_implementation(contents={"app/accounts.py": "value = 2\n"}),
+        apply_changes=True,
+    )
+
+    assert decision.status is ReviewerStatus.REJECTED
+    assert any("non-empty" in problem for problem in decision.problems)
+
+
+def test_reviewer_rejects_authored_text_without_final_newline() -> None:
+    decision = _review(
+        _test_result(coverage={"happy_path": [_TEST_REFERENCE]}),
+        [
+            _repository_tool("update_file", "app/accounts.py"),
+            _repository_tool(
+                "get_diff",
+                "--- a/app/accounts.py\n+++ b/app/accounts.py\n@@ -1 +1 @@\n-old\n+new",
+            ),
+            _run_tests_tool(),
+        ],
+        implementation=_implementation(contents={"app/accounts.py": "value = 2"}),
+        apply_changes=True,
+    )
+
+    assert decision.status is ReviewerStatus.REJECTED
+    assert any("newline" in problem for problem in decision.problems)
+
+
+def test_reviewer_approves_green_tests_despite_trailing_whitespace_only() -> None:
+    # Style nit alone must not HITL when tests already proved the change.
+    decision = _review(
+        _test_result(coverage={"happy_path": [_TEST_REFERENCE]}),
+        [
+            _repository_tool("update_file", "app/accounts.py"),
+            _repository_tool(
+                "get_diff",
+                "--- a/app/accounts.py\n+++ b/app/accounts.py\n@@ -1 +1 @@\n-old\n+new   ",
+            ),
+            _run_tests_tool(),
+        ],
+        implementation=_implementation(contents={"app/accounts.py": "value = 2\n"}),
+        apply_changes=True,
+    )
+
+    assert decision.status is ReviewerStatus.APPROVED
+
+
+def test_reviewer_reports_test_and_diff_failures_in_the_same_cycle() -> None:
+    test_result = ContractTestResult(
+        proposed_tests=["happy_path"],
+        generated_tests=[],
+        executed_tests=[_TEST_REFERENCE],
+        actual_results=["1 failed"],
+        status=ToolStatus.FAIL,
+        failures=[f"FAILED {_TEST_REFERENCE} - assert '2.00' == 2.0"],
+        coverage_mapping={"happy_path": []},
+        evidence_references=[_TEST_REFERENCE],
+    )
+    decision = _review(
+        test_result,
+        [
+            _repository_tool("update_file", "app/accounts.py"),
+            _repository_tool(
+                "get_diff",
+                "--- a/app/accounts.py\n+++ b/app/accounts.py\n@@ -1 +1 @@\n-old\n+new   ",
+            ),
+            _run_tests_tool(status=ToolStatus.FAIL),
+        ],
+        implementation=_implementation(contents={"app/accounts.py": "value = 2"}),
+        apply_changes=True,
+    )
+
+    assert decision.status is ReviewerStatus.REJECTED
+    assert any("not demonstrated" in problem for problem in decision.problems)
+    assert any("newline" in problem for problem in decision.problems)
+    assert any("trailing whitespace" in problem for problem in decision.problems)
+
+
+def test_reviewer_approves_fully_applied_change_with_green_tests() -> None:
+    decision = _review(
+        _test_result(coverage={"happy_path": [_TEST_REFERENCE]}),
+        [
+            _repository_tool("update_file", "app/accounts.py"),
+            _repository_tool(
+                "get_diff",
+                "--- a/app/accounts.py\n+++ b/app/accounts.py\n"
+                "@@ -1,2 +1,2 @@\n existing debt   \n-old\n+new",
+            ),
+            _run_tests_tool(),
+        ],
+        implementation=_implementation(contents={"app/accounts.py": "value = 2\n"}),
+        apply_changes=True,
+    )
+
+    assert decision.status is ReviewerStatus.APPROVED
+
+def test_reviewer_approves_empty_security_coverage_when_security_pass() -> None:
+    """apply-399a301c: Security PASS covers the security dimension; do not HITL."""
+    decision = _review(
+        _test_result(coverage={"happy_path": [_TEST_REFERENCE], "security": []}),
+        [_run_tests_tool()],
+        security_review=_security_review(status=SecurityStatus.PASS),
+    )
+
+    assert decision.status is ReviewerStatus.APPROVED
+    assert not any("security" in problem for problem in decision.problems)
+
+
+def test_reviewer_rejects_empty_security_coverage_without_security_pass() -> None:
+    decision = _review(
+        _test_result(coverage={"happy_path": [_TEST_REFERENCE], "security": []}),
+        [_run_tests_tool()],
+    )
+
+    assert decision.status is ReviewerStatus.REJECTED
+    assert any(
+        "required coverage dimension has no evidence: security" in problem
+        for problem in decision.problems
+    )
+
+def test_reviewer_ignores_whitespace_noop_writes_outside_diff() -> None:
+    """SUCCESS update_file with no get_diff footprint is WS noop (product.py)."""
+    implementation = ImplementationResult(
+        action_mode=ActionMode.APPLIED,
+        changed_files=["app/routes/accounts.py", "app/models/product.py"],
+        diff="implement account listing",
+        evidence=["mcp://repository/read_file#app/routes/accounts.py"],
+        validation_result="run tests",
+        security_surface_changed=False,
+        file_contents={
+            "app/routes/accounts.py": "value = 2\n",
+            "app/models/product.py": "class Product:\n    pass\n",
+        },
+    )
+    decision = _review(
+        _test_result(coverage={"happy_path": [_TEST_REFERENCE]}),
+        [
+            _repository_tool("update_file", "app/routes/accounts.py"),
+            _repository_tool("update_file", "app/models/product.py"),
+            _repository_tool(
+                "get_diff",
+                "--- a/app/routes/accounts.py\n+++ b/app/routes/accounts.py\n"
+                "@@ -1 +1 @@\n-old\n+new",
+            ),
+            _run_tests_tool(),
+        ],
+        implementation=implementation,
+        apply_changes=True,
+    )
+
+    assert decision.status is ReviewerStatus.APPROVED
+    assert not any("product.py" in problem for problem in decision.problems)
+
+
+
+def _baseline_security_review(description: str = "Residual baseline dependency risk CVE-2024-BASE") -> SecurityReview:
+    from engineering_team.contracts.models import SecurityFinding
+    return SecurityReview(
+        status=SecurityStatus.PASS,
+        highest_severity=SecuritySeverity.HIGH,
+        findings=[
+            SecurityFinding(
+                category="baseline dependencies",
+                severity=SecuritySeverity.HIGH,
+                description=description,
+                affected_evidence=["scan_dependencies"],
+                recommendation="track baseline dependency risk separately",
+                sources=[],
+            )
+        ],
+        recommendations=["track baseline dependency risk separately"],
+        sources=[],
+        checklist=_SECURITY_CHECKLIST,
+        requires_hitl=False,
+    )
+
+
+def test_reviewer_pass_with_baseline_findings_keeps_security_visible_when_covered() -> None:
+    """Test A: PASS + baseline findings + security evidenced -> APPROVED with baseline in problems."""
+    baseline_text = "Residual baseline dependency risk CVE-2024-BASELINE-A"
+    decision = _review(
+        _test_result(coverage={
+            "happy_path": [_TEST_REFERENCE],
+            "security": [_TEST_REFERENCE],
+        }),
+        [_run_tests_tool()],
+        security_review=_baseline_security_review(baseline_text),
+    )
+    assert decision.status is ReviewerStatus.APPROVED
+    assert any(baseline_text in problem for problem in decision.problems)
+    assert decision.subscores["security"] != 0
+
+
+def test_reviewer_pass_with_baseline_findings_does_not_exempt_security_coverage() -> None:
+    """Test B: PASS + baseline findings + empty security coverage -> REJECTED for gap, baseline visible."""
+    baseline_text = "Residual baseline dependency risk CVE-2024-BASELINE-B"
+    decision = _review(
+        _test_result(coverage={
+            "happy_path": [_TEST_REFERENCE],
+            "security": [],
+        }),
+        [_run_tests_tool()],
+        security_review=_baseline_security_review(baseline_text),
+    )
+    assert decision.status is ReviewerStatus.REJECTED
+    joined = "\n".join(decision.problems)
+    assert baseline_text in joined
+    assert "required coverage dimension has no evidence: security" in joined

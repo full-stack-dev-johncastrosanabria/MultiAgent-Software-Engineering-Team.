@@ -29,12 +29,22 @@ class Settings(BaseSettings):
     # A transient connection/timeout may clear on a second request. This is a
     # stage retry, before writes, and does not create another remediation cycle.
     max_model_stage_retries: int = Field(default=1, ge=0)
+    # Distinct failures may need multiple bounded correction cycles. Repeated
+    # identical failures are stopped earlier by the stagnation circuit breaker.
+    max_remediation_iterations: int = Field(default=5, ge=1)
     # Which boundary target-project commands execute behind. Deliberately not
     # auto-detected: a runner that varies silently by machine would isolate the
     # same run differently depending on whether a daemon happened to be up, and
     # nothing would say so -- the failure finding 5 describes for telemetry.
     quality_runner: str = "process"
     quality_container_image: str = ""
+    # ADR 4 (profile per component). Explicit QUALITY_STACK / quality_component_path
+    # still win (the Flask process sets QUALITY_STACK=python and must keep that
+    # path). When neither is set, apply_run detects every component and fans out
+    # — guessing a single stack for a multi-manifest tree is what we refuse
+    # (finding 19 / PruebaNuevosIngresosBackend).
+    quality_stack: str = "python"
+    quality_component_path: str = ""
     # A cold container may need the complete dependency graph before the first
     # quality command can run. This stays bounded, separately from MCP lookup.
     quality_timeout_seconds: float = Field(default=600, ge=30)
@@ -48,6 +58,7 @@ class Settings(BaseSettings):
     cloud_role_timeout_seconds: float = Field(default=120, gt=0)
     ollama_timeout_seconds: float = Field(default=600, gt=0)
     gemini_api_key: str | None = None
+    gemini_api_key_2: str | None = None
     groq_api_key: str | None = None
     mistral_api_key: str | None = None
     open_router_api_key: str | None = None

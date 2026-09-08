@@ -71,6 +71,30 @@ def test_a_project_without_compose_has_no_stack(tmp_path: Path) -> None:
     stack = ServiceStack(tmp_path, run_id="r1")
     assert stack.declared is False
     assert stack.network is None
+    assert stack.networks == ()
+
+
+def test_all_distinct_infrastructure_networks_are_discovered(tmp_path: Path, monkeypatch) -> None:
+    stack = ServiceStack(_project(tmp_path), run_id="two-networks")
+    monkeypatch.setattr(
+        stack,
+        "_compose",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, 0, "container-a\ncontainer-b\n", ""
+        ),
+    )
+
+    def inspect(args, **kwargs):
+        networks = "aset-two-networks-orders\n" if args[-1] == "container-a" else (
+            "aset-two-networks-admin\n"
+        )
+        return subprocess.CompletedProcess(args, 0, networks, "")
+
+    monkeypatch.setattr(subprocess, "run", inspect)
+    assert stack._discover_networks() == (
+        "aset-two-networks-admin",
+        "aset-two-networks-orders",
+    )
 
 
 def test_the_stack_reads_only_infrastructure(tmp_path: Path) -> None:

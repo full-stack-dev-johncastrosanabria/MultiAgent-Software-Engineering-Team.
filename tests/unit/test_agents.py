@@ -142,3 +142,201 @@ def test_security_uses_latest_scan_for_each_scope_without_erasing_history(status
         decision = ReviewerAgent().execute(build_context(
             AgentRole.REVIEWER, state.model_copy(update={"security_review": reviewed}), "review"))
         assert decision.return_to.value == "Developer"
+
+
+def test_security_treats_untouched_dependency_cves_as_baseline_pass() -> None:
+    from engineering_team.contracts.enums import ActionMode, RemediationCategory
+    from engineering_team.contracts.models import ImplementationResult
+
+    tool = ToolResult(
+        tool_name="scan_dependencies",
+        allowed_role=AgentRole.SECURITY,
+        status=ToolStatus.FAIL,
+        input_summary="project",
+        duration_ms=1,
+        output_summary=(
+            "OWASP Dependency-Check: CVE-2024-1234 high severity in jackson-databind"
+        ),
+    )
+    implementation = ImplementationResult(
+        action_mode=ActionMode.APPLIED,
+        changed_files=[
+            "order-ms/src/main/java/com/example/Order.java",
+            "order-ms/src/test/java/com/example/OrderTest.java",
+        ],
+        diff="allowlist-only order changes",
+        evidence=["mcp://repository/update_file"],
+        validation_result="compile ok",
+        security_surface_changed=False,
+    )
+    state = EngineeringState(
+        run_id="r",
+        requirement="Update order totals",
+        tool_results=[tool],
+        implementation=implementation,
+    )
+    reviewed = SecurityAgent().execute(build_context(AgentRole.SECURITY, state, "scan"))
+    assert reviewed.status.value == "PASS"
+    assert reviewed.findings[0].category == "baseline dependencies"
+    assert reviewed.highest_severity.value == "HIGH"
+    assert all(value == "PASS" for value in reviewed.checklist.values())
+    assert "CVE-2024-1234" in reviewed.findings[0].description
+    decision = ReviewerAgent().execute(build_context(
+        AgentRole.REVIEWER,
+        state.model_copy(update={"security_review": reviewed}),
+        "review",
+    ))
+    assert decision.subscores["security"] != 0
+    assert any("CVE-2024-1234" in problem for problem in decision.problems)
+    assert decision.remediation_category is not RemediationCategory.SECURITY
+    assert not (
+        decision.return_to is not None
+        and decision.return_to.value == "Developer"
+        and any(finding.category == "security tooling" for finding in reviewed.findings)
+    )
+
+
+def test_security_fails_dependency_cves_when_pom_changed() -> None:
+    from engineering_team.contracts.enums import ActionMode
+    from engineering_team.contracts.models import ImplementationResult
+
+    tool = ToolResult(
+        tool_name="scan_dependencies",
+        allowed_role=AgentRole.SECURITY,
+        status=ToolStatus.FAIL,
+        input_summary="project",
+        duration_ms=1,
+        output_summary=(
+            "OWASP Dependency-Check: CVE-2024-1234 high severity in jackson-databind"
+        ),
+    )
+    implementation = ImplementationResult(
+        action_mode=ActionMode.APPLIED,
+        changed_files=[
+            "order-ms/src/main/java/com/example/Order.java",
+            "order-ms/pom.xml",
+        ],
+        diff="bump dependency and order changes",
+        evidence=["mcp://repository/update_file"],
+        validation_result="compile ok",
+        security_surface_changed=False,
+    )
+    state = EngineeringState(
+        run_id="r",
+        requirement="Update order totals",
+        tool_results=[tool],
+        implementation=implementation,
+    )
+    reviewed = SecurityAgent().execute(build_context(AgentRole.SECURITY, state, "scan"))
+    assert reviewed.status.value == "FAIL"
+    assert reviewed.findings[0].category == "security tooling"
+    decision = ReviewerAgent().execute(build_context(
+        AgentRole.REVIEWER,
+        state.model_copy(update={"security_review": reviewed}),
+        "review",
+    ))
+    assert decision.subscores["security"] == 0
+    assert decision.return_to.value == "Developer"
+
+
+def test_security_redacts_secrets_in_baseline_finding_description() -> None:
+    from engineering_team.contracts.enums import ActionMode
+    from engineering_team.contracts.models import ImplementationResult
+
+    secret = "password=BaselineSecretToken_ABC123XYZ"
+    tool = ToolResult(
+        tool_name="scan_dependencies",
+        allowed_role=AgentRole.SECURITY,
+        status=ToolStatus.FAIL,
+        input_summary="project",
+        duration_ms=1,
+        output_summary=(
+            f"OWASP Dependency-Check: CVE-2024-9999 high severity; {secret}"
+        ),
+    )
+    implementation = ImplementationResult(
+        action_mode=ActionMode.APPLIED,
+        changed_files=["order-ms/src/main/java/com/example/Order.java"],
+        diff="allowlist-only order changes",
+        evidence=["mcp://repository/update_file"],
+        validation_result="compile ok",
+        security_surface_changed=False,
+    )
+    state = EngineeringState(
+        run_id="r",
+        requirement="Update order totals",
+        tool_results=[tool],
+        implementation=implementation,
+    )
+    reviewed = SecurityAgent().execute(build_context(AgentRole.SECURITY, state, "scan"))
+    assert reviewed.status.value == "PASS"
+    assert reviewed.findings[0].category == "baseline dependencies"
+    assert secret not in reviewed.findings[0].description
+    assert "[REDACTED]" in reviewed.findings[0].description
+    decision = ReviewerAgent().execute(build_context(
+        AgentRole.REVIEWER,
+        state.model_copy(update={"security_review": reviewed}),
+        "review",
+    ))
+    joined = "\n".join(decision.problems)
+    assert secret not in joined
+    assert "CVE-2024-9999" in reviewed.findings[0].description
+
+
+def test_security_fails_closed_when_implementation_missing() -> None:
+    tool = ToolResult(
+        tool_name="scan_dependencies",
+        allowed_role=AgentRole.SECURITY,
+        status=ToolStatus.FAIL,
+        input_summary="project",
+        duration_ms=1,
+        output_summary="OWASP Dependency-Check: CVE-2024-1234 high severity",
+    )
+    state = EngineeringState(
+        run_id="r",
+        requirement="Update order totals",
+        tool_results=[tool],
+    )
+    reviewed = SecurityAgent().execute(build_context(AgentRole.SECURITY, state, "scan"))
+    assert reviewed.status.value == "FAIL"
+    assert reviewed.findings[0].category == "security tooling"
+
+
+def test_security_treats_new_manifests_as_dependency_surface() -> None:
+    from engineering_team.contracts.enums import ActionMode
+    from engineering_team.contracts.models import ImplementationResult
+
+    tool = ToolResult(
+        tool_name="scan_dependencies",
+        allowed_role=AgentRole.SECURITY,
+        status=ToolStatus.FAIL,
+        input_summary="project",
+        duration_ms=1,
+        output_summary="CVE-2024-5555 in transitive dependency",
+    )
+    for changed in (
+        ["app/gradle/libs.versions.toml"],
+        ["src/App.fsproj"],
+        ["src/Lib.vbproj"],
+        ["pubspec.yaml"],
+        ["ios/Podfile"],
+        ["ios/Podfile.lock"],
+        ["mix.exs"],
+    ):
+        implementation = ImplementationResult(
+            action_mode=ActionMode.APPLIED,
+            changed_files=changed,
+            diff="manifest touch",
+            evidence=["mcp://repository/update_file"],
+            validation_result="ok",
+            security_surface_changed=False,
+        )
+        state = EngineeringState(
+            run_id="r",
+            requirement="Update deps",
+            tool_results=[tool],
+            implementation=implementation,
+        )
+        reviewed = SecurityAgent().execute(build_context(AgentRole.SECURITY, state, "scan"))
+        assert reviewed.status.value == "FAIL", changed
+        assert reviewed.findings[0].category == "security tooling", changed

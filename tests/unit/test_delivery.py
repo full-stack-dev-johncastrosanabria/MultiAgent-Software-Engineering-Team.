@@ -410,3 +410,56 @@ def test_both_backends_share_the_same_refusals() -> None:
         backend.open(
             Path("."), Proposal("main", "t", "b", {"a.txt": "x"}, "r"), confirmed=True
         )
+
+def test_updates_replace_an_existing_project_file(tmp_path: Path) -> None:
+    """APPROVED code changes use `updates` to replace files that already exist."""
+    origin = _bare_remote(tmp_path)
+    checkout = clone_repository(str(origin), tmp_path / "work")
+
+    proposal = Proposal(
+        branch="aset/code-change",
+        title="Update README",
+        body="Approved implementation rewrite.",
+        files={},
+        run_id="run-upd",
+        updates={"README.md": "revised by aset\n"},
+    )
+    assert GitDelivery().push(checkout, proposal, confirmed=True) == "aset/code-change"
+
+    content = subprocess.run(
+        ["git", "show", "aset/code-change:README.md"],
+        cwd=origin, capture_output=True, text=True, check=True,
+    ).stdout
+    assert content == "revised by aset\n"
+    assert "seed" not in content
+
+def test_empty_proposal_including_no_updates_is_refused(tmp_path: Path) -> None:
+    origin = _bare_remote(tmp_path)
+    checkout = clone_repository(str(origin), tmp_path / "work")
+    with pytest.raises(DeliveryRefused, match="no files"):
+        GitDelivery().push(
+            checkout,
+            Proposal("aset/empty", "t", "b", {}, "r", extends={}, updates={}),
+            confirmed=True,
+        )
+
+
+def test_updates_may_write_a_path_absent_from_base(tmp_path: Path) -> None:
+    """After an apply creates a file, delivery still ships it via updates."""
+    origin = _bare_remote(tmp_path)
+    checkout = clone_repository(str(origin), tmp_path / "work")
+    proposal = Proposal(
+        branch="aset/new-via-update",
+        title="Add module",
+        body="Created during apply, delivered as update.",
+        files={},
+        run_id="run-new",
+        updates={"brand_new.py": "print(\"hi\")\n"},
+    )
+    assert GitDelivery().push(checkout, proposal, confirmed=True) == "aset/new-via-update"
+    content = subprocess.run(
+        ["git", "show", "aset/new-via-update:brand_new.py"],
+        cwd=origin, capture_output=True, text=True, check=True,
+    ).stdout
+    assert content == "print(\"hi\")\n"
+

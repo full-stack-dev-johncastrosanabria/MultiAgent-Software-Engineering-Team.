@@ -8,7 +8,7 @@ from typing import Any
 
 _SENSITIVE_KEYS = {
     "api_key", "apikey", "secret", "secret_key", "access_token", "password",
-    "gemini_api_key", "groq_api_key", "langfuse_secret_key",
+    "gemini_api_key", "gemini_api_key_2", "groq_api_key", "langfuse_secret_key",
     "mistral_api_key", "open_router_api_key", "openrouter_api_key",
 }
 
@@ -119,7 +119,7 @@ def _without_documented_parameters(text: str) -> str:
 
 _ENV_FILE = re.compile(r"\.env\b", re.IGNORECASE)
 _SECRET_KEY_PATTERN = (
-    r"api[_-]?key|access[_-]?token|token|password|secret(?:[_-]?key)?"
+    r"api[_-]?key(?:[_-]?\d+)?|access[_-]?token|token|password|secret(?:[_-]?key)?"
 )
 _QUOTED_SECRET_VALUE = re.compile(
     rf"(?i)(?P<prefix>['\"]?(?:{_SECRET_KEY_PATTERN})['\"]?\s*[=:]\s*)"
@@ -128,13 +128,29 @@ _QUOTED_SECRET_VALUE = re.compile(
 _UNQUOTED_SECRET_VALUE = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*[^\s,]+"
 )
+_UNQUOTED_LINE_SECRET_VALUE = re.compile(
+    rf"(?im)^([ \t]*[A-Za-z0-9_.-]*(?:{_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*)"
+    r'''[^\s"'][^\r\n]*'''
+)
+_REDACTED_ASSIGNMENT = re.compile(
+    rf"(?i)({_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*"
+    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n]))'''
+    r'''|(?:"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}]))'''
+)
+
+
+def _mask_non_secret_syntax(text: str) -> str:
+    # Repository evidence is redacted before prompt construction. Only a complete
+    # canonical marker has no credential value; a prefix/suffix remains visible.
+    # Do this on decoded JSON source too, where newlines are actual boundaries.
+    return _REDACTED_ASSIGNMENT.sub(r"\1 [REDACTED]", _without_plain_string_annotations(text))
 
 
 def _scan_text(text: str) -> str:
-    text = _without_plain_string_annotations(text)
+    text = _mask_non_secret_syntax(text)
     text = re.sub(
         r"(```python\n)(.*?)(\n```)",
-        lambda match: match[1] + _without_plain_string_annotations(match[2]) + match[3],
+        lambda match: match[1] + _mask_non_secret_syntax(match[2]) + match[3],
         text, flags=re.DOTALL,
     )
     # Prompt envelopes contain JSON-encoded source strings. Decode only complete
@@ -144,7 +160,7 @@ def _scan_text(text: str) -> str:
             decoded = json.loads(match.group())
         except ValueError:
             return match.group()
-        return json.dumps(_without_plain_string_annotations(decoded), ensure_ascii=False)
+        return json.dumps(_mask_non_secret_syntax(decoded), ensure_ascii=False)
     return re.sub(r'"(?:\\.|[^"\\])*"', mask, text)
 
 
@@ -157,6 +173,10 @@ def redact_secrets(value: str, known_values: Iterable[str] = ()) -> str:
         quote = '"' if match.group("double") else "'"
         return match.group("prefix") + quote + "[REDACTED]" + quote
 
+    # Properties and YAML plain scalars may contain spaces and punctuation.
+    # Redact the complete line value before the generic inline-assignment pass;
+    # otherwise a canonical marker could conceal a partially retained password.
+    redacted = _UNQUOTED_LINE_SECRET_VALUE.sub(r"\1[REDACTED]", redacted)
     redacted = _QUOTED_SECRET_VALUE.sub(redact_quoted, redacted)
     return _UNQUOTED_SECRET_VALUE.sub(r"\1=[REDACTED]", redacted)
 
@@ -204,7 +224,8 @@ def require_safe_cloud_context(value: Any) -> None:
     # and `is_credential_path` excludes .env by name on top of that. Refusing the
     # mention as well bought nothing and cost every project that has one.
     if re.search(
-        r"(?i)(api[_-]?key|access[_-]?token|password|secret)\s*[=:]\s*[^\s,]+",
+        r"(?i)(api[_-]?key(?:[_-]?\d+)?|access[_-]?token|password|secret)"
+        r"\s*[=:]\s*[^\s,]+",
         _scan_text(text),
     ):
         raise ValueError("sensitive content is not allowed in cloud context")

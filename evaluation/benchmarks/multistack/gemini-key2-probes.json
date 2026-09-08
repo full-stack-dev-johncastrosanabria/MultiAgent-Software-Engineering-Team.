@@ -1,0 +1,52 @@
+{
+  "credential_alias": "GEMINI_API_KEY_2",
+  "catalogue_http_status": 200,
+  "probe_type": "bounded structured JSON generation; ok=true, models_checked=1",
+  "minimum_interval_seconds": 180,
+  "attempts": [
+    {
+      "model": "gemini-3.5-flash",
+      "started_utc": "2026-09-05T03:17:26.057533+00:00",
+      "ended_epoch": 1788578251.825703,
+      "http_status": 503,
+      "error_status": "UNAVAILABLE",
+      "structured_output_valid": false
+    },
+    {
+      "model": "gemini-3.7-flash",
+      "started_utc": "2026-09-05T03:21:41.185963+00:00",
+      "ended_epoch": 1788578502.523853,
+      "http_status": 503,
+      "error_status": "UNAVAILABLE",
+      "structured_output_valid": false
+    },
+    {
+      "model": "gemini-3.1-flash-lite",
+      "started_utc": "2026-09-05T03:25:12.209136+00:00",
+      "ended_epoch": 1788578716.6118212,
+      "http_status": 200,
+      "structured_output_valid": true,
+      "response": {"ok": true, "models_checked": 1},
+      "usage": {"prompt_tokens": 13, "completion_tokens": 13, "total_tokens": 26}
+    },
+    {
+      "model": "gemini-2.5-flash",
+      "started_utc": "2026-09-05T03:29:17.382430+00:00",
+      "ended_epoch": 1788578958.659845,
+      "http_status": 404,
+      "error_status": "NOT_FOUND",
+      "structured_output_valid": false
+    }
+  ],
+  "role_validation": {
+    "run_id": "apply-7f67441d-697a-4da2-b415-e6b6237a8462",
+    "role": "Developer",
+    "provider_alias": "google2",
+    "actual_model": "gemini-3.1-flash-lite",
+    "structured_output_success": true,
+    "preceding_primary_google_result": "gemini-3.5-flash provider_unavailable",
+    "overall_run_status": "HUMAN_REVIEW_REQUIRED",
+    "overall_rejection": "deterministic Testing did not receive executed JUnit case evidence"
+  },
+  "interpretation": "Flash-Lite passed the structured probe and later produced a valid real ASET Developer response on the secondary credential after primary Google unavailability. This establishes that observed fallback path, not universal model reliability or an approved end-to-end run. The two Flash probe failures do not demonstrate invalid credentials."
+}

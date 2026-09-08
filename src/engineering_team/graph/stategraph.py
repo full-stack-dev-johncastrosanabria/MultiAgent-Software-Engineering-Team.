@@ -42,7 +42,16 @@ from engineering_team.repository_evidence import (
     summarize_path_tool_result,
 )
 
-from .routers import review_route, security_route
+from .routers import (
+    remediation_fingerprint,
+    review_route,
+    security_route,
+    trailing_failure_repetitions,
+)
+
+
+MAX_DEVELOPER_DEPENDENCY_DEPTH = 2
+MAX_DEVELOPER_DEPENDENCY_READS = 4
 
 
 class WalkingState(TypedDict):
@@ -61,10 +70,12 @@ class WorkflowState(TypedDict, total=False):
     test_results: list
     baseline_tests: list
     review: object
+    review_history: list
     rag_evidence: list
     tool_results: list
     model_usage: list
     iteration: int
+    failure_fingerprints: list
     errors: list
     human_review_required: bool
     final_status: str
@@ -142,11 +153,14 @@ def build_engineering_graph(
     test_paths: list[str] | None = None,
     interactive_hitl: bool = False,
     model_stage_retries: int = 1,
+    max_remediation_iterations: int = 5,
 ):
     # StateGraph(WorkflowState) real con TypedDict, un nodo por agente y edges condicionales.
     """Compile normal, remediation, MCP/RAG, and HITL routes as real nodes."""
     if model_stage_retries < 0:
         raise ValueError("model_stage_retries must be non-negative")
+    if max_remediation_iterations < 1:
+        raise ValueError("max_remediation_iterations must be positive")
     graph = StateGraph(WorkflowState)
     agents: dict[AgentRole, Any] = {
         AgentRole.PRODUCT: ProductAgent(), AgentRole.ARCHITECTURE: ArchitectureAgent(),
@@ -159,6 +173,12 @@ def build_engineering_graph(
         AgentRole.DEVELOPER: "implementation", AgentRole.SECURITY: "security_review",
         AgentRole.TESTING: "test_results", AgentRole.REVIEWER: "review",
     }
+
+    def remediation_feedback(state: EngineeringState) -> str:
+        details = [state.remediation_request or ""]
+        if state.review is not None and state.review.status is ReviewerStatus.REJECTED:
+            details.extend(state.review.problems)
+        return "\n".join(item for item in details if item)
 
     def mcp_trace_metadata(adapter: Any) -> dict[str, Any]:
         return {
@@ -278,7 +298,7 @@ def build_engineering_graph(
                         current.requirement,
                         # What the Reviewer said, so a second pass does not read
                         # the same files and reach the same conclusion.
-                        feedback=current.remediation_request or "",
+                        feedback=remediation_feedback(current),
                     )
                     search_hits: list[str] = []
                     for term in terms[:3]:
@@ -339,11 +359,14 @@ def build_engineering_graph(
                         for line in result.output_summary.splitlines()
                         if DeveloperAgent._safe_path(line.strip().replace("\\", "/"))
                     ]
-                    terms = DeveloperAgent.relevance_terms(
-                        current.specification, current.architecture, current.requirement
+                    terms = DeveloperAgent.search_terms(
+                        current.specification,
+                        current.architecture,
+                        current.requirement,
+                        remediation_feedback(current),
                     )
                     search_hits: list[str] = []
-                    for term in terms[:3]:
+                    for term in terms[:6]:
                         searched = repository_mcp.search_code(role, term)
                         required_mcp_missing |= preserve_tool_result(
                             searched, role, errors, tool_results, repository_mcp
@@ -358,17 +381,44 @@ def build_engineering_graph(
                     if search_hits:
                         ranked = [path for path in ranked if path in set(search_hits)]
                     already_read = set(ranked[:4])
+                    developer_read_content: dict[str, str] = {}
                     for path in ranked[:4]:
                         read = repository_mcp.read_file(role, path)
                         required_mcp_missing |= preserve_tool_result(
                             read, role, errors, tool_results, repository_mcp
                         )
+                        if read.status is ToolStatus.SUCCESS:
+                            developer_read_content[path] = read.output_summary
+                    dependency_budget = MAX_DEVELOPER_DEPENDENCY_READS
+                    for _ in range(MAX_DEVELOPER_DEPENDENCY_DEPTH):
+                        dependencies = DeveloperAgent.dependency_targets(
+                            listed_paths,
+                            developer_read_content,
+                            already_read=already_read,
+                            limit=dependency_budget,
+                        )
+                        if not dependencies:
+                            break
+                        for path in dependencies:
+                            read = repository_mcp.read_file(role, path)
+                            required_mcp_missing |= preserve_tool_result(
+                                read, role, errors, tool_results, repository_mcp
+                            )
+                            already_read.add(path)
+                            dependency_budget -= 1
+                            if read.status is ToolStatus.SUCCESS:
+                                developer_read_content[path] = read.output_summary
+                        if dependency_budget == 0:
+                            break
                     if current.repository_context.get("apply_changes"):
                         # A test path is often the only literal path in a request. Select
                         # one related source from already inspected evidence, then read it
                         # as Developer evidence before the write candidate is governed.
                         developer_apply_targets = DeveloperAgent.apply_targets(
-                            DeveloperAgent.requested_targets(current.requirement),
+                            DeveloperAgent.requested_targets(
+                                current.requirement,
+                                repository_paths=listed_paths,
+                            ),
                             tool_results,
                             current.specification,
                             current.architecture,
@@ -671,6 +721,10 @@ def build_engineering_graph(
                 patch["review_history"] = [*current.review_history, output]
             if role is AgentRole.REVIEWER and output.status is ReviewerStatus.REJECTED:
                 patch["iteration"] = current.iteration + 1
+                patch["failure_fingerprints"] = [
+                    *current.failure_fingerprints,
+                    remediation_fingerprint(output),
+                ]
                 patch["remediation_request"] = output.reason
                 patch["next_validation_path"] = (
                     "testing_only"
@@ -724,11 +778,22 @@ def build_engineering_graph(
         state = EngineeringState.model_validate(raw_state)
         if state.human_review_required:
             return "HUMAN_REVIEW_REQUIRED"
-        route = review_route(state.review, state.iteration)
+        repeated_failures = trailing_failure_repetitions(state.failure_fingerprints)
+        route = review_route(
+            state.review,
+            state.iteration,
+            max_iterations=max_remediation_iterations,
+            repeated_failures=repeated_failures,
+        )
         if trace is not None:
             trace.record(
                 "remediation route" if route not in {"FinalReport", "HUMAN_REVIEW_REQUIRED"} else "route",
-                metadata={"from": "Reviewer", "to": route, "iteration": state.iteration},
+                metadata={
+                    "from": "Reviewer",
+                    "to": route,
+                    "iteration": state.iteration,
+                    "repeated_failures": repeated_failures,
+                },
             )
         return route
 

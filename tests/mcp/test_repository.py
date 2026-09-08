@@ -30,7 +30,7 @@ def test_each_run_uses_an_isolated_source_copy(tmp_path: Path) -> None:
     RepositoryMCP(run).update_file(AgentRole.DEVELOPER, "app.py", "safe = False")
 
     assert (source / "app.py").read_text(encoding="utf-8") == "safe = True"
-    assert (run / "app.py").read_text(encoding="utf-8") == "safe = False"
+    assert (run / "app.py").read_text(encoding="utf-8") == "safe = False\n"
 
 
 def test_search_code_never_reads_secret_paths_but_keeps_allowed_matches(tmp_path: Path) -> None:
@@ -105,3 +105,42 @@ def test_list_files_is_bounded_and_marks_truncation(tmp_path: Path) -> None:
     assert len(result.output_summary.encode()) <= 256 * 1024
     assert "truncated" in result.output_summary.lower()
 
+
+def test_update_file_whitespace_only_churn_is_noop(tmp_path: Path) -> None:
+    """Trailing-WS / blank-line-only updates must not rewrite or appear in get_diff
+    (apply-399a301c / product.py whitespace noise)."""
+    original = "def foo():\n    return 1\n\n"
+    target = tmp_path / "product.py"
+    target.write_text(original, encoding="utf-8")
+    before = target.read_bytes()
+    mcp = RepositoryMCP(tmp_path)
+
+    result = mcp.update_file(
+        AgentRole.DEVELOPER,
+        "product.py",
+        "def foo():  \n    return 1\n\n\n",
+    )
+
+    assert result.status is ToolStatus.SUCCESS
+    assert target.read_bytes() == before
+    diff = mcp.get_diff(AgentRole.DEVELOPER)
+    assert "product.py" not in diff.output_summary
+
+
+def test_update_file_real_content_change_writes_and_diffs(tmp_path: Path) -> None:
+    """Real content changes still write and show up in get_diff."""
+    target = tmp_path / "product.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    mcp = RepositoryMCP(tmp_path)
+
+    result = mcp.update_file(
+        AgentRole.DEVELOPER,
+        "product.py",
+        "def foo():\n    return 2\n",
+    )
+
+    assert result.status is ToolStatus.SUCCESS
+    assert target.read_text(encoding="utf-8") == "def foo():\n    return 2\n"
+    diff = mcp.get_diff(AgentRole.DEVELOPER)
+    assert "product.py" in diff.output_summary
+    assert "return 2" in diff.output_summary

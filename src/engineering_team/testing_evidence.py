@@ -63,6 +63,13 @@ def _bounded_utf8(value: str, limit: int) -> str:
     return encoded[:limit].decode(errors="ignore")
 
 
+def _bounded_utf8_tail(value: str, limit: int) -> str:
+    encoded = value.encode()
+    if len(encoded) <= limit:
+        return value
+    return encoded[-limit:].decode(errors="ignore")
+
+
 def _pytest_failure_blocks(output: str) -> list[tuple[str, str]]:
     """Return pytest long-report blocks without captured stdout/stderr."""
     lines = output.splitlines()
@@ -85,6 +92,33 @@ def _pytest_failure_blocks(output: str) -> list[tuple[str, str]]:
     return blocks
 
 
+def _pytest_orphan_exception_tail(output: str) -> str:
+    """Recover a traceback tail whose pytest long-report header was truncated."""
+    lines = output.splitlines()
+    report_end = next(
+        (index for index, line in enumerate(lines) if _SHORT_SUMMARY.match(line)),
+        len(lines),
+    )
+    captured = [
+        index
+        for index, line in enumerate(lines[:report_end])
+        if _CAPTURED_OUTPUT.match(line)
+    ]
+    if captured:
+        report_end = captured[-1]
+    report = lines[:report_end]
+    exception_lines = [
+        index
+        for index, line in enumerate(report)
+        if line.lstrip().startswith("E   ")
+        or line.strip() == "Traceback (most recent call last):"
+    ]
+    if not exception_lines:
+        return ""
+    start = max(0, exception_lines[-1] - 24)
+    return "\n".join(line.rstrip() for line in report[start:] if line.strip())
+
+
 def _pytest_labels(identifier: str) -> tuple[str, ...]:
     nodes = identifier.split("::")[1:]
     if not nodes:
@@ -101,10 +135,12 @@ def failure_diagnostics(
     summary_details = {
         identifier: detail for identifier, detail in _failed_entries(output) if detail
     }
+    orphan_tail = _pytest_orphan_exception_tail(output) if not blocks else ""
     diagnostics: dict[str, str] = {}
     remaining = MAX_FAILURE_DIAGNOSTICS_BYTES
     for identifier in failures[:MAX_FAILURE_DIAGNOSTICS]:
         diagnostic = ""
+        preserve_tail = False
         labels = _pytest_labels(identifier)
         for index, (label, block) in enumerate(blocks):
             if index not in used and label in labels:
@@ -113,11 +149,18 @@ def failure_diagnostics(
                 break
         if not diagnostic:
             diagnostic = summary_details.get(identifier, "")
+        if not diagnostic and orphan_tail:
+            diagnostic = orphan_tail
+            orphan_tail = ""
+            preserve_tail = True
         if not diagnostic or remaining <= 0:
             continue
         redacted = redact_secrets(diagnostic)
-        bounded = _bounded_utf8(
-            redacted, min(MAX_FAILURE_DIAGNOSTIC_BYTES, remaining)
+        limit = min(MAX_FAILURE_DIAGNOSTIC_BYTES, remaining)
+        bounded = (
+            _bounded_utf8_tail(redacted, limit)
+            if preserve_tail
+            else _bounded_utf8(redacted, limit)
         )
         if bounded:
             diagnostics[identifier] = bounded

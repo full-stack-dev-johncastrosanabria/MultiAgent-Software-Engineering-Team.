@@ -20,7 +20,8 @@ _AGENTS = {
 }
 _SENSITIVE_KEYS = {
     "api_key", "apikey", "secret", "secret_key", "password", "access_token",
-    "authorization", "gemini_api_key", "groq_api_key", "langfuse_secret_key",
+    "authorization", "gemini_api_key", "gemini_api_key_2", "groq_api_key",
+    "langfuse_secret_key",
 }
 
 
@@ -93,11 +94,15 @@ def _json_text(value: Any) -> str | None:
 def _metadata(value: Any) -> dict[str, str | int | float]:
     output: dict[str, str | int | float] = {}
     for key, item in dict(value or {}).items():
+        key = str(key)
+        if key.lower() in _SENSITIVE_KEYS:
+            output[key] = "[REDACTED]"
+            continue
         item = getattr(item, "value", item)
         if isinstance(item, bool):
-            output[str(key)] = str(item).lower()
+            output[key] = str(item).lower()
         elif isinstance(item, (str, int, float)) and not isinstance(item, bool):
-            output[str(key)] = redact_secrets(item) if isinstance(item, str) else item
+            output[key] = redact_secrets(item) if isinstance(item, str) else item
     return output
 
 

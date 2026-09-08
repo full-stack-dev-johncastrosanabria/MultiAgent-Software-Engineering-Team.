@@ -6,10 +6,23 @@ import httpx
 import pytest
 
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import AgentRole
-from engineering_team.contracts.models import ProductSpecification
+from engineering_team.contracts.enums import (
+    ActionMode,
+    AgentRole,
+    RemediationCategory,
+    ReviewerStatus,
+    RouteTarget,
+)
+from engineering_team.contracts.models import (
+    ImplementationResult,
+    ProductSpecification,
+    ReviewerDecision,
+)
+from engineering_team.contracts.state import EngineeringState
 from engineering_team.llm.cloud import CloudModelRuntime
-from engineering_team.models.context import ContextEnvelope
+from engineering_team.models.context import ContextEnvelope, build_context
+from engineering_team.observability.langfuse import TraceSession
+from engineering_team.run_events import run_event_from_trace
 
 
 def cloud_envelope() -> ContextEnvelope:
@@ -113,6 +126,61 @@ def test_governed_contradiction_reports_field_names_without_provider_values() ->
             runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
     assert runtime.attempts[-1].error_category == "governed_contradiction"
     assert "private-provider-value" not in runtime.attempts[-1].error
+
+
+def test_governed_cloud_model_rejects_unchanged_developer_remediation() -> None:
+    prior = ImplementationResult(
+        action_mode=ActionMode.APPLIED,
+        changed_files=["app.py"],
+        diff="pending",
+        evidence=["read:app.py"],
+        validation_result="pytest failed",
+        security_surface_changed=False,
+        file_contents={"app.py": "value = 'wrong'\n"},
+    )
+    candidate = prior.model_copy(update={"file_contents": {}})
+    state = EngineeringState(
+        run_id="cloud",
+        requirement="fix app.py",
+        implementation=prior,
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED,
+            score=45,
+            subscores={"testing": 0},
+            reason="failed tests require implementation remediation",
+            problems=["FAILED ASSERTION: assert 'wrong' == 1"],
+            remediation_category=RemediationCategory.TESTING,
+            return_to=RouteTarget.DEVELOPER,
+            confidence=1,
+        ),
+    )
+    envelope = build_context(AgentRole.DEVELOPER, state, "remediate")
+    settings = Settings(
+        cloud_enabled=True,
+        local_first=False,
+        groq_api_key="fixture-key",
+        cloud_chain_developer="groq:openai/gpt-oss-120b",
+    )
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": prior.model_dump_json()}}]},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        with pytest.raises(RuntimeError, match="unchanged developer remediation"):
+            runtime.invoke_artifact(AgentRole.DEVELOPER, envelope, candidate)
+
+    assert len(calls) == 1
+    assert runtime.attempts[0].error == (
+        "LLM_QUALITY_ERROR: unchanged developer remediation"
+    )
+    assert runtime.attempts[0].error_category == "ineffective_remediation"
 
 
 @pytest.mark.parametrize("provider,model,key", [
@@ -238,3 +306,139 @@ def test_http_date_retry_after_controls_the_model_cooldown():
             runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
     remaining = runtime._unavailable_until[("mistral", "mistral-small-latest")] - time.monotonic()
     assert 115 < remaining <= 120
+
+
+def test_primary_google_failure_uses_secondary_key_at_official_endpoint():
+    settings = Settings(
+        _env_file=None,
+        cloud_enabled=True,
+        gemini_api_key="primary-fixture-key",
+        gemini_api_key_2="secondary-fixture-key",
+        cloud_chain_product="google:gemini-primary,google2:gemini-secondary",
+    )
+    calls: list[tuple[str, str]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append((str(request.url), request.headers["x-goog-api-key"]))
+        if "gemini-primary" in request.url.path:
+            return httpx.Response(503, json={})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{
+            "text": product_candidate().model_dump_json(),
+        }]}}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        artifact, info = runtime.invoke_artifact(
+            AgentRole.PRODUCT, cloud_envelope(), product_candidate()
+        )
+
+    assert artifact == product_candidate()
+    assert info.provider == "google2"
+    assert calls == [
+        (
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-primary:generateContent",
+            "primary-fixture-key",
+        ),
+        (
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-secondary:generateContent",
+            "secondary-fixture-key",
+        ),
+    ]
+
+
+def test_missing_secondary_google_credential_skips_route_cleanly():
+    settings = Settings(
+        _env_file=None,
+        cloud_enabled=True,
+        gemini_api_key="primary-fixture-key",
+        gemini_api_key_2=None,
+        cloud_chain_product="google:gemini-primary,google2:gemini-secondary",
+    )
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request.headers["x-goog-api-key"])
+        return httpx.Response(503, json={})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        with pytest.raises(RuntimeError, match="CLOUD_FALLBACK_UNAVAILABLE"):
+            runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+
+    assert calls == ["primary-fixture-key"]
+    assert runtime.budget.run_count == 1
+
+
+def test_primary_google_cooldown_does_not_disable_secondary_credential():
+    settings = Settings(
+        _env_file=None,
+        cloud_enabled=True,
+        gemini_api_key="primary-fixture-key",
+        gemini_api_key_2="secondary-fixture-key",
+        cloud_chain_product="google:gemini-shared,google2:gemini-shared",
+    )
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        key = request.headers["x-goog-api-key"]
+        calls.append(key)
+        if key == "primary-fixture-key":
+            return httpx.Response(429, headers={"Retry-After": "60"}, json={})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{
+            "text": product_candidate().model_dump_json(),
+        }]}}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        for _ in range(2):
+            runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+
+    assert calls == [
+        "primary-fixture-key", "secondary-fixture-key", "secondary-fixture-key",
+    ]
+    assert ("google", "gemini-shared") in runtime._unavailable_until
+    assert ("google2", "gemini-shared") not in runtime._unavailable_until
+
+
+def test_secondary_google_route_respects_shared_role_deadline(monkeypatch):
+    from engineering_team.llm import cloud
+
+    clock = [0.0]
+    monkeypatch.setattr(cloud.time, "monotonic", lambda: clock[0])
+    settings = Settings(
+        _env_file=None,
+        cloud_enabled=True,
+        gemini_api_key="primary-fixture-key",
+        gemini_api_key_2="secondary-fixture-key",
+        cloud_role_timeout_seconds=20,
+        cloud_chain_product="google:gemini-primary,google2:gemini-secondary",
+    )
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request.headers["x-goog-api-key"])
+        clock[0] = 21
+        return httpx.Response(503, json={})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        with pytest.raises(RuntimeError, match="deadline"):
+            runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+
+    assert calls == ["primary-fixture-key"]
+
+
+def test_secondary_google_credential_name_is_redacted_from_trace_and_events():
+    trace = TraceSession(trace_id="trace", run_id="run", live=False)
+    trace.record("credential", metadata={"gemini_api_key_2": "secondary-secret"})
+    event = run_event_from_trace(
+        run_id="run",
+        sequence=1,
+        trace_event={
+            "name": "credential",
+            "metadata": {"gemini_api_key_2": "secondary-secret"},
+        },
+    )
+
+    assert trace.events[0]["metadata"]["gemini_api_key_2"] == "[REDACTED]"
+    assert "secondary-secret" not in str(event)

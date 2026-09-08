@@ -92,11 +92,27 @@ as a defect in the target project.
 deterministic and no routing decision comes from model text. Each component
 carries its image and its install, lint, test and build commands.
 
-*Status: done. Detection is file existence, verified against the real trees of
-all six repositories: 3, 4, 6, 10, 8 and 2 components. Five profiles -- Python, JVM, .NET, Node and Go -- name a
-digest-pinned image and their own commands, and QualityMCP routes through them.
-The 443 tests that predate profiles still pass, which is the evidence that
-routing Python through one did not change what Python does.*
+*Status: done for the routing that test/lint/build/install already covered
+before this session, and the wiring gap that kept it from that
+routing has since closed. Detection is file existence, verified against the
+real trees of all six repositories: 3, 4, 6, 10, 8 and 2 components. Five
+profiles -- Python, JVM, .NET, Node and Go -- name a digest-pinned image and
+their own commands, and QualityMCP routes through them for a directly
+constructed profile. The 443 tests that predate profiles still pass, which is
+the evidence that routing Python through one did not change what Python does.
+That routing was, until this session, only exercised where a test could pass
+`profile=` explicitly ([finding 19](findings/README.md)): the real
+`run-project` CLI path always defaulted to `PROFILES["python"]`, so a fresh
+external non-Python repository with no image configured failed before any
+agent ran. `quality_stack`/`quality_component_path`, two explicit `Settings`
+fields carried across the MCP stdio boundary the same way
+`quality_runner`/`quality_container_image` already were, close that gap
+without introducing auto-detection: `detect_components()` remains unwired,
+by choice. **Not done**: Security's `scan_dependencies`/`run_security_scan`
+have no profile branch at all — they are `pip`/`ruff` unconditionally — so a
+JVM component now reaches Security and fails there
+([finding 20](findings/README.md)). Extending profiles to cover a security
+scan is a stack-by-stack architecture decision, not a mechanical follow-on.*
 
 **One difference worth stating rather than hiding.** Python installs from a
 hashed lock and then tests offline. Maven, dotnet and npm resolve dependencies
@@ -222,23 +238,41 @@ binds to stable backend evidence instead of creating a second workflow.*
 Each repository is chosen for what it forces, and the order is chosen so that
 nothing is built before something proves it is needed.
 
-**1. FlaskApiProduct** — partial proof complete. Version 9 selected
-`app/routes/products.py`, `tests/test_products.py` and
-`app/models/product.py`; Architecture declared sufficient evidence and Reviewer
-never sent the work back to Architecture. ASET reached Testing and Reviewer
-three times, but Developer could see only failing test names, not the
-`expected/actual` assertions, and did not converge. An operator corrected the
-two remaining failures, obtained 68 passing tests and 84% coverage on the route,
-and opened [PR #1](https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1)
-from `aset/low-stock-endpoint-v9`. [Finding 17](findings/README.md) now preserves
-the failed assertions in bounded Developer feedback. The remaining proof is to
-repeat a focused remediation that reaches `APPROVED` and delivery without an
-external code repair.
+**1. FlaskApiProduct** — partial proof complete, and the remaining proof did
+not close it. Version 9 selected `app/routes/products.py`,
+`tests/test_products.py` and `app/models/product.py`; Architecture declared
+sufficient evidence and Reviewer never sent the work back to Architecture.
+ASET reached Testing and Reviewer three times, but Developer could see only
+failing test names, not the `expected/actual` assertions, and did not
+converge. An operator corrected the two remaining failures, obtained 68
+passing tests and 84% coverage on the route, and opened
+[PR #1](https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/1)
+from `aset/low-stock-endpoint-v9`. [Finding 17](findings/README.md) now
+preserves the failed assertions in bounded Developer feedback — but a
+subsequent fresh clone with that fix in place, run against the same
+specification end to end with no operator involvement, still stopped at
+`HUMAN_REVIEW_REQUIRED` after three identical `REJECTED` cycles
+([finding 18](findings/README.md)). Autonomous convergence to `APPROVED`
+without external repair remains **not demonstrated** for this Developer model
+chain; the open question is whether the fix belongs in the Developer prompt,
+a fixture-isolation rule, a surfaced serialization convention, or a documented
+limit on unattended repair.
 
 **2. PruebaNuevosIngresosBackend** — validate declared Compose against the
-actual Java services, Postgres and Kafka. This proves that the project-owned
-topology, healthchecks and run-scoped cleanup work through the workflow rather
-than only in a focused service test.
+actual Java services, Postgres and Kafka. A fresh clone, run with the
+project-per-component wiring fix ([finding 19](findings/README.md)), got
+past the blocker that stopped the first attempt cold (no image could be
+derived for a repository with no root manifest) and reached Product,
+Architecture, Developer and Security. It stopped there:
+[finding 20](findings/README.md) — Security's dependency and vulnerability
+scans are hardcoded to `pip`/`ruff` and assume a Python interpreter inside
+every component's container, which the pinned Maven image does not carry.
+Whether the declared Compose topology, healthchecks and run-scoped cleanup
+work through the workflow — and whether the project's own Testcontainers
+usage in `IntegrationTestBase.java` conflicts with or duplicates that
+topology inside the quality container — remains unobserved; the run never
+reached Testing.
+
 
 **3. Banking or NorthgateTollPlaza** — validate non-Python profiles and inferred
 topology in a real target. Banking exercises .NET plus Postgres; Northgate adds

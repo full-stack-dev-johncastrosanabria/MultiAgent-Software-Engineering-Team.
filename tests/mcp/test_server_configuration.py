@@ -66,3 +66,60 @@ def test_an_unknown_runner_reaches_the_server_and_is_refused(tmp_path) -> None:
     settings = settings_from_arguments(runner="carrier-pigeon", image="")
     with pytest.raises(ValueError, match="unknown quality_runner"):
         build_runner(tmp_path, settings)
+
+
+# -- Finding 19: the component's stack is exactly as explicit as its image -----
+
+
+def test_the_configured_stack_travels_as_an_argument(tmp_path) -> None:
+    settings = Settings(quality_stack="jvm", quality_component_path="order-ms")
+    args = MCPQualityClient(tmp_path, settings=settings)._parameters().args
+
+    assert args[args.index("--stack") + 1] == "jvm"
+    assert args[args.index("--component-root") + 1] == "order-ms"
+
+
+def test_the_default_stack_and_component_root_carry_the_default(tmp_path) -> None:
+    args = MCPQualityClient(tmp_path)._parameters().args
+    assert args[args.index("--stack") + 1] == "python"
+    assert args[args.index("--component-root") + 1] == ""
+
+
+def test_the_server_carries_the_stack_argument_into_settings() -> None:
+    from engineering_team.mcp.server import settings_from_arguments
+
+    settings = settings_from_arguments(runner="container", image=PINNED, stack="jvm")
+    assert settings.quality_stack == "jvm"
+
+
+def test_main_resolves_the_quality_root_beneath_the_component_path(
+    tmp_path, monkeypatch
+) -> None:
+    """`--root` names the repository; a Maven module of it is not the repository."""
+    import engineering_team.mcp.server as server_module
+
+    class _StubServer:
+        def run(self, transport: str) -> None:
+            return None
+
+    component = tmp_path / "order-ms"
+    component.mkdir()
+    captured: dict[str, object] = {}
+
+    def spy(root, timeout, *, settings):
+        captured["root"] = root
+        captured["settings"] = settings
+        return _StubServer()
+
+    monkeypatch.setattr(server_module, "build_quality_server", spy)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "prog", "--kind", "quality", "--root", str(tmp_path),
+            "--stack", "jvm", "--component-root", "order-ms",
+        ],
+    )
+    server_module.main()
+
+    assert captured["root"] == component
+    assert captured["settings"].quality_stack == "jvm"

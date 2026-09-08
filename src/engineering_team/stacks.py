@@ -37,18 +37,57 @@ class StackProfile:
     lint_template: _Template = None
     build_template: _Template = None
     install_template: _Template = None
+    dependency_template: _Template = None
+    security_template: _Template = None
     environment: tuple[tuple[str, str], ...] = ()
     """Environment the toolchain needs, with ENVIRONMENT expanded."""
     test_needs_network: bool = False
     """Whether the test phase resolves dependencies while it runs.
 
     Python does not: QualityMCP installs from a hashed lock first and the test
-    phase is offline, which is the stronger position. Maven, dotnet and npm
-    resolve during the build they are asked for. This was measured, not assumed --
-    `dependency:go-offline` completes and a subsequent offline `mvn test` still
-    fails, so pretending a restore phase makes them offline would be a claim the
-    evidence does not support. The cache lives on the shared volume, so the
-    network is used on the first run and largely idle afterwards.
+    phase is offline, which is the stronger position. Maven, dotnet, npm and Go
+    resolve during the build they are asked for. This was measured, not assumed
+    -- `dependency:go-offline` completes and a subsequent offline `mvn test`
+    still fails, so pretending a restore phase makes them offline would be a
+    claim the evidence does not support. The cache lives on the shared volume,
+    so the network is used on the first run and largely idle afterwards.
+    """
+    dependency_needs_network: bool = False
+    """Whether dependency integrity may resolve the component dependency graph."""
+    security_needs_network: bool = False
+    """Whether the scanner needs a registry or advisory database."""
+    dependency_scan_phases: tuple[str, ...] = ("dependency",)
+    """Which phases report on third-party dependencies rather than our own code.
+
+    Python's security phase is a linter, so the two concerns line up with the
+    two phase names there and nowhere else: the JVM runs OWASP dependency-check
+    under `security`, Node runs `npm audit`, .NET lists vulnerable packages, Go
+    runs govulncheck. A finding from one of these is about a version someone
+    else published, which is why Security may hold it as baseline risk when the
+    change left the manifests alone -- and why it must not do that for ruff.
+    """
+    java_agents: tuple[str, ...] = ()
+    """Globs, under the environment's package cache, for jars to load as agents.
+
+    Mockito's inline mock maker -- its default since 5.0 -- attaches itself to
+    the JVM already running the tests. That handshake needs to signal the target
+    and reach it over a Unix socket, and a sandbox that grants neither turns
+    every mocking test in a component into `Could not initialize plugin:
+    MockMaker`. Loading the same jar with `-javaagent` is the path Mockito's own
+    warning points at, and the one the JDK will require once self-attachment is
+    removed. The glob keeps it conditional: a component that does not depend on
+    Mockito matches nothing and is passed no flag.
+    """
+    needs_subprocesses: bool = False
+    """Whether this toolchain's own launcher forks before it runs anything.
+
+    Forking and reaching the network are unrelated permissions, but the sandbox
+    granted the first only alongside the second, so an offline phase could not
+    fork at all. `mvn` is a shell script that forks: an offline Maven phase died
+    on `fork: Operation not permitted` before a single test ran. Declared per
+    toolchain because it describes how the launcher starts, not what a phase
+    does. Python's entry points exec without forking, so it stays false and its
+    offline phases keep the tighter sandbox they already had.
     """
 
     def _expand(
@@ -78,6 +117,18 @@ class StackProfile:
         """Dependencies, where an explicit step is the right place to fetch them."""
         return self._expand(self.install_template, interpreter, environment)
 
+    def dependency_command(
+        self, interpreter: str, environment: str = ""
+    ) -> list[str] | None:
+        """Inspect the dependency graph using this ecosystem's own toolchain."""
+        return self._expand(self.dependency_template, interpreter, environment)
+
+    def security_command(
+        self, interpreter: str, environment: str = ""
+    ) -> list[str] | None:
+        """Produce security evidence using this ecosystem's own scanner."""
+        return self._expand(self.security_template, interpreter, environment)
+
     def env(self, environment: str = "") -> tuple[tuple[str, str], ...]:
         """The declared environment, with the runner's environment root filled in."""
         return tuple(
@@ -97,6 +148,8 @@ PROFILES: dict[str, StackProfile] = {
         test_template=(INTERPRETER, "-I", "-m", "pytest"),
         lint_template=(INTERPRETER, "-I", "-m", "ruff", "check", "."),
         build_template=(INTERPRETER, "-I", "-m", "compileall", "."),
+        dependency_template=(INTERPRETER, "-I", "-m", "pip", "check"),
+        security_template=(INTERPRETER, "-I", "-m", "ruff", "check"),
     ),
     "jvm": StackProfile(
         name="jvm",
@@ -111,6 +164,26 @@ PROFILES: dict[str, StackProfile] = {
             "mvn", "-B", "-q", f"-Dmaven.repo.local={ENVIRONMENT}/m2",
             "-DskipTests", "package",
         ),
+        dependency_template=(
+            "mvn", "-B", f"-Dmaven.repo.local={ENVIRONMENT}/m2",
+            "dependency:tree",
+        ),
+        security_template=(
+            "mvn", "-B", f"-Dmaven.repo.local={ENVIRONMENT}/m2",
+            f"-DdataDirectory={ENVIRONMENT}/dependency-check",
+            (
+                "-DnvdDatafeedUrl=https://dependency-check.github.io/"
+                "DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz"
+            ),
+            "-DfailBuildOnCVSS=7",
+            "-DfailOnError=true",
+            # A Java component has no .NET assemblies, and the analyzer that
+            # would read them needs a dotnet runtime this image does not carry.
+            # With `failOnError` it aborted the scan over its own absence, so a
+            # run reported a tool failure where it had found real CVEs.
+            "-DassemblyAnalyzerEnabled=false",
+            "org.owasp:dependency-check-maven:13.0.0:check",
+        ),
         # The container deliberately runs as the host user. Maven otherwise
         # inherits the image's /root home and fails before resolving anything.
         environment=(
@@ -118,6 +191,14 @@ PROFILES: dict[str, StackProfile] = {
             ("MAVEN_CONFIG", f"{ENVIRONMENT}/maven-config"),
         ),
         test_needs_network=True,
+        dependency_needs_network=True,
+        security_needs_network=True,
+        # Its security phase is a vulnerability database lookup, not a linter.
+        dependency_scan_phases=("dependency", "security"),
+        # Measured: `mvn` is a shell script, and an offline phase without this
+        # dies on `fork: Operation not permitted` before running a single test.
+        needs_subprocesses=True,
+        java_agents=("org/mockito/mockito-core/*/mockito-core-*.jar",),
     ),
     "dotnet": StackProfile(
         name="dotnet",
@@ -132,6 +213,7 @@ PROFILES: dict[str, StackProfile] = {
             ("DOTNET_CLI_HOME", f"{ENVIRONMENT}/dotnet"),
             ("DOTNET_NOLOGO", "1"),
             ("DOTNET_CLI_TELEMETRY_OPTOUT", "1"),
+            ("NUGET_PACKAGES", f"{ENVIRONMENT}/nuget"),
         ),
         test_template=(
             "dotnet", "test", "--nologo", f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
@@ -139,7 +221,18 @@ PROFILES: dict[str, StackProfile] = {
         build_template=(
             "dotnet", "build", "--nologo", f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
         ),
+        dependency_template=(
+            "dotnet", "list", "package", "--include-transitive", "--format", "json",
+        ),
+        security_template=(
+            "dotnet", "list", "package", "--include-transitive", "--vulnerable",
+            "--format", "json",
+        ),
         test_needs_network=True,
+        dependency_needs_network=True,
+        security_needs_network=True,
+        # Its security phase is a vulnerability database lookup, not a linter.
+        dependency_scan_phases=("dependency", "security"),
     ),
     "go": StackProfile(
         name="go",
@@ -151,8 +244,19 @@ PROFILES: dict[str, StackProfile] = {
         test_template=("go", "test", "./..."),
         build_template=("go", "build", "./..."),
         lint_template=("go", "vet", "./..."),
-        environment=(("GOMODCACHE", f"{ENVIRONMENT}/gomod"), ("GOCACHE", f"{ENVIRONMENT}/gocache")),
+        dependency_template=("go", "list", "-m", "all"),
+        security_template=(
+            "go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.7.0", "./...",
+        ),
+        environment=(
+            ("GOMODCACHE", f"{ENVIRONMENT}/gomod"),
+            ("GOCACHE", f"{ENVIRONMENT}/gocache"),
+        ),
         test_needs_network=True,
+        dependency_needs_network=True,
+        security_needs_network=True,
+        # Its security phase is a vulnerability database lookup, not a linter.
+        dependency_scan_phases=("dependency", "security"),
     ),
     "node": StackProfile(
         name="node",
@@ -166,7 +270,13 @@ PROFILES: dict[str, StackProfile] = {
         # `ci` and not `install`: it fails on a lockfile that disagrees with the
         # manifest instead of quietly resolving something else.
         install_template=("npm", "ci", "--cache", f"{ENVIRONMENT}/npm"),
+        dependency_template=("npm", "ls", "--all"),
+        security_template=("npm", "audit", "--omit=dev", "--audit-level=high"),
+        environment=(("npm_config_cache", f"{ENVIRONMENT}/npm"),),
         test_needs_network=True,
+        security_needs_network=True,
+        # Its security phase is a vulnerability database lookup, not a linter.
+        dependency_scan_phases=("dependency", "security"),
     ),
 }
 

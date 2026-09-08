@@ -159,6 +159,61 @@ def test_governed_repair_replaces_verbose_prompt_with_exact_candidate() -> None:
     assert json.dumps(candidate.model_dump(mode="json"), ensure_ascii=False) in requests[1]["prompt"]
 
 
+def test_unchanged_developer_remediation_is_repaired_before_write_back() -> None:
+    prior = ImplementationResult(
+        action_mode=ActionMode.APPLIED,
+        changed_files=["app.py"],
+        diff="pending",
+        evidence=["read:app.py"],
+        validation_result="pytest failed",
+        security_surface_changed=False,
+        file_contents={"app.py": "value = 'wrong'\n"},
+    )
+    candidate = prior.model_copy(update={"file_contents": {}})
+    corrected = prior.model_copy(update={"file_contents": {"app.py": "value = 1\n"}})
+    state = EngineeringState(
+        run_id="runtime",
+        requirement="fix app.py",
+        implementation=prior,
+        remediation_request="failed tests require implementation remediation",
+        review=ReviewerDecision(
+            status=ReviewerStatus.REJECTED,
+            score=45,
+            subscores={"testing": 0},
+            reason="failed tests require implementation remediation",
+            problems=["FAILED ASSERTION: assert 'wrong' == 1"],
+            remediation_category=RemediationCategory.TESTING,
+            return_to=RouteTarget.DEVELOPER,
+            confidence=1,
+        ),
+    )
+    envelope = build_context(AgentRole.DEVELOPER, state, "remediate")
+    requests: list[dict] = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        response = prior if len(requests) == 1 else corrected
+        return httpx.Response(
+            200,
+            json={"model": "qwen3.5:9b", "response": response.model_dump_json()},
+        )
+
+    runtime = LocalModelRuntime(
+        Settings(_env_file=None, max_local_repairs=1),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    artifact, info = runtime.invoke_artifact(AgentRole.DEVELOPER, envelope, candidate)
+
+    assert artifact.file_contents == {"app.py": "value = 1\n"}
+    assert info.structured_output_success is True
+    assert len(requests) == 2
+    assert runtime.attempts[0].error == (
+        "LLM_QUALITY_ERROR: unchanged developer remediation"
+    )
+    assert "byte-identical" in requests[1]["prompt"]
+
+
 def test_semantic_guard_rejects_invented_source_and_material_developer_change() -> None:
     architecture = ArchitectureProposal(
         components=["API"], apis=[], data_changes=[], integrations=[], dependencies=[],

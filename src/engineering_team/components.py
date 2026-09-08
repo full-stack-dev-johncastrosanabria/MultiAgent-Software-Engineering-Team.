@@ -14,7 +14,7 @@ free text, which is the one invariant the whole design rests on.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 # A manifest inside one of these is a dependency's or a build output's, never the
 # project's own. Same discipline the repository listing learned in finding 4,
@@ -90,3 +90,33 @@ def detect_components(paths: list[str]) -> list[Component]:
         if key not in found:
             found[key] = Component(path=directory, stack=stack, manifest=pure.name)
     return sorted(found.values())
+
+
+def list_repository_paths(project_root: str | Path) -> list[str]:
+    """Repository-relative file paths under ``project_root``.
+
+    Honours ``EXCLUDED_DIRECTORIES`` the same way detection does: a manifest
+    inside ``node_modules`` or ``target`` is never a component of this project.
+    """
+    import os
+
+    root = Path(project_root)
+    paths: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in EXCLUDED_DIRECTORIES]
+        relative_dir = Path(dirpath).relative_to(root)
+        for filename in filenames:
+            relative = (
+                Path(filename) if str(relative_dir) == "." else relative_dir / filename
+            )
+            paths.append(relative.as_posix())
+    return paths
+
+
+def components_in(project_root: str | Path) -> list[Component]:
+    """Every buildable component under a project root (ADR 4).
+
+    Walks the tree, feeds relative paths to ``detect_components``, and returns
+    the same deterministic ordering a pre-built path list would.
+    """
+    return detect_components(list_repository_paths(project_root))

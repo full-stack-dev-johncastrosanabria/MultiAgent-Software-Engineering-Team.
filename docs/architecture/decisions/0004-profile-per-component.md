@@ -56,6 +56,13 @@ evidence layer has to carry that. A run over BusinessAI-Analytics produces
 results for nine components, and reporting one aggregate would hide which of them
 failed.
 
+`run-project` now detects every component under the project root and runs that
+component's profile. A repository with two Maven modules and a Node frontend is
+no longer forced through pytest because `Settings.quality_stack` defaults to
+python. An explicit `QUALITY_STACK` or `quality_component_path` still names one
+target and wins. Until the graph records one `run_tests` result per component,
+Quality fans out the commands and aggregates the ToolResult Testing still sees.
+
 The Python assumption currently living in about eight lines of `mcp/quality.py`
 becomes one profile among several rather than the default everything else is
 measured against.

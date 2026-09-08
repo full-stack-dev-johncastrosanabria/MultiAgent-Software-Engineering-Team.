@@ -7,6 +7,7 @@ from engineering_team.agents.reviewer import ReviewerAgent
 from engineering_team.agents.security import SecurityAgent
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import (
+    ActionMode,
     AgentRole,
     ErrorCode,
     RemediationCategory,
@@ -93,7 +94,9 @@ def test_reviewer_remediation_chains_return_through_required_validation(decision
 def test_third_rejected_cycle_stops_without_a_fourth_cycle():
     decision = rejected(RemediationCategory.IMPLEMENTATION, RouteTarget.DEVELOPER)
     reviewer = ScriptedReviewer([decision, decision, decision, decision])
-    graph = build_engineering_graph(agent_overrides={AgentRole.REVIEWER: reviewer})
+    graph = build_engineering_graph(
+        agent_overrides={AgentRole.REVIEWER: reviewer}, max_remediation_iterations=3
+    )
 
     result = graph.invoke({"run_id": "max", "requirement": "bounded change"})
 
@@ -101,6 +104,58 @@ def test_third_rejected_cycle_stops_without_a_fourth_cycle():
     assert result["human_review_required"] is True
     assert result["final_status"] == "HUMAN_REVIEW_REQUIRED"
     assert reviewer.calls == 3
+
+
+def test_repeated_failure_routes_through_architecture_then_stops_early():
+    decision = rejected(RemediationCategory.IMPLEMENTATION, RouteTarget.DEVELOPER)
+    reviewer = ScriptedReviewer([decision, decision, decision, decision])
+    graph = build_engineering_graph(
+        agent_overrides={AgentRole.REVIEWER: reviewer}, max_remediation_iterations=5
+    )
+
+    result = graph.invoke({"run_id": "stagnation", "requirement": "bounded change"})
+
+    reviewer_positions = [
+        index for index, stage in enumerate(result["route_history"]) if stage == "Reviewer"
+    ]
+    assert result["route_history"][reviewer_positions[1] + 1] == "Architecture"
+    assert result["iteration"] == 3
+    assert result["human_review_required"] is True
+    assert reviewer.calls == 3
+
+
+def test_remediation_diagnostics_become_developer_search_terms(tmp_path):
+    target = "app/domain/pricing/service.py"
+    for name in ("a.py", "b.py", "c.py", "d.py", "e.py", "f.py"):
+        (tmp_path / name).write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "app" / "domain" / "pricing").mkdir(parents=True)
+    (tmp_path / target).write_text(
+        "def total(quantity, unit_cost):\n    return quantity\n", encoding="utf-8"
+    )
+    decision = ReviewerDecision(
+        status=ReviewerStatus.REJECTED,
+        score=40,
+        subscores={},
+        problems=["FAILED ASSERTION: total must multiply quantity by unit_cost"],
+        reason="failed tests require implementation remediation",
+        remediation_category=RemediationCategory.TESTING,
+        return_to=RouteTarget.DEVELOPER,
+        confidence=0.9,
+    )
+    reviewer = ScriptedReviewer([decision])
+
+    with MCPRepositoryClient(tmp_path) as repository:
+        result = build_engineering_graph(
+            agent_overrides={AgentRole.REVIEWER: reviewer},
+            repository_mcp=repository,
+            quality_mcp=PassingQuality(),
+        ).invoke({"run_id": "diagnostic-search", "requirement": "Fix calculation behavior"})
+
+    developer_reads = [
+        item.input_summary for item in result["tool_results"]
+        if item.tool_name == "read_file" and item.allowed_role is AgentRole.DEVELOPER
+    ]
+    assert f"path={target}" in developer_reads
 
 
 class CriticalSecurity(SecurityAgent):
@@ -153,6 +208,10 @@ def test_failed_mcp_test_result_changes_reviewer_route_and_is_remediated():
     assert result["tool_results"][0].status is ToolStatus.FAIL
     assert result["test_results"][0].status is ToolStatus.FAIL
     assert result["review"].status is ReviewerStatus.APPROVED
+    assert [decision.status for decision in result["review_history"]] == [
+        ReviewerStatus.REJECTED,
+        ReviewerStatus.APPROVED,
+    ]
     assert result["iteration"] == 1
     assert result["route_history"].count("Reviewer") == 2
     assert result["route_history"][-4:] == ["Developer", "Testing", "Reviewer", "FinalReport"]
@@ -275,6 +334,118 @@ def test_apply_reads_and_governs_source_for_a_named_test_with_auxiliary_docs(tmp
         if item.tool_name == "read_file" and item.allowed_role is AgentRole.DEVELOPER
     ]
     assert "path=app/routes/products.py" in developer_reads
+
+
+def test_apply_resolves_java_symbol_targets_without_literal_paths(tmp_path):
+    controller = "order-ms/src/main/java/com/example/orders/OrderController.java"
+    controller_test = "order-ms/src/test/java/com/example/orders/OrderControllerTest.java"
+    status = "order-ms/src/main/java/com/example/orders/OrderStatus.java"
+    for relative, content in (
+        (controller, "public class OrderController {}\n"),
+        (controller_test, "class OrderControllerTest {}\n"),
+        (status, "public enum OrderStatus { PENDING, PAID }\n"),
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    with MCPRepositoryClient(tmp_path) as repository:
+        result = build_engineering_graph(repository_mcp=repository).invoke({
+            "run_id": "java-symbol-targets",
+            "requirement": (
+                "Agrega GET /api/v1/orders/stats en OrderController y pruebas en "
+                "OrderControllerTest para cada OrderStatus."
+            ),
+            "repository_context": {"apply_changes": True, "authorized": False},
+        })
+
+    assert result["implementation"].action_mode is ActionMode.APPLIED
+    assert result["implementation"].changed_files == [controller, controller_test, status]
+
+
+def test_java_retrieval_follows_local_imports_without_expanding_write_scope(tmp_path):
+    controller = "order-ms/src/main/java/com/example/orders/OrderController.java"
+    controller_test = "order-ms/src/test/java/com/example/orders/OrderControllerTest.java"
+    status = "order-ms/src/main/java/com/example/orders/OrderStatus.java"
+    service = "order-ms/src/main/java/com/example/orders/OrderService.java"
+    repository_path = "order-ms/src/main/java/com/example/orders/OrderRepository.java"
+    files = {
+        controller: (
+            "package com.example.orders;\n"
+            "import com.example.orders.OrderService;\n"
+            "public class OrderController {}\n"
+        ),
+        controller_test: "class OrderControllerTest {}\n",
+        status: "public enum OrderStatus { PENDING, PAID }\n",
+        service: (
+            "package com.example.orders;\n"
+            "import com.example.orders.OrderRepository;\n"
+            "public class OrderService {}\n"
+        ),
+        repository_path: "package com.example.orders;\npublic interface OrderRepository {}\n",
+    }
+    for relative, content in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    with MCPRepositoryClient(tmp_path) as repository:
+        result = build_engineering_graph(repository_mcp=repository).invoke({
+            "run_id": "java-import-context",
+            "requirement": (
+                "Agrega estadísticas en OrderController, cubre OrderControllerTest "
+                "y todos los valores de OrderStatus."
+            ),
+            "repository_context": {"apply_changes": True, "authorized": False},
+        })
+
+    developer_reads = {
+        item.input_summary for item in result["tool_results"]
+        if item.tool_name == "read_file" and item.allowed_role is AgentRole.DEVELOPER
+    }
+    assert f"path={service}" in developer_reads
+    assert f"path={repository_path}" in developer_reads
+    assert result["implementation"].changed_files == [controller, controller_test, status]
+
+
+def test_flask_retrieval_reads_cost_model_instead_of_unrelated_keyword_hits(tmp_path):
+    files = {
+        "CHANGELOG.md": "endpoint endpoint endpoint\n",
+        "client/ChartManager.ts": "export class ChartManager {}\n",
+        "app/routes/products.py": (
+            "from app.models import Product\n"
+            "def create_product(data):\n"
+            "    return Product(stock=data.get('stock', 0))\n"
+        ),
+        "app/models/product.py": (
+            "class Product:\n"
+            "    cost = None\n"
+            "    stock = 0\n"
+        ),
+        "tests/test_products.py": "def test_products(): pass\n",
+    }
+    for relative, content in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    with MCPRepositoryClient(tmp_path) as repository:
+        result = build_engineering_graph(repository_mcp=repository).invoke({
+            "run_id": "flask-cost-context",
+            "requirement": (
+                "Implementar GET /api/products/low-stock al final de "
+                "app/routes/products.py y agregar pruebas en tests/test_products.py. "
+                "Cada restock_value usa cost * (threshold - stock)."
+            ),
+            "repository_context": {"apply_changes": True, "authorized": False},
+        })
+
+    developer_reads = {
+        item.input_summary for item in result["tool_results"]
+        if item.tool_name == "read_file" and item.allowed_role is AgentRole.DEVELOPER
+    }
+    assert "path=app/models/product.py" in developer_reads
+    assert "path=client/ChartManager.ts" not in developer_reads
 
 
 class FailingLocalRuntime:

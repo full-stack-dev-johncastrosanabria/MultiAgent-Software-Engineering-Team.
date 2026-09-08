@@ -1,4 +1,5 @@
 from engineering_team.contracts.enums import (
+    ActionMode,
     AgentRole,
     ErrorCode,
     RemediationCategory,
@@ -23,6 +24,144 @@ from .testing import TEST_EVIDENCE_TOOLS
 _DIMENSIONS = (
     "requirements", "architecture", "security", "testing", "implementation", "rag_grounding",
 )
+
+
+def _implementation_evidence_problems(
+    projection: dict[str, object], tool_results: list[ToolResult]
+) -> list[str]:
+    repository_context = projection.get("repository_context") or {}
+    if (
+        not isinstance(repository_context, dict)
+        or not repository_context.get("apply_changes")
+    ):
+        return []
+
+    implementation = projection.get("implementation")
+    if implementation is None:
+        return ["authorized apply run has no Developer implementation result"]
+    if implementation.action_mode is not ActionMode.APPLIED:
+        return [
+            (
+                "authorized apply run requires Developer action_mode=APPLIED; "
+                f"got {implementation.action_mode.value}"
+            )
+        ]
+
+    problems: list[str] = []
+    targets = set(implementation.changed_files)
+    content_paths = set(implementation.file_contents)
+    if (
+        not targets
+        or content_paths != targets
+        or any(
+            not implementation.file_contents[path].strip()
+            for path in content_paths
+        )
+    ):
+        problems.append(
+            "file_contents must contain non-empty content for exactly every "
+            "governed changed_files target"
+        )
+    missing_newlines = sorted(
+        path
+        for path, content in implementation.file_contents.items()
+        if content and not content.endswith("\n")
+    )
+    if missing_newlines:
+        problems.append(
+            "authored text must end with a newline for: "
+            + ", ".join(missing_newlines)
+        )
+
+    written_paths = {
+        item.output_summary.strip().replace("\\", "/")
+        for item in tool_results
+        if item.tool_name in {"create_file", "update_file"}
+        and item.allowed_role is AgentRole.DEVELOPER
+        and item.status is ToolStatus.SUCCESS
+        and item.output_summary.strip()
+    }
+
+    latest_diff = next(
+        (
+            item
+            for item in reversed(tool_results)
+            if item.tool_name == "get_diff"
+            and item.allowed_role is AgentRole.DEVELOPER
+        ),
+        None,
+    )
+    if (
+        latest_diff is None
+        or latest_diff.status is not ToolStatus.SUCCESS
+        or not latest_diff.output_summary.strip()
+    ):
+        problems.append(
+            "authorized apply run requires a successful non-empty resulting diff"
+        )
+        missing_writes = sorted(targets - written_paths)
+        if missing_writes:
+            problems.append(
+                "no successful Repository write exists for: "
+                + ", ".join(missing_writes)
+            )
+        return problems
+
+    # Paths that appear in the resulting diff (+++ b/...). A Repository._write
+    # whitespace-only NO-OP still returns SUCCESS but never mutates the tree, so
+    # it leaves no footprint here (apply-399a301c / product.py). Drop those from
+    # written_paths and changed_files targets so models-only WS churn cannot
+    # inflate scope or shadow real route/test edits.
+    diff_paths: set[str] = set()
+    current_path = "unknown path"
+    trailing_whitespace_paths: set[str] = set()
+    for line in latest_diff.output_summary.splitlines():
+        if line.startswith("+++ b/"):
+            current_path = line.removeprefix("+++ b/")
+            if current_path != "/dev/null":
+                diff_paths.add(current_path)
+        elif (
+            line.startswith("+")
+            and not line.startswith("+++")
+            and line.endswith((" ", "	"))
+        ):
+            trailing_whitespace_paths.add(current_path)
+    noop_paths = {
+        path for path in written_paths
+        if path != "unknown path" and path not in diff_paths
+    }
+    if noop_paths:
+        written_paths -= noop_paths
+        targets -= noop_paths
+
+    missing_writes = sorted(targets - written_paths)
+    if missing_writes:
+        problems.append(
+            "no successful Repository write exists for: "
+            + ", ".join(missing_writes)
+        )
+
+    hard_trailing = trailing_whitespace_paths - noop_paths
+    if hard_trailing:
+        problems.append(
+            "resulting diff adds trailing whitespace in: "
+            + ", ".join(sorted(hard_trailing))
+        )
+
+    # Reject brand-new root-level files that shadow an existing nested path
+    # (apply-5d1c2020 wrote products.py at repo root while app/routes/products.py
+    # already existed; Reviewer APPROVED and never touched the real route).
+    root_creates = sorted(
+        path
+        for path in targets
+        if "/" not in path.replace("\\", "/")
+    )
+    if root_creates:
+        problems.append(
+            "changed_files must not create bare root paths when a nested file "
+            "is intended; reject: " + ", ".join(root_creates)
+        )
+    return problems
 
 
 class ReviewerAgent(AgentBase[ReviewerDecision]):
@@ -66,6 +205,22 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 return_to=None if security.requires_hitl else RouteTarget.DEVELOPER, confidence=1,
                 evidence_references=evidence,
             )
+        # PASS + nonempty findings (e.g. baseline dependencies): keep residual
+        # risk visible in problems without Security FAIL / Developer remediation.
+        baseline_visible_problems: list[str] = []
+        if (
+            security is not None
+            and security.status is SecurityStatus.PASS
+            and security.findings
+        ):
+            baseline_visible_problems = [
+                finding.description
+                for finding in security.findings
+                if finding.description
+            ]
+        implementation_problems = _implementation_evidence_problems(
+            projection, envelope.tool_results
+        )
         if latest_test is not None and latest_test.status is not ToolStatus.SUCCESS:
             failure_output = "\n".join(latest_test.failures)
             failed_identifiers = failing_tests(failure_output)
@@ -92,6 +247,7 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                         for item in _DIMENSIONS
                     },
                     problems=[
+                        *baseline_visible_problems,
                         f"the design was produced from incomplete evidence: {gap}",
                         *latest_test.failures,
                     ],
@@ -106,20 +262,54 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 )
             return ReviewerDecision(
                 status=ReviewerStatus.REJECTED, score=45,
-                subscores={item: (0 if item == "testing" else 75) for item in _DIMENSIONS},
+                subscores={
+                    item: (
+                        0
+                        if item == "testing"
+                        or (item == "implementation" and implementation_problems)
+                        else 75
+                    )
+                    for item in _DIMENSIONS
+                },
                 # A break and a not-yet-working feature are different news, and
                 # naming them the same is why three cycles went to the wrong one.
-                problems=(
-                    describe_failures(
-                        failed_identifiers,
-                        baseline,
-                        failure_diagnostics(failure_output, diagnostic_order),
-                    )
-                    or list(latest_test.failures)
-                ),
+                problems=[
+                    *baseline_visible_problems,
+                    *(
+                        describe_failures(
+                            failed_identifiers,
+                            baseline,
+                            failure_diagnostics(failure_output, diagnostic_order),
+                        )
+                        or list(latest_test.failures)
+                    ),
+                    *implementation_problems,
+                ],
                 reason="failed tests require implementation remediation",
                 remediation_category=RemediationCategory.TESTING,
                 return_to=RouteTarget.DEVELOPER, confidence=1,
+                evidence_references=evidence,
+            )
+        # Trailing whitespace alone must not HITL a green run (apply-474c7045):
+        # tests already proved behavior; style is normalized at Repository write.
+        hard_implementation_problems = [
+            problem
+            for problem in implementation_problems
+            if "trailing whitespace" not in problem
+        ]
+        if hard_implementation_problems:
+            return ReviewerDecision(
+                status=ReviewerStatus.REJECTED,
+                score=40,
+                subscores={
+                    item: (0 if item == "implementation" else 75)
+                    for item in _DIMENSIONS
+                },
+                problems=[*baseline_visible_problems, *hard_implementation_problems],
+                reason="implementation evidence gate requires an applied workspace change",
+                remediation_category=RemediationCategory.IMPLEMENTATION,
+                return_to=RouteTarget.DEVELOPER,
+                confidence=1,
                 evidence_references=evidence,
             )
         test_evidence_problems: list[str] = []
@@ -155,10 +345,26 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 if item.status is ToolStatus.SUCCESS
             }
             valid_coverage_evidence = executed_evidence & recorded_evidence
+            # Security PASS with empty findings is its own evidence for the
+            # `security` coverage dimension (apply-399a301c / v5). Mapping
+            # security_review into coverage_mapping would fail "cites unexecuted
+            # evidence" against run_tests, so Reviewer exempts an empty/
+            # unexecuted `security` dimension only when PASS and findings are
+            # empty. Nonempty findings (baseline risk) keep the dimension gated.
+            security_pass_clean = (
+                security is not None
+                and security.status is SecurityStatus.PASS
+                and not security.findings
+            )
+
+            def _security_exempt(dimension: str) -> bool:
+                return dimension == "security" and security_pass_clean
+
             gaps = sorted(
                 dimension
                 for dimension in latest_test.proposed_tests
-                if not any(
+                if not _security_exempt(dimension)
+                and not any(
                     reference.strip()
                     for reference in latest_test.coverage_mapping.get(dimension, [])
                 )
@@ -170,7 +376,8 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
             invalid_coverage = sorted(
                 dimension
                 for dimension in latest_test.proposed_tests
-                if any(
+                if not _security_exempt(dimension)
+                and any(
                     reference not in valid_coverage_evidence
                     for reference in latest_test.coverage_mapping.get(dimension, [])
                 )
@@ -183,7 +390,7 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
             return ReviewerDecision(
                 status=ReviewerStatus.REJECTED, score=45,
                 subscores={item: (0 if item == "testing" else 75) for item in _DIMENSIONS},
-                problems=test_evidence_problems,
+                problems=[*baseline_visible_problems, *test_evidence_problems],
                 reason="testing evidence gate requires a real successful run and complete coverage",
                 remediation_category=RemediationCategory.TESTING,
                 return_to=RouteTarget.DEVELOPER, confidence=1,
@@ -191,6 +398,8 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
             )
         return ReviewerDecision(
             status=ReviewerStatus.APPROVED, score=100,
-            subscores={item: 100 for item in _DIMENSIONS}, reason="validated evidence satisfies acceptance checks",
+            subscores={item: 100 for item in _DIMENSIONS},
+            problems=list(baseline_visible_problems),
+            reason="validated evidence satisfies acceptance checks",
             confidence=1, evidence_references=evidence,
         )

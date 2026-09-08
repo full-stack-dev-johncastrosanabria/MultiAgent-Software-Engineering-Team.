@@ -207,6 +207,7 @@ GROQ_API_KEY=...
 MISTRAL_API_KEY=...
 OPEN_ROUTER_API_KEY=...
 GEMINI_API_KEY=...      # opcional: solo lo usa el ultimo eslabon
+GEMINI_API_KEY_2=...    # opcional: ruta explicita `google2`, nunca implicita
 ```
 
 Sobreescribir la cadena de un rol sin tocar codigo:
@@ -214,6 +215,14 @@ Sobreescribir la cadena de un rol sin tocar codigo:
 ```sh
 CLOUD_CHAIN_DEVELOPER=mistral:codestral-latest,groq:openai/gpt-oss-120b,google:gemini-3.5-flash
 ```
+
+Una cadena puede declarar una segunda credencial de Google de forma explicita,
+por ejemplo `google:gemini-3.5-flash,google2:gemini-3.1-flash-lite`. `google2`
+usa el endpoint oficial de Google y solo `GEMINI_API_KEY_2`; si falta esa
+variable, se omite el eslabon. Sus cooldowns no se comparten con `google`.
+Las cuotas pueden estar ligadas al proyecto de Google Cloud, por lo que otra
+clave no garantiza una cuota independiente y los tiempos de `Retry-After`
+siguen aplicando.
 
 Disponibles: `CLOUD_CHAIN_PRODUCT`, `CLOUD_CHAIN_ARCHITECTURE`,
 `CLOUD_CHAIN_DEVELOPER`, `CLOUD_CHAIN_SECURITY`. Vacio conserva los defaults.
