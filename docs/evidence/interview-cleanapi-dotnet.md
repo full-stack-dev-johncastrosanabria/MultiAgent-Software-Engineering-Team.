@@ -229,3 +229,41 @@ correct outcome for an agent that could not think, rather than a fabricated one.
 So the harness work for this repository is finished and the trial is waiting on
 one of two decisions that are not the harness's to make: pull local models, or
 move the credentials out of the committed configuration.
+
+## Why the design was built on 7% of the evidence
+
+The first run that reached the Reviewer was rejected, and the verdict named the
+cause: *"tests fail against a design built on incomplete repository evidence"*.
+Architecture had read ten files, and none of them was backend — for a task about
+a .NET domain entity.
+
+Three defects, each measured rather than inferred.
+
+**The ranker did not know `.cs` is code.** Its suffix set listed eight
+languages and C# was not among them. That is not a small penalty: it hands two
+points to every file written in a language that *is* listed, so all three
+front-ends outranked the domain the task was about. `.csproj` was not a manifest
+either, where `package.json` was.
+
+**A named type was not a boundary.** Boundary detection matched literal paths
+and HTTP routes. A specification names types — "Product gains a factory",
+"DomainErrors already declares them" — so this task produced no boundaries at
+all, and its own entity was never mandatory evidence. The exemption that exists
+for exactly this case could never fire.
+
+**The gate's own output competed with the source.** `TestResults` was not an
+excluded directory, and the dotnet profile writes TRX reports there. A run
+therefore generated files that outranked the repository on the next cycle.
+
+| | Before | After |
+| --- | --- | --- |
+| First file read | `clients/vue-client/src/main.ts` | `InterviewCleanApi.Domain/Entities/Product.cs` |
+| Backend files in the top ten | 0 | 8 |
+| Coverage | 0.07 | 1.00 |
+
+One change was reverted during this work and the reason is worth keeping. The
+depth tie-break (`-len(path)`) looked arbitrary and was replaced with an
+alphabetical one; that broke the adversarial case it had been written for, where
+a thousand generated `payment_00001.py` files score the same as a hand-written
+`service.py` and brevity is the only thing telling them apart. The `.cs` fix was
+what mattered; the tie-break was never the problem.
