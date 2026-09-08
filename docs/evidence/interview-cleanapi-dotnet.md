@@ -159,3 +159,50 @@ refutations were cheaper than the belief would have been.
 A fourth was self-inflicted: the error string was printed truncated to 300
 characters, cutting `2390` into `239`, which invented a phantom 2160 seconds of
 pre-command work and sent three measurements chasing it.
+
+## Where the suite does run, and what was missing there
+
+The container runner has none of the macOS problems above, and the difference is
+not marginal:
+
+| Boundary | Result |
+| --- | --- |
+| Process sandbox | 0 of 20 — no test runs at all |
+| Container, schema applied by hand | 16/16 in 3s |
+| Container, empty database | 6/16 |
+
+The last row is the interesting one, and it is not the repository's fault in the
+way it first looks. ADR 5 derives the MySQL dependency from `appsettings.json`
+without help and publishes exactly the right connection string. It then starts a
+database that is empty, because starting a database creates no tables. The suite
+had always been run against a schema someone had applied by hand.
+
+Two fixes were written and only one was kept.
+
+The repository-side fix — a module initializer applying the migrations when the
+test assembly loads — took the suite from 6/16 to 16/16 against an empty
+database. It is a defensible change for that repository, and it proved the
+diagnosis. It was then removed, because a harness that needs every project to
+have already made that change has not solved anything.
+
+The kept fix is ADR 12: the run applies the project's migrations between the
+services becoming ready and the first phase. Verified inside the profile's
+pinned SDK image (10.0.400), against an empty database: `dotnet-ef` installs
+into the run's own environment, `database update` creates
+`__EFMigrationsHistory`, `products` and `users`, and the suite goes green.
+
+The repository is untouched, which is the outcome worth having — the change the
+run publishes is the change the run made.
+
+### Still open, and deliberately not fixed
+
+`Delete_WithoutAdminRole_ReturnsForbidden` still alternates. A non-admin token
+deletes product 1 successfully and the test reads `204`, then the row is gone
+and the next execution reads `404` and passes. The test tolerates this by
+accepting `404` as well as `403`.
+
+The defect is authorization, not the test: a non-admin can delete. Changing that
+is behaviour, not test infrastructure, and it belongs in its own change rather
+than smuggled in as preparation for someone else's. It is a good candidate for a
+later run. Until then, a gate executed twice in one run may be red the second
+time for a reason that has nothing to do with the change under test.
