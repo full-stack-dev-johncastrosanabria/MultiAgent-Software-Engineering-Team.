@@ -189,6 +189,50 @@ def _names_a_credential_file(name: str) -> bool:
     return is_credential_path(name)
 
 
+def redacted_for_cloud(value: Any) -> Any:
+    """The same content with detected secret values replaced, or a refusal.
+
+    A project that declares a database puts its connection string in committed
+    configuration, and `ServiceStack` reads that string to start the service --
+    so the password has to be there for the run to work at all. Refusing every
+    prompt that carried it meant no project with a database could use a cloud
+    model: InterviewCleanApi's Architecture step died on its own appsettings.json
+    while the file was doing nothing wrong.
+
+    Redaction is not a relaxation here, because the callers still run
+    `require_safe_cloud_context` on the result. A value the detector matches is
+    replaced and then passes; a value it does not match is untouched and reaches
+    the model exactly as it did before this function existed. Nothing that used
+    to be withheld is now sent -- what used to abort the run now travels as
+    `[REDACTED]`.
+
+    The two structural refusals stay refusals. A mapping keyed by a secret, or
+    one presenting a credential file's contents, is not a document that happens
+    to quote a password; redacting it would leave something whose whole purpose
+    was to carry the value.
+    """
+    if isinstance(value, dict):
+        if any(str(key).lower() in _SENSITIVE_KEYS for key in value):
+            raise ValueError("sensitive content is not allowed in cloud context")
+        named = next(
+            (str(value[k]) for k in ("file", "path", "filename") if k in value), ""
+        )
+        if named and _names_a_credential_file(named) and any(
+            k in value for k in ("content", "contents", "body", "text")
+        ):
+            raise ValueError("sensitive content is not allowed in cloud context")
+        return {key: redacted_for_cloud(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redacted_for_cloud(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redacted_for_cloud(item) for item in value)
+    if isinstance(value, set):
+        return {redacted_for_cloud(item) for item in value}
+    if isinstance(value, str):
+        return redact_secrets(value)
+    return value
+
+
 def require_safe_cloud_context(value: Any) -> None:
     if isinstance(value, dict):
         if any(str(key).lower() in _SENSITIVE_KEYS for key in value):
