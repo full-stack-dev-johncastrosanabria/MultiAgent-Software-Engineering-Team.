@@ -177,6 +177,11 @@ PROFILES: dict[str, StackProfile] = {
             ),
             "-DfailBuildOnCVSS=7",
             "-DfailOnError=true",
+            # A Java component has no .NET assemblies, and the analyzer that
+            # would read them needs a dotnet runtime this image does not carry.
+            # With `failOnError` it aborted the scan over its own absence, so a
+            # run reported a tool failure where it had found real CVEs.
+            "-DassemblyAnalyzerEnabled=false",
             "org.owasp:dependency-check-maven:13.0.0:check",
         ),
         # The container deliberately runs as the host user. Maven otherwise
