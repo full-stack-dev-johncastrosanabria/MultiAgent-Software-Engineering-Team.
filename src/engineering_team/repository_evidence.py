@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
-from engineering_team.guardrails.secrets import redact_secrets
+from engineering_team.guardrails.secrets import _TYPE_NAME_PATTERN, redact_secrets
 
 # How many ranked paths the graph fetches. Reading is cheap; what costs is what
 # reaches the prompt, and that is governed by the byte budget below.
@@ -104,8 +104,16 @@ def _redact_json_keys(
     return value
 
 
+# `password: string` names a parameter's type, and this pattern keys off the
+# name alone, so it replaced the type with [REDACTED] and handed the model
+# TypeScript that no longer parses. Redacting a declared type protects nothing.
+_DECLARED_TYPE = re.compile(rf"(?i)^(?:{_TYPE_NAME_PATTERN})\b")
+
+
 def _redact_sensitive_assignment(match: re.Match[str]) -> str:
     if not _sensitive_json_key(match.group(1)):
+        return match.group(0)
+    if _DECLARED_TYPE.match(match.group(3)):
         return match.group(0)
     return f"{match.group(1)}{match.group(2)}[REDACTED]"
 

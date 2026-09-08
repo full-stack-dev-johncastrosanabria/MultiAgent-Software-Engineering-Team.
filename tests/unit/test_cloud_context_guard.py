@@ -68,3 +68,28 @@ def test_a_real_projects_configuration_module_passes() -> None:
         "    DEBUG = os.environ.get('FLASK_DEBUG', '0') == '1'\n"
     )
     require_safe_cloud_context(module)
+
+
+def test_repository_evidence_keeps_a_declared_type_out_of_redaction() -> None:
+    """A parameter's type is not its value.
+
+    Evidence redaction keys off the name alone, so `password: string` became
+    `password: [REDACTED]` and the model was handed TypeScript that no longer
+    parses. It also failed the cloud check afterwards, on a marker the redactor
+    itself had written. Redacting a declared type protects nothing and costs the
+    agent the source it is meant to reason about.
+    """
+    from engineering_team.repository_evidence import bounded_redacted_text
+
+    signature = "async fillCredentials(email: string, password: string) {"
+
+    assert bounded_redacted_text(signature, 4000) == signature
+
+
+def test_repository_evidence_still_redacts_a_real_value() -> None:
+    from engineering_team.repository_evidence import bounded_redacted_text
+
+    redacted = bounded_redacted_text("{ password: 'hunter2' }", 4000)
+
+    assert "hunter2" not in redacted
+    assert "REDACTED" in redacted
