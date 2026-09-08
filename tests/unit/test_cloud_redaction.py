@@ -75,3 +75,47 @@ def test_content_the_detector_does_not_match_is_left_alone() -> None:
     prose = "The service reads its configuration from the environment."
 
     assert redacted_for_cloud(prose) == prose
+
+
+def test_a_declared_type_is_not_a_credential() -> None:
+    """`password: string` is a signature, not a secret.
+
+    The Python path already knew this; the helper that knew it parses Python, so
+    the same signature in TypeScript refused the prompt — and once redaction ran,
+    it also rewrote the source into `password=[REDACTED] {`, handing the model
+    broken code.
+    """
+    signature = "async fillCredentials(email: string, password: string) {"
+
+    assert redacted_for_cloud(signature) == signature
+    require_safe_cloud_context(redacted_for_cloud(signature))
+
+
+def test_the_marker_is_recognised_where_it_lands_not_only_at_a_line_end() -> None:
+    """Redaction that its own checker rejects is worse than no redaction."""
+    inline = "{ email: 'a@b.c', password: 'hunter2' },"
+
+    redacted = redacted_for_cloud(inline)
+
+    assert "hunter2" not in redacted
+    require_safe_cloud_context(redacted)
+
+
+def test_documentation_loses_the_value_not_the_emphasis() -> None:
+    """`**Password:** `123456`` put markdown where the pattern expected the
+    secret, so the asterisks were redacted and the credential survived."""
+    documented = "- **Password:** `123456`"
+
+    redacted = redacted_for_cloud(documented)
+
+    assert "123456" not in redacted
+
+
+def test_a_credential_written_as_prose_is_not_detected() -> None:
+    """The honest limit, kept in the suite so it is not rediscovered as a
+    surprise. Nothing here matches `key: value`, so nothing is redacted -- and
+    since ADR 13 stopped refusing the whole file, this now travels."""
+    prose = "- Admin user: `john@test.com` / `123456`"
+
+    assert redacted_for_cloud(prose) == prose
+    require_safe_cloud_context(prose)

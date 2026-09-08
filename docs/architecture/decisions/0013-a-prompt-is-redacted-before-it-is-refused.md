@@ -32,14 +32,19 @@ The order is the whole safety argument, and it is worth stating precisely
 because "redact instead of refuse" sounds like a relaxation and this is not one:
 
 - A value the detector matches was previously withheld along with the entire
-  prompt. It is now replaced by `[REDACTED]` and the rest travels. The value
-  itself does not reach the model in either case.
-- A value the detector does not match was travelling before this decision and
-  travels now, unchanged. Redaction does not widen that gap, and does not
-  narrow it either.
+  prompt. It is now replaced by `[REDACTED]`. The value itself does not reach
+  the model in either case.
+- **The rest of that prompt now travels, and that is a widening.** Refusing on
+  one detected secret withheld everything around it as collateral, including
+  credentials the detector does not recognise. `InterviewCleanApi`'s README is
+  the case in point: it was refused over `**Password:** …`, and it also says
+  `Admin user: john@test.com / 123456` in prose, which no pattern matches.
+  Redacting the first line lets the second one through.
 
-So nothing that used to be withheld is now sent. What used to abort a run now
-arrives with a hole in it.
+That protection was real but arbitrary — it applied only to files that happened
+to also contain a *detected* secret, and never to the ones that did not. Trading
+it for the ability to reason about a project at all is the judgement this record
+makes, and it is a trade, not a free win.
 
 Two refusals stay refusals, because redacting them would leave nothing worth
 sending. A mapping keyed by a secret (`{"password": …}`) and a structure
@@ -54,8 +59,19 @@ inference. The agent sees the shape of the configuration — that there is a MyS
 server, on a port, with a database name — which is what it needs to reason about
 the project, and not the password, which it never needed.
 
-This changes what happens to secrets that are detected, not how many are
-detected. A credential the patterns do not recognise is exactly as exposed as it
-was before, and improving that detection is a separate piece of work.
+Detection is now the only thing standing between a credential and a cloud
+prompt, where before a neighbouring match could shield it by accident. That
+raises the value of the patterns themselves, and two gaps are already on the
+record from this repository alone: a credential written as prose
+(`user: x / 123456`) and one written as a form default (`useState('123456')`).
+Improving that detection is separate work, and it is now worth more than it was.
+
+Three defects in the redactor surfaced while proving this, all of them older
+than this decision and all fixed here: it mangled TypeScript type annotations
+(`password: string` became `password=[REDACTED]`, corrupting the source the
+model reads); it did not recognise its own marker mid-line, so redacted text
+failed the very check that follows it; and against documentation it redacted the
+markdown emphasis instead of the value, leaving `**Password=[REDACTED] `123456``
+with the credential in plain sight.
 
 Related: ADR 5 is the reason the password is in the file at all.

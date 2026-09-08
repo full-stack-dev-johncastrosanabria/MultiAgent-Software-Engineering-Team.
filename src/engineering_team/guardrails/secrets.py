@@ -2,6 +2,7 @@
 
 import ast
 import json
+from pathlib import Path
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -118,6 +119,14 @@ def _without_documented_parameters(text: str) -> str:
 
 
 _ENV_FILE = re.compile(r"\.env\b", re.IGNORECASE)
+# `password: string` is a parameter's declared type, not its value. The Python
+# path already knew this -- `_without_plain_string_annotations` parses the file
+# and masks annotations -- but that helper only handles Python, so the same
+# signature in TypeScript read as a secret and refused the whole prompt.
+_TYPE_NAME_PATTERN = (
+    r"string|str|number|int|float|bool|boolean|any|unknown|object"
+    r"|null|undefined|none|char|varchar|text|uuid|date"
+)
 _SECRET_KEY_PATTERN = (
     r"api[_-]?key(?:[_-]?\d+)?|access[_-]?token|token|password|secret(?:[_-]?key)?"
 )
@@ -125,16 +134,22 @@ _QUOTED_SECRET_VALUE = re.compile(
     rf"(?i)(?P<prefix>['\"]?(?:{_SECRET_KEY_PATTERN})['\"]?\s*[=:]\s*)"
     r'''(?:(?P<double>"(?:\\.|[^"\\])*")|(?P<single>'(?:\\.|[^'\\])*'))'''
 )
+# Documentation decorates the key rather than the value: `**Password:** `123456``
+# put emphasis where the regex expected the secret, so the asterisks were
+# redacted and the credential was left in plain sight. Step over the decoration.
+_VALUE_DECORATION = r"(?:[*_`]+[ \t]*)?"
 _UNQUOTED_SECRET_VALUE = re.compile(
-    rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*[^\s,]+"
+    rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*{_VALUE_DECORATION}"
+    rf"(?!(?:{_TYPE_NAME_PATTERN})\b)[^\s,]+"
 )
 _UNQUOTED_LINE_SECRET_VALUE = re.compile(
     rf"(?im)^([ \t]*[A-Za-z0-9_.-]*(?:{_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*)"
+    rf"(?!(?:{_TYPE_NAME_PATTERN})\b)"
     r'''[^\s"'][^\r\n]*'''
 )
 _REDACTED_ASSIGNMENT = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*"
-    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n]))'''
+    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n;,"'}\)\]]))'''
     r'''|(?:"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}]))'''
 )
 
@@ -269,7 +284,7 @@ def require_safe_cloud_context(value: Any) -> None:
     # mention as well bought nothing and cost every project that has one.
     if re.search(
         r"(?i)(api[_-]?key(?:[_-]?\d+)?|access[_-]?token|password|secret)"
-        r"\s*[=:]\s*[^\s,]+",
+        rf"\s*[=:]\s*(?!(?:{_TYPE_NAME_PATTERN})\b)[^\s,]+",
         _scan_text(text),
     ):
         raise ValueError("sensitive content is not allowed in cloud context")
