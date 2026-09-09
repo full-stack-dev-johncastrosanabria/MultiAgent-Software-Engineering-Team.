@@ -31,7 +31,7 @@ def main() -> None:
             if settings.langfuse_secret_key else None
         ),
         base_url=settings.langfuse_base_url,
-        offline_directory="evaluation/reports/traces",
+        offline_directory="evaluation/reports/generated/traces",
     )
     records = EvaluationHarness(
         retriever=build_retriever(settings, reindex=True),
@@ -45,10 +45,10 @@ def main() -> None:
     ).run_all()
     suffix = "-live" if args.live_models else ""
     destination = EvaluationHarness.write(
-        records, f"evaluation/reports/scenarios{suffix}.json"
+        records, f"evaluation/reports/curated/scenarios{suffix}.json"
     )
     raw = [item.model_dump(mode="json", by_alias=True) for item in records]
-    aggregate_path = Path(f"evaluation/reports/aggregate{suffix}.json")
+    aggregate_path = Path(f"evaluation/reports/curated/aggregate{suffix}.json")
     aggregate_path.write_text(json.dumps(aggregate(raw), indent=2), encoding="utf-8")
     print(destination)
     print(aggregate_path)

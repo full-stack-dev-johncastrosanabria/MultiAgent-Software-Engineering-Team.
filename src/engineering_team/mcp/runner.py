@@ -6,9 +6,8 @@ output means -- that belongs to the quality layer and to each stack profile.
 
 `ProcessRunner` is the boundary this project started with: an OS process sandbox,
 `sandbox-exec` on Darwin and Bubblewrap on Linux, refusing to run anywhere else
-rather than running unprotected. See `docs/architecture/decisions/0002-container-runner.md`
-for why a container backend is intended to replace it, and why this one stays as
-the fallback for hosts without a container runtime.
+rather than running unprotected. The container backend and quality-layer module
+map are documented in `docs/architecture/overview.md`.
 """
 
 from __future__ import annotations
@@ -243,6 +242,13 @@ class CommandRequest:
     it. Kept to declared pairs rather than inheriting the operator's environment,
     which is the whole reason PATH is rebuilt rather than passed through.
     """
+    writable_paths: tuple[str, ...] = ()
+    """Host paths outside the boundary that this toolchain has to write to.
+
+    Declared by the stack profile, never by the caller: a fixed path a runtime
+    will not be talked out of is a property of the toolchain, and granting it
+    here keeps the grant narrow instead of opening the directory it sits in.
+    """
     allow_subprocesses: bool = False
     """Whether the command may fork.
 
@@ -327,6 +333,13 @@ class ProcessRunner:
         directory = Path(tempfile.mkdtemp(prefix="env-", dir=base))
         self.environment = directory
         try:
+            # The two directories the environment advertises. Python's tempfile
+            # invents a missing TMPDIR, so nothing noticed they were never
+            # created -- until a Selenium suite asked Chrome for a user data
+            # directory and every browser test failed in a millisecond with
+            # "cannot create temp dir for user data dir".
+            (directory / "home").mkdir()
+            (directory / "tmp").mkdir()
             uid = os.getuid() if hasattr(os, "getuid") else 0
             (directory / _ENVIRONMENT_MARKER).write_text(
                 json.dumps({
@@ -391,6 +404,7 @@ class ProcessRunner:
             allow_network=request.allow_network,
             allow_subprocesses=request.allow_subprocesses,
             extra_env=request.env,
+            writable_paths=request.writable_paths,
         )
 
     def close(self) -> None:
@@ -469,6 +483,7 @@ class ProcessRunner:
         allow_network: bool,
         allow_subprocesses: bool = False,
         cwd: Path | None = None,
+        writable_paths: tuple[str, ...] = (),
     ) -> list[str]:
         """Wrap a command in a write-confined sandbox inherited by descendants."""
         backend, executable = self._sandbox_backend()
@@ -479,12 +494,14 @@ class ProcessRunner:
                 args,
                 allow_network=allow_network,
                 cwd=cwd or self.workspace,
+                writable_paths=writable_paths,
             )
         return self._darwin_sandbox_command(
             executable,
             args,
             allow_network=allow_network,
             allow_subprocesses=allow_subprocesses,
+            writable_paths=writable_paths,
         )
 
     def _darwin_sandbox_command(
@@ -494,6 +511,7 @@ class ProcessRunner:
         *,
         allow_network: bool,
         allow_subprocesses: bool,
+        writable_paths: tuple[str, ...] = (),
     ) -> list[str]:
         environment = self.prepare_scratch()
         workspace_literal = json.dumps(str(self.workspace), ensure_ascii=False)
@@ -539,11 +557,37 @@ class ProcessRunner:
             f"  (subpath {environment_literal})",
             *(f"  (subpath {literal})" for literal in runtime_literals),
             *(f"  (subpath {literal})" for literal in path_literals),
+            # Read as well as write: the .NET runtime opens this directory
+            # itself, not just files inside it, and the deny above covers the
+            # temporary roots these paths live under.
+            *(
+                f"  (subpath {json.dumps(str(Path(path).resolve()), ensure_ascii=False)})"
+                for path in writable_paths
+            ),
             '  (literal "/dev/null"))',
             "(allow file-write*",
             f"  (subpath {workspace_literal})",
             f"  (subpath {environment_literal})",
+            # Fixed paths a toolchain will not be talked out of, named by its
+            # profile. Granted one subpath at a time, never the directory above,
+            # and resolved first: seatbelt matches the real path, and on macOS
+            # `/tmp` is a symlink, so an unresolved rule silently matches nothing.
+            *(
+                f"  (subpath {json.dumps(str(Path(path).resolve()), ensure_ascii=False)})"
+                for path in writable_paths
+            ),
             '  (literal "/dev/null"))',
+            # Identity lookup, not data. .NET resolves the caller's group list
+            # through opendirectoryd instead of the getgroups syscall, and a
+            # denied lookup never surfaces as a permission error: the runtime
+            # reads the failure as "buffer too small", doubles the buffer, and
+            # overflows a checked multiply, so the build dies inside
+            # CreateAppHost with an arithmetic error that names nothing.
+            # Read-only, and it reaches neither the filesystem nor the network.
+            "(allow mach-lookup",
+            '  (global-name "com.apple.system.opendirectoryd.membership")',
+            '  (global-name "com.apple.system.opendirectoryd.libinfo")',
+            '  (global-name "com.apple.system.opendirectoryd.api"))',
             *(
                 [
                     "(allow network*)",
@@ -569,11 +613,12 @@ class ProcessRunner:
         *,
         allow_network: bool,
         cwd: Path,
+        writable_paths: tuple[str, ...] = (),
     ) -> list[str]:
         """Build a minimal Linux mount namespace without exposing host root/home."""
         environment = self.prepare_scratch()
 
-        writable = (self.workspace, environment)
+        writable = (self.workspace, environment, *(Path(p).resolve() for p in writable_paths))
         readonly_candidates = [
             Path("/usr"),
             Path("/bin"),
@@ -741,6 +786,7 @@ class ProcessRunner:
         allow_network: bool = False,
         allow_subprocesses: bool = False,
         extra_env: tuple[tuple[str, str], ...] = (),
+        writable_paths: tuple[str, ...] = (),
     ) -> subprocess.CompletedProcess[str]:
         timeout = _remaining(deadline)
         stdout_buffer = _BoundedOutput()
@@ -750,6 +796,7 @@ class ProcessRunner:
             allow_network=allow_network,
             allow_subprocesses=allow_subprocesses,
             cwd=cwd,
+            writable_paths=writable_paths,
         )
         with self._active_lock:
             if self._closing.is_set():

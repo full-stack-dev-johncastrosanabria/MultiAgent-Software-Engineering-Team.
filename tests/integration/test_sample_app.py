@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path("sample_app").resolve()))
+sys.path.insert(0, str(Path("demo-projects/sample_app").resolve()))
 
 from app.service import BankService
 

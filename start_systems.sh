@@ -26,7 +26,7 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 printf '%s\n' "Starting backend (FastAPI on http://127.0.0.1:8000)..."
-(cd "$PROJECT_ROOT" && exec "$PYTHON" -m uvicorn sample_app.app.main:app --host 127.0.0.1 --port 8000) &
+(cd "$PROJECT_ROOT" && exec "$PYTHON" -m uvicorn app.main:app --app-dir "$PROJECT_ROOT/demo-projects/sample_app" --host 127.0.0.1 --port 8000) &
 BACKEND_PID=$!
 
 printf '%s\n' "Starting frontend (Vite on http://localhost:5173)..."

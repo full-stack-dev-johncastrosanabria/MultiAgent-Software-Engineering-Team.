@@ -6,14 +6,14 @@ from engineering_team.config import Settings
 from engineering_team.observability.evaluation import run_multimodel_acceptance
 
 # Dedicated local-only fixture — intentionally NOT
-# evaluation/reports/multimodel-live.json, which is the real evidence
+# evaluation/reports/curated/multimodel-live.json, which is the real evidence
 # artifact for whichever runtime mode .env configures (local-first or
 # cloud-first per README's "Cloud-first (opcional)" section). Sharing that
 # path caused this test to silently read cloud-provider evidence, or to
 # force a live local run on every collection and flake on local-model
 # non-determinism (an occasional genuine Reviewer rejection is expected
 # behavior for a small local model, not a bug).
-_LOCAL_FIXTURE = Path("evaluation/reports/multimodel-live-local.json")
+_LOCAL_FIXTURE = Path("evaluation/reports/curated/multimodel-live-local.json")
 
 
 def test_one_normal_run_invokes_both_local_models_through_router(tmp_path) -> None:

@@ -38,6 +38,7 @@ def _patch_executor(monkeypatch, callback) -> None:
         allow_network=False,
         allow_subprocesses=False,
         extra_env=(),
+        writable_paths=(),
     ):
         return callback(
             args,
@@ -1506,13 +1507,11 @@ def test_windows_quality_backend_fails_closed(tmp_path: Path, monkeypatch) -> No
 
 
 def test_quality_container_contract_is_documented() -> None:
-    readme = (Path(__file__).parents[2] / "README.md").read_text(encoding="utf-8")
+    operations = (Path(__file__).parents[2] / "docs/operations.md").read_text(encoding="utf-8")
 
-    assert "QualityMCP" in readme
-    assert "QUALITY_RUNNER=container" in readme
-    assert "Docker Desktop" in readme
-    assert "Windows debe usar el runner en contenedor" in readme
-    assert "runner de proceso" in readme
+    assert "[QualityMCP](../src/engineering_team/mcp/quality.py)" in operations
+    assert "QUALITY_RUNNER=container" in operations
+    assert "[Settings](../src/engineering_team/config.py)" in operations
 
 
 def test_ruff_config_stays_inside_the_sandboxed_project(tmp_path: Path) -> None:

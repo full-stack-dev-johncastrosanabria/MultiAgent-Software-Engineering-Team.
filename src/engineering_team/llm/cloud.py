@@ -12,7 +12,10 @@ from pydantic import BaseModel, ValidationError
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole, ErrorCode
 from engineering_team.contracts.models import CloudFallbackContext, ModelExecutionInfo
-from engineering_team.guardrails.secrets import require_safe_cloud_context
+from engineering_team.guardrails.secrets import (
+    redacted_for_cloud,
+    require_safe_cloud_context,
+)
 from engineering_team.llm.prompting import build_role_prompts, governed_output_schema
 from engineering_team.models.context import ContextEnvelope
 
@@ -243,6 +246,13 @@ def build_cloud_context(
     structured_input: dict[str, object],
     **kwargs: object,
 ) -> CloudFallbackContext:
+    # Redact first, then check what is left. A detected secret becomes
+    # [REDACTED] and the context travels; anything the detector still objects to
+    # is refused exactly as before.
+    task = redacted_for_cloud(task)
+    requirement = redacted_for_cloud(requirement)
+    structured_input = redacted_for_cloud(structured_input)
+    kwargs = redacted_for_cloud(kwargs)
     require_safe_cloud_context(task)
     require_safe_cloud_context(requirement)
     require_safe_cloud_context(structured_input)
@@ -329,6 +339,8 @@ class CloudModelRuntime:
             {"candidate": candidate_dict},
             deterministic_evidence=[item.chunk_id for item in envelope.rag_evidence],
         )
+        system_prompt = redacted_for_cloud(system_prompt)
+        user_prompt = redacted_for_cloud(user_prompt)
         require_safe_cloud_context(system_prompt)
         require_safe_cloud_context(user_prompt)
         owns_client = self.client is None

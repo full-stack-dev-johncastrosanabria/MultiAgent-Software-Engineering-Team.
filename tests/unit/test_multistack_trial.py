@@ -102,6 +102,46 @@ def test_report_directory_cannot_bypass_interval(trial, tmp_path, monkeypatch):
     assert len(journal) == 1
 
 
+def test_each_case_runs_on_the_backend_its_suite_needs(trial, tmp_path, monkeypatch):
+    """ADR 10: a suite that drives containers itself runs under the process sandbox.
+
+    `order-ms` reaches for PostgreSQL and Kafka through Testcontainers while the
+    suite runs, and the quality container has no route to a Docker API. Nothing
+    checked this before, which is how the benchmark came to run every case on the
+    container runner while the decision said otherwise.
+    """
+    selected = []
+    monkeypatch.setattr(trial, "Settings", lambda **kwargs: (
+        selected.append(kwargs["quality_runner"]) or SimpleNamespace(gemini_api_key_2=None)
+    ))
+    monkeypatch.setattr(trial, "run_on_project", lambda *_, **__: {"final_status": "APPROVED"})
+    monkeypatch.setattr(trial.time, "time", lambda: 2_000_000_000)
+
+    chosen = {}
+    for case in trial.CASES:
+        # A workspace apiece: the experiment interval is per journal, and this
+        # test is about backend selection, not pacing.
+        workspace = tmp_path / case
+        workspace.mkdir()
+        monkeypatch.setattr(sys, "argv", [
+            "run_trial.py", case, "--workspace", str(workspace),
+            "--report", str(workspace / "result.json"),
+        ])
+        trial.main()
+        chosen[case] = selected.pop()
+
+    assert chosen["ingresos"] == "process"
+    assert chosen["northgate"] == "container"
+    assert chosen["interview"] == "container"
+
+
+def test_every_case_declares_a_backend(trial):
+    """A case added without a runner must fail here, not silently inherit one."""
+    for case, definition in trial.CASES.items():
+        assert len(definition) == 4, f"{case} does not declare a runner"
+        assert definition[3] in {"process", "container"}, case
+
+
 def test_report_directory_cannot_bypass_running_experiment(trial, tmp_path, monkeypatch):
     import fcntl
 

@@ -118,6 +118,14 @@ def _without_documented_parameters(text: str) -> str:
 
 
 _ENV_FILE = re.compile(r"\.env\b", re.IGNORECASE)
+# `password: string` is a parameter's declared type, not its value. The Python
+# path already knew this -- `_without_plain_string_annotations` parses the file
+# and masks annotations -- but that helper only handles Python, so the same
+# signature in TypeScript read as a secret and refused the whole prompt.
+_TYPE_NAME_PATTERN = (
+    r"string|str|number|int|float|bool|boolean|any|unknown|object"
+    r"|null|undefined|none|char|varchar|text|uuid|date"
+)
 _SECRET_KEY_PATTERN = (
     r"api[_-]?key(?:[_-]?\d+)?|access[_-]?token|token|password|secret(?:[_-]?key)?"
 )
@@ -125,16 +133,22 @@ _QUOTED_SECRET_VALUE = re.compile(
     rf"(?i)(?P<prefix>['\"]?(?:{_SECRET_KEY_PATTERN})['\"]?\s*[=:]\s*)"
     r'''(?:(?P<double>"(?:\\.|[^"\\])*")|(?P<single>'(?:\\.|[^'\\])*'))'''
 )
+# Documentation decorates the key rather than the value: `**Password:** `123456``
+# put emphasis where the regex expected the secret, so the asterisks were
+# redacted and the credential was left in plain sight. Step over the decoration.
+_VALUE_DECORATION = r"(?:[*_`]+[ \t]*)?"
 _UNQUOTED_SECRET_VALUE = re.compile(
-    rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*[^\s,]+"
+    rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*{_VALUE_DECORATION}"
+    rf"(?!(?:{_TYPE_NAME_PATTERN})\b)[^\s,]+"
 )
 _UNQUOTED_LINE_SECRET_VALUE = re.compile(
     rf"(?im)^([ \t]*[A-Za-z0-9_.-]*(?:{_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*)"
+    rf"(?!(?:{_TYPE_NAME_PATTERN})\b)"
     r'''[^\s"'][^\r\n]*'''
 )
 _REDACTED_ASSIGNMENT = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*"
-    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n]))'''
+    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n;,"'}\)\]]))'''
     r'''|(?:"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}]))'''
 )
 
@@ -189,6 +203,50 @@ def _names_a_credential_file(name: str) -> bool:
     return is_credential_path(name)
 
 
+def redacted_for_cloud(value: Any) -> Any:
+    """The same content with detected secret values replaced, or a refusal.
+
+    A project that declares a database puts its connection string in committed
+    configuration, and `ServiceStack` reads that string to start the service --
+    so the password has to be there for the run to work at all. Refusing every
+    prompt that carried it meant no project with a database could use a cloud
+    model: InterviewCleanApi's Architecture step died on its own appsettings.json
+    while the file was doing nothing wrong.
+
+    Redaction is not a relaxation here, because the callers still run
+    `require_safe_cloud_context` on the result. A value the detector matches is
+    replaced and then passes; a value it does not match is untouched and reaches
+    the model exactly as it did before this function existed. Nothing that used
+    to be withheld is now sent -- what used to abort the run now travels as
+    `[REDACTED]`.
+
+    The two structural refusals stay refusals. A mapping keyed by a secret, or
+    one presenting a credential file's contents, is not a document that happens
+    to quote a password; redacting it would leave something whose whole purpose
+    was to carry the value.
+    """
+    if isinstance(value, dict):
+        if any(str(key).lower() in _SENSITIVE_KEYS for key in value):
+            raise ValueError("sensitive content is not allowed in cloud context")
+        named = next(
+            (str(value[k]) for k in ("file", "path", "filename") if k in value), ""
+        )
+        if named and _names_a_credential_file(named) and any(
+            k in value for k in ("content", "contents", "body", "text")
+        ):
+            raise ValueError("sensitive content is not allowed in cloud context")
+        return {key: redacted_for_cloud(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redacted_for_cloud(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redacted_for_cloud(item) for item in value)
+    if isinstance(value, set):
+        return {redacted_for_cloud(item) for item in value}
+    if isinstance(value, str):
+        return redact_secrets(value)
+    return value
+
+
 def require_safe_cloud_context(value: Any) -> None:
     if isinstance(value, dict):
         if any(str(key).lower() in _SENSITIVE_KEYS for key in value):
@@ -225,7 +283,7 @@ def require_safe_cloud_context(value: Any) -> None:
     # mention as well bought nothing and cost every project that has one.
     if re.search(
         r"(?i)(api[_-]?key(?:[_-]?\d+)?|access[_-]?token|password|secret)"
-        r"\s*[=:]\s*[^\s,]+",
+        rf"\s*[=:]\s*(?!(?:{_TYPE_NAME_PATTERN})\b)[^\s,]+",
         _scan_text(text),
     ):
         raise ValueError("sensitive content is not allowed in cloud context")

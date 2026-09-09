@@ -38,10 +38,15 @@ def _anonymised_path(value: str | None) -> str | None:
     return os.pathsep.join(entries)
 
 
+# The runner belongs to the case, not to the trial. A suite that drives
+# containers itself has no route to a Docker API from inside the quality
+# container, so it runs under the process sandbox (ADR 10). `order-ms` proves
+# its behaviour against PostgreSQL and Kafka through Testcontainers; the other
+# two do not, and stay on the container runner this benchmark exists to exercise.
 CASES = {
-    "ingresos": ("PruebaNuevosIngresosBackend", "jvm", "order-ms"),
-    "northgate": ("NorthgateTollPlaza", "jvm", "northgate-backend"),
-    "interview": ("InterviewCleanApi", "dotnet", ""),
+    "ingresos": ("PruebaNuevosIngresosBackend", "jvm", "order-ms", "process"),
+    "northgate": ("NorthgateTollPlaza", "jvm", "northgate-backend", "container"),
+    "interview": ("InterviewCleanApi", "dotnet", "", "container"),
 }
 
 
@@ -89,9 +94,9 @@ def main() -> None:
         records.append(record)
         state_path.write_text(json.dumps(records, indent=2))
         try:
-            repo, stack, component = CASES[args.case]
+            repo, stack, component, runner = CASES[args.case]
             settings = Settings(
-                quality_runner="container", quality_stack=stack,
+                quality_runner=runner, quality_stack=stack,
                 quality_component_path=component, quality_timeout_seconds=900,
                 cloud_role_timeout_seconds=180, llm_timeout_seconds=60,
                 max_remediation_iterations=3,
@@ -107,7 +112,7 @@ def main() -> None:
                     setattr(settings, f"cloud_chain_{role.value.lower()}", ",".join(chain))
             evidence = run_on_project(
                 settings, project_path=args.workspace / repo,
-                specification=Path(__file__).with_name(f"{args.case}.md").read_text(),
+                specification=(Path(__file__).parent / "cases" / f"{args.case}.md").read_text(),
                 authorize_writes=True, test_paths=args.test_arg,
                 report_path=args.report, confirm_delivery=args.confirm_delivery,
             )

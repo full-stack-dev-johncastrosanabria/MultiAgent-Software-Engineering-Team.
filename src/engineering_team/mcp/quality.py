@@ -13,6 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from engineering_team.components import list_repository_paths, migration_projects
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole, ErrorCode, ToolStatus
 from engineering_team.contracts.models import ToolResult
@@ -105,6 +106,7 @@ class QualityMCP:
         profile: StackProfile | None = None,
         component: str = "",
         services: Any = None,
+        test_filter: str = "",
     ) -> None:
         self.root = Path(root).resolve()
         # Which ecosystem's commands to run. An explicit profile (how every
@@ -124,6 +126,11 @@ class QualityMCP:
         # run, which leaves evidence_reference unset exactly as before: the gates
         # group by it, and an unset reference is one bucket.
         self.component = component
+        # Which of this component's tests the gate runs. An explicit argument
+        # wins over settings, exactly as the profile and the runner do.
+        self.test_filter = test_filter or str(
+            getattr(settings, "quality_test_filter", "") or ""
+        )
         # The dependencies this project declares. They live for the run, so they
         # are started once, before the first phase that could need them.
         self.service_environment: tuple[tuple[str, str], ...] = ()
@@ -178,6 +185,7 @@ class QualityMCP:
                 allow_network=allow_network,
                 allow_subprocesses=allow_subprocesses,
                 env=tuple({**dict(env), **dict(self.service_environment)}.items()),
+                writable_paths=self.profile.toolchain_writable_paths,
             )
         )
 
@@ -428,6 +436,64 @@ class QualityMCP:
             # The commands have to join the network the services are on, and it
             # only exists once they are up.
             self._runner.network = network
+        return self._apply_schema(role, tool, deadline)
+
+    def _apply_schema(
+        self, role: AgentRole, tool: str, deadline: float
+    ) -> ToolResult | None:
+        """Bring the started database up to the schema the project declares.
+
+        Starting a database creates no tables. Between a service being ready and
+        the first test running there is a step ADR 5 never took, and without it a
+        project whose schema comes from migrations reports a broken suite rather
+        than an unprepared one -- ten of InterviewCleanApi's sixteen tests failed
+        on missing tables against a service that had started perfectly.
+
+        It runs here, after the services, because the migration command needs the
+        connection string the services just published, and before any phase,
+        because every phase after this one assumes the schema is there.
+        """
+        if not self.profile.schema_template:
+            return None
+        projects = migration_projects(list_repository_paths(self.root))
+        if projects is None:
+            return None
+        migrations, startup = projects
+        started = time.perf_counter()
+        try:
+            environment = self._sandbox_directory()
+        except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
+            return self._unavailable(role, tool, exc, started)
+        for command in self.profile.schema_commands(environment, migrations, startup):
+            try:
+                completed = self._execute_process(
+                    command,
+                    cwd=self.root,
+                    deadline=deadline,
+                    allow_network=True,
+                    allow_subprocesses=True,
+                    env=self.profile.env(environment),
+                )
+            except (
+                OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired
+            ) as exc:
+                return self._unavailable(role, tool, exc, started)
+            if completed.returncode != 0:
+                # A schema that would not apply is infrastructure, not a failing
+                # test, and saying so keeps it off the Developer's desk.
+                return ToolResult(
+                    tool_name=tool,
+                    allowed_role=role,
+                    status=ToolStatus.UNAVAILABLE,
+                    input_summary="schema",
+                    output_summary=(completed.stdout + completed.stderr)[-4000:],
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    error=(
+                        f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: applying the "
+                        f"project's migrations failed ({' '.join(command[:3])})"
+                    ),
+                    evidence_reference=self._evidence_reference(tool),
+                )
         return None
 
     def _run_profile(
@@ -926,6 +992,13 @@ class QualityMCP:
         boundary = self._container_api_refusal()
         if boundary is not None:
             return self._unavailable(role, "run_tests", boundary, started)
+        if self.test_filter and not self.profile.test_filter_arguments(self.test_filter):
+            return self._unavailable(role, "run_tests", RuntimeError(
+                f"{self.profile.name} declares no test filter syntax, so "
+                f"quality_test_filter={self.test_filter!r} cannot be honoured. "
+                "Refusing before the run rather than executing the whole suite "
+                "the operator asked to narrow."
+            ), started)
         deadline = self._deadline()
         unavailable = self._ensure_services(role, "run_tests", deadline)
         if unavailable is not None:
@@ -950,6 +1023,7 @@ class QualityMCP:
         report_aware = self.profile.name in {"jvm", "dotnet"}
         before = snapshot_reports(self.root, self.profile.name) if report_aware else {}
         extra = list(paths or [])
+        extra.extend(self.profile.test_filter_arguments(self.test_filter))
         if self.profile.name == "dotnet":
             extra.extend(["--logger", "trx"])
         result = self._run_profile(role, "run_tests", "test", extra, allowed, deadline)
@@ -1084,8 +1158,8 @@ class QualityMCP:
             target = (
                 "app" if (self.root / "app").is_dir()
                 else (
-                    "sample_app/app"
-                    if (self.root / "sample_app" / "app").is_dir()
+                    "demo-projects/sample_app/app"
+                    if (self.root / "demo-projects" / "sample_app" / "app").is_dir()
                     else "."
                 )
             )

@@ -24,6 +24,12 @@ INTERPRETER = "{interpreter}"
 # volume is gone before the next phase starts.
 ENVIRONMENT = "{environment}"
 
+# Replaced with the project that owns the migrations and the one that starts the
+# app. A migration tool needs both: the schema lives in one, the connection
+# string in the other.
+MIGRATIONS = "{migrations}"
+STARTUP = "{startup}"
+
 _Template = tuple[str, ...] | None
 
 
@@ -66,6 +72,46 @@ class StackProfile:
     else published, which is why Security may hold it as baseline risk when the
     change left the manifests alone -- and why it must not do that for ruff.
     """
+    toolchain_writable_paths: tuple[str, ...] = ()
+    """Absolute host paths this toolchain writes to and cannot be told to move.
+
+    The boundary grants the workspace and the run's own environment, and a
+    toolchain that respects TMPDIR needs nothing else. The .NET runtime does not:
+    it keeps cross-process state under a fixed `/tmp/.dotnet` on macOS -- shared
+    memory backing its named mutexes, and per-session lock files beside it -- so
+    NuGet's migration runner, which every restore invokes, dies on
+    `open(...) == -1; errno == EPERM` before a single package resolves. The
+    grant is the directory the toolchain owns, not the temporary root it sits
+    in, and the sandbox keeps that root closed either way. A path here is
+    granted for reading as well as writing: the runtime opens the directory
+    itself, not only the files inside it.
+    """
+    schema_tool_template: tuple[str, ...] = ()
+    """How this toolchain obtains its migration tool, if it does not ship one.
+
+    The .NET SDK image has no `dotnet-ef`, and installing it into the run's own
+    environment keeps it out of the image and out of the host.
+    """
+    schema_template: tuple[str, ...] = ()
+    """How this toolchain applies a project's migrations to a started database.
+
+    ADR 5 starts what a project declares; starting a database does not create
+    its tables. Without this a project whose schema comes from migrations meets
+    an empty database and reports a broken suite -- ten of InterviewCleanApi's
+    sixteen tests failed that way -- when what it actually met was an
+    unprepared schema.
+
+    Only stacks whose migration command is measured declare one. A project that
+    declares no migrations is not migrated, which is an answer, not a gap.
+    """
+    test_filter_template: tuple[str, ...] = ()
+    """How this toolchain narrows a test run, with `{filter}` for the expression.
+
+    Only the stacks whose syntax is measured declare one. An operator who names
+    a filter for a stack that has none gets a refusal, not a full run that
+    quietly ignored the request -- a gate that ran more than it was asked to is
+    the one failure mode a narrowed gate must not have.
+    """
     java_agents: tuple[str, ...] = ()
     """Globs, under the environment's package cache, for jars to load as agents.
 
@@ -104,6 +150,31 @@ class StackProfile:
         expanded = self._expand(self.test_template, interpreter, environment)
         assert expanded is not None
         return expanded
+
+    def schema_commands(
+        self, environment: str, migrations: str, startup: str
+    ) -> list[list[str]]:
+        """The commands that bring a started database up to the project's schema."""
+        if not self.schema_template:
+            return []
+
+        def expand(template: tuple[str, ...]) -> list[str]:
+            return [
+                part.replace(ENVIRONMENT, environment)
+                .replace(MIGRATIONS, migrations)
+                .replace(STARTUP, startup)
+                for part in template
+            ]
+
+        commands = [expand(self.schema_tool_template)] if self.schema_tool_template else []
+        commands.append(expand(self.schema_template))
+        return commands
+
+    def test_filter_arguments(self, expression: str) -> list[str]:
+        """The arguments that narrow a test run to `expression`, if any."""
+        if not expression or not self.test_filter_template:
+            return []
+        return [part.replace("{filter}", expression) for part in self.test_filter_template]
 
     def lint_command(self, interpreter: str, environment: str = "") -> list[str] | None:
         return self._expand(self.lint_template, interpreter, environment)
@@ -150,6 +221,7 @@ PROFILES: dict[str, StackProfile] = {
         build_template=(INTERPRETER, "-I", "-m", "compileall", "."),
         dependency_template=(INTERPRETER, "-I", "-m", "pip", "check"),
         security_template=(INTERPRETER, "-I", "-m", "ruff", "check"),
+        test_filter_template=("-k", "{filter}"),
     ),
     "jvm": StackProfile(
         name="jvm",
@@ -214,12 +286,29 @@ PROFILES: dict[str, StackProfile] = {
             ("DOTNET_NOLOGO", "1"),
             ("DOTNET_CLI_TELEMETRY_OPTOUT", "1"),
             ("NUGET_PACKAGES", f"{ENVIRONMENT}/nuget"),
+            # MSBuild keeps worker nodes alive between invocations and talks to
+            # them over a Unix socket in a directory the sandbox does not grant.
+            # Reuse is a warm-start optimisation across builds the boundary
+            # discards anyway, and leaving it on costs the run a SocketException
+            # instead of a build.
+            ("MSBUILDDISABLENODEREUSE", "1"),
         ),
+        # Two persistent build servers, both refused the same way. MSBuild
+        # reuses worker nodes over a socket (see MSBUILDDISABLENODEREUSE above);
+        # Roslyn keeps a shared compilation server and reaches it over a named
+        # pipe. Neither is granted, and neither fails cleanly -- the build sat
+        # at zero CPU with MSBuild blocked in WaitForMultipleObjects and
+        # VBCSCompiler idle on the other end, until the gate's whole budget
+        # expired. The server also outlives a build, so whether one was already
+        # running decided if a run took ten minutes or hung: the same command
+        # passed in 632s once and timed out past 2390s the next time.
         test_template=(
-            "dotnet", "test", "--nologo", f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
+            "dotnet", "test", "--nologo", "-m:1", "-p:UseSharedCompilation=false",
+            f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
         ),
         build_template=(
-            "dotnet", "build", "--nologo", f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
+            "dotnet", "build", "--nologo", "-m:1", "-p:UseSharedCompilation=false",
+            f"-p:RestorePackagesPath={ENVIRONMENT}/nuget",
         ),
         dependency_template=(
             "dotnet", "list", "package", "--include-transitive", "--format", "json",
@@ -233,6 +322,23 @@ PROFILES: dict[str, StackProfile] = {
         security_needs_network=True,
         # Its security phase is a vulnerability database lookup, not a linter.
         dependency_scan_phases=("dependency", "security"),
+        # Measured: without this every `dotnet restore` dies in NuGet's
+        # migration runner. The runtime keeps its cross-process state here --
+        # `shm` for named mutexes, `lockfiles` for per-session locks -- and
+        # names the directory itself, so the grant is the directory .NET owns
+        # rather than the temporary root it happens to sit in.
+        toolchain_writable_paths=("/tmp/.dotnet",),
+        test_filter_template=("--filter", "{filter}"),
+        schema_tool_template=(
+            # `update` rather than `install`: the environment is reused across a
+            # run's phases, and installing twice is an error where updating is not.
+            "dotnet", "tool", "update", "dotnet-ef",
+            "--tool-path", f"{ENVIRONMENT}/tools",
+        ),
+        schema_template=(
+            f"{ENVIRONMENT}/tools/dotnet-ef", "database", "update",
+            "--project", MIGRATIONS, "--startup-project", STARTUP,
+        ),
     ),
     "go": StackProfile(
         name="go",

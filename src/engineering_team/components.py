@@ -1,10 +1,8 @@
 """What a stack profile attaches to.
 
-A component is a directory that carries a build manifest. See
-`docs/architecture/decisions/0004-profile-per-component.md` for why this is not a
-property of the repository: of the six repositories this system is meant to be
-pointed at, none is a single stack, and one of them is Java across seven Maven
-modules plus a Python service plus a React frontend.
+A component is a directory that carries a build manifest. Stack profiles attach
+to components rather than the repository as a whole. The current module map is
+in `docs/architecture/overview.md`.
 
 Detection is the existence of a file and nothing else. It has to stay that way:
 asking a model which stack a directory is would make a routing decision depend on
@@ -23,6 +21,12 @@ EXCLUDED_DIRECTORIES = frozenset({
     ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", "dist", "build",
     "target", "bin", "obj", "vendor", "site-packages", ".gradle", "Pods",
+    # Test and build output. `TestResults` matters more than it looks: the
+    # dotnet profile writes its TRX reports there, so the gate produced files
+    # that outranked the repository's own source as evidence on the next cycle
+    # -- a run competing with itself for a bounded reading budget.
+    "TestResults", "coverage", "htmlcov", "DerivedData",
+    ".next", ".nuxt", ".angular", ".svelte-kit", ".turbo", ".dart_tool",
 })
 
 # Exact filenames that identify a stack.
@@ -111,6 +115,43 @@ def list_repository_paths(project_root: str | Path) -> list[str]:
             )
             paths.append(relative.as_posix())
     return paths
+
+
+def migration_projects(paths: list[str]) -> tuple[str, str] | None:
+    """The project that owns the migrations and the project that starts the app.
+
+    A database service can be started empty; nothing in starting it creates
+    tables. A project whose schema comes from migrations therefore needs them
+    applied between the service being ready and the first test running, and the
+    migration tool needs to be told both projects: the one holding the
+    migrations, and the one whose configuration names the connection.
+
+    Both are found by path, not by parsing a manifest: a directory holding
+    `Migrations/*.Designer.cs` owns the migrations, and one holding `Program.cs`
+    starts the app. Ambiguity is not resolved by guessing -- more than one
+    candidate of either kind returns None, and the run applies no schema rather
+    than migrating something nobody named.
+    """
+    migrations: set[str] = set()
+    startups: set[str] = set()
+    projects: dict[str, str] = {}
+    for raw in paths:
+        path = raw.replace("\\", "/").lstrip("./")
+        if is_excluded(path):
+            continue
+        pure = PurePosixPath(path)
+        directory = str(pure.parent) if str(pure.parent) != "." else ""
+        if pure.suffix == ".csproj":
+            projects[directory] = path
+        elif pure.name == "Program.cs":
+            startups.add(directory)
+        elif pure.name.endswith(".Designer.cs") and pure.parent.name == "Migrations":
+            migrations.add(str(pure.parent.parent) if str(pure.parent.parent) != "." else "")
+    owning = {directory for directory in migrations if directory in projects}
+    starting = {directory for directory in startups if directory in projects}
+    if len(owning) != 1 or len(starting) != 1:
+        return None
+    return projects[owning.pop()], projects[starting.pop()]
 
 
 def components_in(project_root: str | Path) -> list[Component]:

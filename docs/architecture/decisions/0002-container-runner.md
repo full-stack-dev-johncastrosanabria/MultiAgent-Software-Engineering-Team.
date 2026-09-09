@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 Status: accepted
-Supersedes the direction of: [finding 3](../findings/README.md)
+Supersedes the direction of: finding 3
 
 ## Context
 
