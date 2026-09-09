@@ -1,0 +1,896 @@
+{
+  "trace_id": "114415628cf2584ba51d3c15d2c252a0",
+  "run_id": "multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e",
+  "live": false,
+  "live_error": null,
+  "events": [
+    {
+      "name": "Product model",
+      "type": "generation",
+      "input": {
+        "system_prompt": "ROLE: Product\nRESPONSIBILITY: Convert the supplied requirement into a complete product specification.\nBOUNDARIES: Do not inspect repositories, invoke tools, design implementation, or approve work.\nEVIDENCE TO PRESERVE: Requirement facts, constraints, ambiguities, and explicit assumptions.\nOUTPUT CONTRACT: Return only the validated ProductSpecification candidate.\nNO ROUTING / NO MODEL SELECTION: Never choose workflow routes, retries, providers, or models.\nReturn only one JSON object matching the supplied role-specific schema. Preserve all governed facts, findings, statuses, and evidence from the candidate artifact. Do not add prose or fields.",
+        "user_prompt": "Task: Product\nContextEnvelope: {\"agent\": \"Product\", \"current_task\": \"Product\", \"state_projection\": {\"run_id\": \"multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\", \"requirement\": \"Provide a password-recovery link that expires after 15 minutes and can be used only once.\"}, \"rag_evidence\": [], \"tool_results\": [], \"remediation_feedback\": null}\nOutput schema: {\"additionalProperties\": false, \"properties\": {\"objective\": {\"title\": \"Objective\", \"type\": \"string\"}, \"actors\": {\"items\": {\"type\": \"string\"}, \"title\": \"Actors\", \"type\": \"array\"}, \"business_rules\": {\"items\": {\"type\": \"string\"}, \"title\": \"Business Rules\", \"type\": \"array\"}, \"constraints\": {\"items\": {\"type\": \"string\"}, \"title\": \"Constraints\", \"type\": \"array\"}, \"acceptance_criteria\": {\"items\": {\"type\": \"string\"}, \"title\": \"Acceptance Criteria\", \"type\": \"array\"}, \"nfrs\": {\"items\": {\"type\": \"string\"}, \"title\": \"Nfrs\", \"type\": \"array\"}, \"ambiguities\": {\"items\": {\"type\": \"string\"}, \"title\": \"Ambiguities\", \"type\": \"array\"}, \"assumptions\": {\"items\": {\"type\": \"string\"}, \"title\": \"Assumptions\", \"type\": \"array\"}, \"source_requirement\": {\"default\": \"\", \"title\": \"Source Requirement\", \"type\": \"string\"}}, \"required\": [\"objective\", \"actors\", \"business_rules\", \"constraints\", \"acceptance_criteria\", \"nfrs\", \"ambiguities\", \"assumptions\", \"source_requirement\"], \"title\": \"ProductSpecification\", \"type\": \"object\"}\nCandidate artifact: {\"objective\": \"Provide a password-recovery link that expires after 15 minutes and can be used only once.\", \"actors\": [\"User\"], \"business_rules\": [\"Reset link expires after 15 minutes\", \"Reset link is single-use\"], \"constraints\": [], \"acceptance_criteria\": [\"Reset link expires after 15 minutes\", \"Reset link is single-use\"], \"nfrs\": [], \"ambiguities\": [], \"assumptions\": [], \"source_requirement\": \"Provide a password-recovery link that expires after 15 minutes and can be used only once.\"}\nCopy every candidate key and value exactly; do not omit schema-optional keys."
+      },
+      "output": {
+        "response": "{\n  \"objective\": \"Provide a password-recovery link that expires after 15 minutes and can be used only once.\",\n  \"actors\": [\n    \"User\"\n  ],\n  \"business_rules\": [\n    \"Reset link expires after 15 minutes\",\n    \"Reset link is single-use\"\n  ],\n  \"constraints\": [],\n  \"acceptance_criteria\": [\n    \"Reset link expires after 15 minutes\",\n    \"Reset link is single-use\"\n  ],\n  \"nfrs\": [],\n  \"ambiguities\": [],\n  \"assumptions\": [],\n  \"source_requirement\": \"Provide a password-recovery link that expires after 15 minutes and can be used only once.\"\n}"
+      },
+      "metadata": {
+        "agent": "Product",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 141942,
+        "usage": {
+          "prompt_eval_count": 690,
+          "eval_count": 165
+        },
+        "structured_output_success": true,
+        "error": null,
+        "retry": 0,
+        "repair": 0
+      },
+      "level": "DEFAULT",
+      "status_message": null
+    },
+    {
+      "name": "Product",
+      "type": "agent",
+      "input": null,
+      "output": {
+        "objective": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+        "actors": [
+          "User"
+        ],
+        "business_rules": [
+          "Reset link expires after 15 minutes",
+          "Reset link is single-use"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "Reset link expires after 15 minutes",
+          "Reset link is single-use"
+        ],
+        "nfrs": [],
+        "ambiguities": [],
+        "assumptions": [],
+        "source_requirement": "Provide a password-recovery link that expires after 15 minutes and can be used only once."
+      },
+      "metadata": {
+        "iteration": 0
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "RAG retrieval",
+      "type": "retriever",
+      "input": {
+        "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once."
+      },
+      "output": [
+        {
+          "source": "api-design-guidelines.md",
+          "section": "API Design Guidelines / Authorization and abuse controls",
+          "version": "local",
+          "chunk_id": "api-design-guidelines.md:9819348d9a:0",
+          "fragment": "Authentication establishes identity; authorization must be checked for the requested object and action. Never trust a user identifier from a path or query without comparing it with the authenticated principal or an approved policy. Apply rate limits to sensitive operations such as password recovery and authentication. Reset tokens must be random, single-use, narrowly scoped, stored safely, and expire within the business-defined lifetime.",
+          "domain": "api",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.6872470676898956,
+          "retrieved_at": "2026-08-26T20:31:40.079852Z"
+        },
+        {
+          "source": "api-design-guidelines.md",
+          "section": "API Design Guidelines / Change and validation",
+          "version": "local",
+          "chunk_id": "api-design-guidelines.md:32089317bd:0",
+          "fragment": "Document API and data implications for every proposal. Cover success, validation failures, ownership failures, empty collections, limits, ordering, repeated requests, and dependency errors. Preserve correlation identifiers and safe operational logs. Backward-incompatible changes require an explicit migration decision; otherwise keep existing consumers working and restrict the patch to the smallest inspected surface.",
+          "domain": "api",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.5895797610282898,
+          "retrieved_at": "2026-08-26T20:31:40.079929Z"
+        },
+        {
+          "source": "api-design-guidelines.md",
+          "section": "API Design Guidelines / Resource and endpoint design",
+          "version": "local",
+          "chunk_id": "api-design-guidelines.md:5d7ed272fb:0",
+          "fragment": "Model endpoints around bounded resources and explicit user goals. State the HTTP method, path, request fields, response shape, and status codes. Avoid exposing internal identifiers or persistence details without a business need. Collection endpoints must apply stable ordering, explicit limits, and pagination rules where relevant. A transaction-history response should return only the authorized user's records and enforce the required maximum at the query boundary.",
+          "domain": "api",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.6043567359447479,
+          "retrieved_at": "2026-08-26T20:31:40.079938Z"
+        },
+        {
+          "source": "architecture-guidelines.md",
+          "section": "Architecture Guidelines / Data and dependencies",
+          "version": "local",
+          "chunk_id": "architecture-guidelines.md:cbcb34cb36:0",
+          "fragment": "Record whether a change reads, writes, migrates, or exposes data. Scope data access by the authenticated actor and make ordering and limits deterministic. New dependencies require a specific responsibility and must not duplicate an existing layer. External calls need timeouts, bounded retries, safe error mapping, and an observable fallback policy.",
+          "domain": "architecture",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.6046938598155975,
+          "retrieved_at": "2026-08-26T20:31:40.079955Z"
+        }
+      ],
+      "metadata": {
+        "agent": "Architecture",
+        "status": "OK"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "list_files",
+        "allowed_role": "Architecture",
+        "status": "SUCCESS",
+        "input_summary": "safe",
+        "output_summary": "__init__.py\ntest_acceptance.py\napp/service.py\napp/__init__.py\napp/main.py\napp/__pycache__/service.cpython-314.pyc\napp/__pycache__/__init__.cpython-314.pyc",
+        "duration_ms": 0,
+        "evidence_reference": "mcp://repository/list_files",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-repository"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "Architecture model",
+      "type": "generation",
+      "input": {
+        "system_prompt": "ROLE: Architecture\nRESPONSIBILITY: Define a bounded technical design grounded in supplied repository and RAG evidence.\nBOUNDARIES: Use read-only evidence; do not implement, approve, or invent sources and paths.\nEVIDENCE TO PRESERVE: Product facts, retrieved provenance, repository references, risks, and decisions.\nOUTPUT CONTRACT: Return only the validated ArchitectureProposal candidate.\nNO ROUTING / NO MODEL SELECTION: Never choose workflow routes, retries, providers, or models.\nReturn only one JSON object matching the supplied role-specific schema. Preserve all governed facts, findings, statuses, and evidence from the candidate artifact. Do not add prose or fields.",
+        "user_prompt": "Task: Architecture\nContextEnvelope: {\"agent\": \"Architecture\", \"current_task\": \"Architecture\", \"state_projection\": {\"run_id\": \"multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\", \"requirement\": \"Provide a password-recovery link that expires after 15 minutes and can be used only once.\", \"specification\": \"present\"}, \"rag_evidence\": [{\"source\": \"api-design-guidelines.md\", \"section\": \"API Design Guidelines / Authorization and abuse controls\", \"chunk_id\": \"api-design-guidelines.md:9819348d9a:0\", \"score\": 0.6872470676898956}, {\"source\": \"api-design-guidelines.md\", \"section\": \"API Design Guidelines / Change and validation\", \"chunk_id\": \"api-design-guidelines.md:32089317bd:0\", \"score\": 0.5895797610282898}, {\"source\": \"api-design-guidelines.md\", \"section\": \"API Design Guidelines / Resource and endpoint design\", \"chunk_id\": \"api-design-guidelines.md:5d7ed272fb:0\", \"score\": 0.6043567359447479}, {\"source\": \"architecture-guidelines.md\", \"section\": \"Architecture Guidelines / Data and dependencies\", \"chunk_id\": \"architecture-guidelines.md:cbcb34cb36:0\", \"score\": 0.6046938598155975}], \"tool_results\": [{\"tool\": \"list_files\", \"status\": \"SUCCESS\"}], \"remediation_feedback\": null}\nOutput schema: {\"additionalProperties\": false, \"properties\": {\"components\": {\"items\": {\"type\": \"string\"}, \"title\": \"Components\", \"type\": \"array\"}, \"apis\": {\"items\": {\"type\": \"string\"}, \"title\": \"Apis\", \"type\": \"array\"}, \"data_changes\": {\"items\": {\"type\": \"string\"}, \"title\": \"Data Changes\", \"type\": \"array\"}, \"integrations\": {\"items\": {\"type\": \"string\"}, \"title\": \"Integrations\", \"type\": \"array\"}, \"dependencies\": {\"items\": {\"type\": \"string\"}, \"title\": \"Dependencies\", \"type\": \"array\"}, \"decisions\": {\"items\": {\"type\": \"string\"}, \"title\": \"Decisions\", \"type\": \"array\"}, \"risks\": {\"items\": {\"type\": \"string\"}, \"title\": \"Risks\", \"type\": \"array\"}, \"impact\": {\"title\": \"Impact\", \"type\": \"string\"}, \"evidence_references\": {\"items\": {\"type\": \"string\"}, \"title\": \"Evidence References\", \"type\": \"array\"}}, \"required\": [\"components\", \"apis\", \"data_changes\", \"integrations\", \"dependencies\", \"decisions\", \"risks\", \"impact\", \"evidence_references\"], \"title\": \"ArchitectureProposal\", \"type\": \"object\"}\nCandidate artifact: {\"components\": [\"modular monolith\"], \"apis\": [], \"data_changes\": [], \"integrations\": [], \"dependencies\": [], \"decisions\": [\"preserve modular boundaries\"], \"risks\": [], \"impact\": \"bounded\", \"evidence_references\": [\"api-design-guidelines.md:9819348d9a:0\", \"api-design-guidelines.md:32089317bd:0\", \"api-design-guidelines.md:5d7ed272fb:0\", \"architecture-guidelines.md:cbcb34cb36:0\"]}\nCopy every candidate key and value exactly; do not omit schema-optional keys."
+      },
+      "output": {
+        "response": "{\"components\": [\"modular monolith\"], \"apis\": [], \"data_changes\": [], \"integrations\": [], \"dependencies\": [], \"decisions\": [\"preserve modular boundaries\"], \"risks\": [], \"impact\": \"bounded\", \"evidence_references\": [\"api-design-guidelines.md:9819348d9a:0\", \"api-design-guidelines.md:32089317bd:0\", \"api-design-guidelines.md:5d7ed272fb:0\", \"architecture-guidelines.md:cbcb34cb36:0\"]}"
+      },
+      "metadata": {
+        "agent": "Architecture",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 71714,
+        "usage": {
+          "prompt_eval_count": 979,
+          "eval_count": 126
+        },
+        "structured_output_success": true,
+        "error": null,
+        "retry": 0,
+        "repair": 0
+      },
+      "level": "DEFAULT",
+      "status_message": null
+    },
+    {
+      "name": "Architecture",
+      "type": "agent",
+      "input": null,
+      "output": {
+        "components": [
+          "modular monolith"
+        ],
+        "apis": [],
+        "data_changes": [],
+        "integrations": [],
+        "dependencies": [],
+        "decisions": [
+          "preserve modular boundaries"
+        ],
+        "risks": [],
+        "impact": "bounded",
+        "evidence_references": [
+          "api-design-guidelines.md:9819348d9a:0",
+          "api-design-guidelines.md:32089317bd:0",
+          "api-design-guidelines.md:5d7ed272fb:0",
+          "architecture-guidelines.md:cbcb34cb36:0"
+        ]
+      },
+      "metadata": {
+        "iteration": 0
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "list_files",
+        "allowed_role": "Developer",
+        "status": "SUCCESS",
+        "input_summary": "safe",
+        "output_summary": "__init__.py\ntest_acceptance.py\napp/service.py\napp/__init__.py\napp/main.py\napp/__pycache__/service.cpython-314.pyc\napp/__pycache__/__init__.cpython-314.pyc",
+        "duration_ms": 0,
+        "evidence_reference": "mcp://repository/list_files",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-repository"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "search_code",
+        "allowed_role": "Developer",
+        "status": "SUCCESS",
+        "input_summary": "query=bounded",
+        "output_summary": "",
+        "duration_ms": 0,
+        "evidence_reference": "mcp://repository/search_code",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-repository"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "search_code",
+        "allowed_role": "Developer",
+        "status": "SUCCESS",
+        "input_summary": "query=bounded",
+        "output_summary": "",
+        "duration_ms": 0,
+        "evidence_reference": "mcp://repository/search_code",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-repository"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "search_code",
+        "allowed_role": "Developer",
+        "status": "SUCCESS",
+        "input_summary": "query=bounded",
+        "output_summary": "test_acceptance.py\napp/service.py\napp/__pycache__/service.cpython-314.pyc",
+        "duration_ms": 0,
+        "evidence_reference": "mcp://repository/search_code",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-repository"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "read_file",
+        "allowed_role": "Developer",
+        "status": "SUCCESS",
+        "input_summary": "path=app/service.py",
+        "output_summary": "import secrets\nimport sqlite3\nfrom datetime import UTC, datetime, timedelta\nfrom pathlib import Path\n\n\nclass BankService:\n    def __init__(self, database: str | Path) -> None:\n        self.connection = sqlite3.connect(database)\n        self.connection.execute(\n            \"CREATE TABLE IF NOT EXISTS reset_tokens (token TEXT PRIMARY KEY, user_id TEXT, expires TEXT, used INTEGER)\"\n        )\n        self.connection.execute(\n            \"CREATE TABLE IF NOT EXISTS login_failures (user_id TEXT PRIMARY KEY, count INTEGER)\"\n        )\n        self.connection.execute(\n            \"CREATE TABLE IF NOT EXISTS transactions (user_id TEXT, sequence INTEGER)\"\n        )\n\n    def issue_reset_token(self, user_id: str) -> str:\n        token=[REDACTED]\n        expires = (datetime.now(UTC) + timedelta(minutes=15)).isoformat()\n        self.connection.execute(\n            \"INSERT INTO reset_tokens VALUES (?, ?, ?, 0)\", (token, user_id, expires)\n        )\n        self.connection.commit()\n        return token\n\n    def use_reset_token(self, token=[REDACTED] -> bool:\n        row = self.connection.execute(\n            \"SELECT expires, used FROM reset_tokens WHERE token=[REDACTED], (token,)\n        ).fetchone()\n        if not row or row[1] or datetime.fromisoformat(row[0]) <= datetime.now(UTC):\n            return False\n        self.connection.execute(\"UPDATE reset_tokens SET used = 1 WHERE token=[REDACTED], (token,))\n        self.connection.commit()\n        return True\n\n    def record_failed_login(self, user_id: str) -> None:\n        self.connection.execute(\n            \"INSERT INTO login_failures VALUES (?, 1) ON CONFLICT(user_id) DO UPDATE SET count=count+1\",\n            (user_id,),\n        )\n        self.connection.commit()\n\n    def is_locked(self, user_id: str) -> bool:\n        row = self.connection.execute(\n            \"SELECT count FROM login_failures WHERE user_id = ?\", (user_id,)\n        ).fetchone()\n        return bool(row and row[0] >= 5)\n\n    def add_transactions(self, user_id: str, count: int) -> None:\n        self.connection.executemany(\n            \"INSERT INTO transactions VALUES (?, ?)\", [(user_id, index) for index in range(count)]\n        )\n        self.connection.commit()\n\n    def history(self, authorized_user: str, requested_user: str) -> list[int]:\n        if authorized_user != requested_user:\n            raise PermissionError(\"authorization/IDOR denied\")\n        return [\n            row[0]\n            for row in self.connection.execute(\n                \"SELECT sequence FROM transactions WHERE user_id = ? ORDER BY sequence DESC LIMIT 5\",\n                (requested_user,),\n            )\n        ]\n",
+        "duration_ms": 0,
+        "evidence_reference": "mcp://repository/read_file",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-repository"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "read_file",
+        "allowed_role": "Developer",
+        "status": "SUCCESS",
+        "input_summary": "path=test_acceptance.py",
+        "output_summary": "from datetime import UTC, datetime, timedelta\n\nimport pytest\n\ntry:\n    from app.service import BankService\nexcept ModuleNotFoundError:  # Collected from the repository root.\n    from sample_app.app.service import BankService\n\n\ndef test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path):\n    service = BankService(tmp_path / \"bank.sqlite\")\n    before = datetime.now(UTC)\n    token=[REDACTED]\n    expires = service.connection.execute(\n        \"SELECT expires FROM reset_tokens WHERE token=[REDACTED], (token,)\n    ).fetchone()[0]\n    delta = datetime.fromisoformat(expires) - before\n    assert timedelta(minutes=15) <= delta < timedelta(minutes=15, seconds=2)\n    assert service.use_reset_token(token) is True\n    assert service.use_reset_token(token) is False\n\n\ndef test_lockout_ownership_and_transaction_limit(tmp_path):\n    service = BankService(tmp_path / \"bank.sqlite\")\n    for attempt in range(1, 6):\n        service.record_failed_login(\"owner\")\n        assert service.is_locked(\"owner\") is (attempt == 5)\n    service.add_transactions(\"owner\", 8)\n    assert len(service.history(\"owner\", \"owner\")) == 5\n    with pytest.raises(PermissionError):\n        service.history(\"attacker\", \"owner\")\n",
+        "duration_ms": 0,
+        "evidence_reference": "mcp://repository/read_file",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-repository"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "Developer model",
+      "type": "generation",
+      "input": {
+        "system_prompt": "ROLE: Developer\nRESPONSIBILITY: Produce or apply a bounded technical change proposal from inspected repository context.\nBOUNDARIES: Use only authorized paths/tools; never invent files, evidence, validation, or authorization.\nEVIDENCE TO PRESERVE: Product/architecture facts, inspected paths, MCP references, and remediation feedback.\nOUTPUT CONTRACT: Return only the validated ImplementationResult candidate with proposal and validation.\nNO ROUTING / NO MODEL SELECTION: Never choose workflow routes, retries, providers, or models.\nReturn only one JSON object matching the supplied role-specific schema. Preserve all governed facts, findings, statuses, and evidence from the candidate artifact. Do not add prose or fields.",
+        "user_prompt": "Task: Developer\nContextEnvelope: {\"agent\": \"Developer\", \"current_task\": \"Developer\", \"state_projection\": {\"run_id\": \"multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\", \"requirement\": \"Provide a password-recovery link that expires after 15 minutes and can be used only once.\", \"specification\": \"present\", \"architecture\": \"present\", \"repository_context\": \"present\"}, \"rag_evidence\": [], \"tool_results\": [{\"tool\": \"list_files\", \"status\": \"SUCCESS\"}, {\"tool\": \"list_files\", \"status\": \"SUCCESS\"}, {\"tool\": \"search_code\", \"status\": \"SUCCESS\"}, {\"tool\": \"search_code\", \"status\": \"SUCCESS\"}, {\"tool\": \"search_code\", \"status\": \"SUCCESS\"}, {\"tool\": \"read_file\", \"status\": \"SUCCESS\"}, {\"tool\": \"read_file\", \"status\": \"SUCCESS\"}], \"remediation_feedback\": null}\nOutput schema: {\"$defs\": {\"ActionMode\": {\"enum\": [\"PROPOSED\", \"APPLIED\"], \"title\": \"ActionMode\", \"type\": \"string\"}}, \"additionalProperties\": false, \"properties\": {\"action_mode\": {\"$ref\": \"#/$defs/ActionMode\"}, \"changed_files\": {\"items\": {\"type\": \"string\"}, \"title\": \"Changed Files\", \"type\": \"array\"}, \"diff\": {\"title\": \"Diff\", \"type\": \"string\"}, \"evidence\": {\"items\": {\"type\": \"string\"}, \"title\": \"Evidence\", \"type\": \"array\"}, \"validation_result\": {\"title\": \"Validation Result\", \"type\": \"string\"}, \"security_surface_changed\": {\"default\": false, \"title\": \"Security Surface Changed\", \"type\": \"boolean\"}}, \"required\": [\"action_mode\", \"changed_files\", \"diff\", \"evidence\", \"validation_result\", \"security_surface_changed\"], \"title\": \"ImplementationResult\", \"type\": \"object\"}\nCandidate artifact: {\"action_mode\": \"PROPOSED\", \"changed_files\": [\"app/service.py\", \"test_acceptance.py\"], \"diff\": \"PROPOSED TECHNICAL CHANGE\\nObjective: Provide a password-recovery link that expires after 15 minutes and can be used only once.\\nComponents: modular monolith\\nAPIs: no API change declared\\nData: no data change declared\\nDesign decisions: preserve modular boundaries\\nFILE: app/service.py\\nObserved symbols: __init__(self, database: str | Path), issue_reset_token(self, user_id: str), use_reset_token(self, token=[REDACTED], record_failed_login(self, user_id: str), is_locked(self, user_id: str), add_transactions(self, user_id: str, count: int)\\nTechnical change: adapt __init__(self, database: str | Path), issue_reset_token(self, user_id: str), use_reset_token(self, token=[REDACTED], record_failed_login(self, user_id: str), is_locked(self, user_id: str), add_transactions(self, user_id: str, count: int) to satisfy Provide a password-recovery link that expires after 15 minutes and can be used only once..\\nAPI implications: no API change declared.\\nData implications: no data change declared.\\n--- a/app/service.py\\n+++ b/app/service.py\\n@@ proposed @@\\n+ Update __init__(self, database: str | Path), issue_reset_token(self, user_id: str), use_reset_token(self, token=[REDACTED], record_failed_login(self, user_id: str), is_locked(self, user_id: str), add_transactions(self, user_id: str, count: int) while preserving: preserve modular boundaries.\\nFILE: test_acceptance.py\\nObserved symbols: test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path), test_lockout_ownership_and_transaction_limit(tmp_path)\\nTechnical change: adapt test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path), test_lockout_ownership_and_transaction_limit(tmp_path) to satisfy Provide a password-recovery link that expires after 15 minutes and can be used only once..\\nAPI implications: no API change declared.\\nData implications: no data change declared.\\n--- a/test_acceptance.py\\n+++ b/test_acceptance.py\\n@@ proposed @@\\n+ Update test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path), test_lockout_ownership_and_transaction_limit(tmp_path) while preserving: preserve modular boundaries.\", \"evidence\": [\"mcp://repository/list_files\", \"mcp://repository/search_code\", \"mcp://repository/read_file#app/service.py\", \"mcp://repository/read_file#test_acceptance.py\"], \"validation_result\": \"PROPOSED validation strategy: run_build, run_linter, and run_tests in the isolated workspace after applying changes to 2 inspected path(s).\", \"security_surface_changed\": true}\nCopy every candidate key and value exactly; do not omit schema-optional keys."
+      },
+      "output": {
+        "response": "{\n  \"action_mode\": \"PROPOSED\",\n  \"changed_files\": [\n    \"app/service.py\",\n    \"test_acceptance.py\"\n  ],\n  \"diff\": \"PROPOSED TECHNICAL CHANGE\\nObjective: Provide a password-recovery link that expires after 15 minutes and can be used only once.\\nComponents: modular monolith\\nAPIs: no API change declared\\nData: no data change declared\\nDesign decisions: preserve modular boundaries\\nFILE: app/service.py\\nObserved symbols: __init__(self, database: str | Path), issue_reset_token(self, user_id: str), use_reset_token(self, token=[REDACTED], record_failed_login(self, user_id: str), is_locked(self, user_id: str), add_transactions(self, user_id: str, count: int)\\nTechnical change: adapt __init__(self, database: str | Path), issue_reset_token(self, user_id: str), use_reset_token(self, token=[REDACTED], record_failed_login(self, user_id: str), is_locked(self, user_id: str), add_transactions(self, user_id: str, count: int) to satisfy Provide a password-recovery link that expires after 15 minutes and can be used only once..\\nAPI implications: no API change declared.\\nData implications: no data change declared.\\n--- a/app/service.py\\n+++ b/app/service.py\\n@@ proposed @@\\n+ Update __init__(self, database: str | Path), issue_reset_token(self, user_id: str), use_reset_token(self, token=[REDACTED], record_failed_login(self, user_id: str), is_locked(self, user_id: str), add_transactions(self, user_id: str, count: int) while preserving: preserve modular boundaries.\\nFILE: test_acceptance.py\\nObserved symbols: test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path), test_lockout_ownership_and_transaction_limit(tmp_path)\\nTechnical change: adapt test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path), test_lockout_ownership_and_transaction_limit(tmp_path) to satisfy Provide a password-recovery link that expires after 15 minutes and can be used only once..\\nAPI implications: no API change declared.\\nData implications: no data change declared.\\n--- a/test_acceptance.py\\n+++ b/test_acceptance.py\\n@@ proposed @@\\n+ Update test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path), test_lockout_ownership_and_transaction_limit(tmp_path) while preserving: preserve modular boundaries.\",\n  \"evidence\": [\n    \"mcp://repository/list_files\",\n    \"mcp://repository/search_code\",\n    \"mcp://repository/read_file#app/service.py\",\n    \"mcp://repository/read_file#test_acceptance.py\"\n  ],\n  \"validation_result\": \"PROPOSED validation strategy: run_build, run_linter, and run_tests in the isolated workspace after applying changes to 2 inspected path(s).\",\n  \"security_surface_changed\": true\n}"
+      },
+      "metadata": {
+        "agent": "Developer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "CODING_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 194855,
+        "usage": {
+          "prompt_eval_count": 1218,
+          "eval_count": 644
+        },
+        "structured_output_success": true,
+        "error": null,
+        "retry": 0,
+        "repair": 0
+      },
+      "level": "DEFAULT",
+      "status_message": null
+    },
+    {
+      "name": "Developer",
+      "type": "agent",
+      "input": null,
+      "output": {
+        "action_mode": "PROPOSED",
+        "changed_files": [
+          "app/service.py",
+          "test_acceptance.py"
+        ],
+        "diff": "PROPOSED TECHNICAL CHANGE\nObjective: Provide a password-recovery link that expires after 15 minutes and can be used only once.\nComponents: modular monolith\nAPIs: no API change declared\nData: no data change declared\nDesign decisions: preserve modular boundaries\nFILE: app/service.py\nObserved symbols: __init__(self, database: str | Path), issue_reset_token(self, user_id: str), use_reset_token(self, token=[REDACTED], record_failed_login(self, user_id: str), is_locked(self, user_id: str), add_transactions(self, user_id: str, count: int)\nTechnical change: adapt __init__(self, database: str | Path), issue_reset_token(self, user_id: str), use_reset_token(self, token=[REDACTED], record_failed_login(self, user_id: str), is_locked(self, user_id: str), add_transactions(self, user_id: str, count: int) to satisfy Provide a password-recovery link that expires after 15 minutes and can be used only once..\nAPI implications: no API change declared.\nData implications: no data change declared.\n--- a/app/service.py\n+++ b/app/service.py\n@@ proposed @@\n+ Update __init__(self, database: str | Path), issue_reset_token(self, user_id: str), use_reset_token(self, token=[REDACTED], record_failed_login(self, user_id: str), is_locked(self, user_id: str), add_transactions(self, user_id: str, count: int) while preserving: preserve modular boundaries.\nFILE: test_acceptance.py\nObserved symbols: test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path), test_lockout_ownership_and_transaction_limit(tmp_path)\nTechnical change: adapt test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path), test_lockout_ownership_and_transaction_limit(tmp_path) to satisfy Provide a password-recovery link that expires after 15 minutes and can be used only once..\nAPI implications: no API change declared.\nData implications: no data change declared.\n--- a/test_acceptance.py\n+++ b/test_acceptance.py\n@@ proposed @@\n+ Update test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path), test_lockout_ownership_and_transaction_limit(tmp_path) while preserving: preserve modular boundaries.",
+        "evidence": [
+          "mcp://repository/list_files",
+          "mcp://repository/search_code",
+          "mcp://repository/read_file#app/service.py",
+          "mcp://repository/read_file#test_acceptance.py"
+        ],
+        "validation_result": "PROPOSED validation strategy: run_build, run_linter, and run_tests in the isolated workspace after applying changes to 2 inspected path(s).",
+        "security_surface_changed": true
+      },
+      "metadata": {
+        "iteration": 0
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "route",
+      "type": "span",
+      "input": null,
+      "output": null,
+      "metadata": {
+        "from": "Developer",
+        "to": "Security"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "RAG retrieval",
+      "type": "retriever",
+      "input": {
+        "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once."
+      },
+      "output": [
+        {
+          "source": "security-guidelines.md",
+          "section": "Security Guidelines / Authentication and session controls",
+          "version": "local",
+          "chunk_id": "security-guidelines.md:5c85774592:0",
+          "fragment": "Verify identity at trusted boundaries and keep authentication state separate from authorization decisions. Password recovery must avoid account enumeration, use high-entropy reset tokens, enforce single use, and expire tokens after the specified fifteen-minute window. Account locking should activate after five failed attempts while preserving safe recovery and audit evidence. Do not place credentials or tokens in prompts, traces, diffs, or tool summaries.",
+          "domain": "security",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.7920817732810974,
+          "retrieved_at": "2026-08-26T20:36:07.216526Z"
+        },
+        {
+          "source": "security-guidelines.md",
+          "section": "Security Guidelines / Abuse, dependencies, and review",
+          "version": "local",
+          "chunk_id": "security-guidelines.md:4b06fa0828:0",
+          "fragment": "Rate-limit sensitive endpoints and detect repeated failures without exposing account state. Pin and scan dependencies using the approved quality tools. Security review should cite retrieved guidance and MCP evidence, classify findings by severity, and force human review for critical issues. Functional scanner failures trigger remediation; unavailable MCP transport is recorded separately as `MCP_ERROR` and cannot result in automatic approval.",
+          "domain": "security",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.6585870385169983,
+          "retrieved_at": "2026-08-26T20:36:07.216551Z"
+        },
+        {
+          "source": "owasp-api-security.md",
+          "section": "OWASP API Security Practices / Authentication and sensitive flows",
+          "version": "local",
+          "chunk_id": "owasp-api-security.md:8b796a9dec:0",
+          "fragment": "Protect login, account locking, and password recovery from brute force and enumeration. Recovery tokens require unpredictable values, a narrow purpose, single-use consumption, and an explicit expiration. A non-expiring reset token is a security failure. Apply consistent responses and safe audit events while ensuring rate limits and lock thresholds follow the specified business rules.",
+          "domain": "owasp",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.7346594035625458,
+          "retrieved_at": "2026-08-26T20:36:07.216556Z"
+        },
+        {
+          "source": "owasp-api-security.md",
+          "section": "OWASP API Security Practices / Injection and data exposure",
+          "version": "local",
+          "chunk_id": "owasp-api-security.md:85211ec717:0",
+          "fragment": "Validate request data and use parameterized queries or equivalent safe APIs. Limit response fields to the contract and do not expose credentials, internal stack traces, or unrelated user records. Enforce maximum collection sizes in the authorized data query. Treat logs, traces, tool results, and model context as potential disclosure surfaces and sanitize them before export.",
+          "domain": "owasp",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.5984905362129211,
+          "retrieved_at": "2026-08-26T20:36:07.216558Z"
+        }
+      ],
+      "metadata": {
+        "agent": "Security",
+        "status": "OK"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "scan_dependencies",
+        "allowed_role": "Security",
+        "status": "SUCCESS",
+        "input_summary": "safe",
+        "output_summary": "No broken requirements found.\n",
+        "duration_ms": 540,
+        "evidence_reference": "mcp://quality/scan_dependencies",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-quality"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "run_security_scan",
+        "allowed_role": "Security",
+        "status": "SUCCESS",
+        "input_summary": "safe",
+        "output_summary": "All checks passed!\n",
+        "duration_ms": 106,
+        "evidence_reference": "mcp://quality/run_security_scan",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-quality"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "Security model",
+      "type": "generation",
+      "input": {
+        "system_prompt": "ROLE: Security\nRESPONSIBILITY: Evaluate the required security and OWASP controls from supplied evidence.\nBOUNDARIES: Do not write code, approve the run, suppress findings, or invent sources.\nEVIDENCE TO PRESERVE: Findings, severity, failed controls, RAG provenance, and MCP scan results.\nOUTPUT CONTRACT: Return only the validated SecurityReview candidate; CRITICAL remains HITL-governed.\nNO ROUTING / NO MODEL SELECTION: Never choose workflow routes, retries, providers, or models.\nReturn only one JSON object matching the supplied role-specific schema. Preserve all governed facts, findings, statuses, and evidence from the candidate artifact. Do not add prose or fields.",
+        "user_prompt": "Task: Security\nContextEnvelope: {\"agent\": \"Security\", \"current_task\": \"Security\", \"state_projection\": {\"run_id\": \"multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\", \"specification\": \"present\", \"architecture\": \"present\", \"implementation\": \"present\"}, \"rag_evidence\": [{\"source\": \"security-guidelines.md\", \"section\": \"Security Guidelines / Authentication and session controls\", \"chunk_id\": \"security-guidelines.md:5c85774592:0\", \"score\": 0.7920817732810974}, {\"source\": \"security-guidelines.md\", \"section\": \"Security Guidelines / Abuse, dependencies, and review\", \"chunk_id\": \"security-guidelines.md:4b06fa0828:0\", \"score\": 0.6585870385169983}, {\"source\": \"owasp-api-security.md\", \"section\": \"OWASP API Security Practices / Authentication and sensitive flows\", \"chunk_id\": \"owasp-api-security.md:8b796a9dec:0\", \"score\": 0.7346594035625458}, {\"source\": \"owasp-api-security.md\", \"section\": \"OWASP API Security Practices / Injection and data exposure\", \"chunk_id\": \"owasp-api-security.md:85211ec717:0\", \"score\": 0.5984905362129211}], \"tool_results\": [{\"tool\": \"scan_dependencies\", \"status\": \"SUCCESS\"}, {\"tool\": \"run_security_scan\", \"status\": \"SUCCESS\"}], \"remediation_feedback\": null}\nOutput schema: {\"$defs\": {\"SecurityFinding\": {\"additionalProperties\": false, \"properties\": {\"category\": {\"title\": \"Category\", \"type\": \"string\"}, \"severity\": {\"$ref\": \"#/$defs/SecuritySeverity\"}, \"description\": {\"title\": \"Description\", \"type\": \"string\"}, \"affected_evidence\": {\"items\": {\"type\": \"string\"}, \"title\": \"Affected Evidence\", \"type\": \"array\"}, \"recommendation\": {\"title\": \"Recommendation\", \"type\": \"string\"}, \"sources\": {\"items\": {\"type\": \"string\"}, \"title\": \"Sources\", \"type\": \"array\"}}, \"required\": [\"category\", \"severity\", \"description\", \"affected_evidence\", \"recommendation\"], \"title\": \"SecurityFinding\", \"type\": \"object\"}, \"SecuritySeverity\": {\"enum\": [\"INFO\", \"LOW\", \"MEDIUM\", \"HIGH\", \"CRITICAL\"], \"title\": \"SecuritySeverity\", \"type\": \"string\"}, \"SecurityStatus\": {\"enum\": [\"PASS\", \"FAIL\"], \"title\": \"SecurityStatus\", \"type\": \"string\"}}, \"additionalProperties\": false, \"properties\": {\"status\": {\"$ref\": \"#/$defs/SecurityStatus\"}, \"highest_severity\": {\"$ref\": \"#/$defs/SecuritySeverity\"}, \"findings\": {\"items\": {\"$ref\": \"#/$defs/SecurityFinding\"}, \"title\": \"Findings\", \"type\": \"array\"}, \"recommendations\": {\"items\": {\"type\": \"string\"}, \"title\": \"Recommendations\", \"type\": \"array\"}, \"sources\": {\"items\": {\"type\": \"string\"}, \"title\": \"Sources\", \"type\": \"array\"}, \"checklist\": {\"additionalProperties\": {\"type\": \"string\"}, \"title\": \"Checklist\", \"type\": \"object\"}, \"requires_hitl\": {\"default\": false, \"title\": \"Requires Hitl\", \"type\": \"boolean\"}}, \"required\": [\"status\", \"highest_severity\", \"findings\", \"recommendations\", \"sources\", \"checklist\", \"requires_hitl\"], \"title\": \"SecurityReview\", \"type\": \"object\"}\nCandidate artifact: {\"status\": \"PASS\", \"highest_severity\": \"INFO\", \"findings\": [], \"recommendations\": [], \"sources\": [\"security-guidelines.md\", \"owasp-api-security.md\"], \"checklist\": {\"authentication\": \"PASS\", \"authorization\": \"PASS\", \"input_validation\": \"PASS\", \"sensitive_information\": \"PASS\", \"secrets\": \"PASS\", \"injection\": \"PASS\", \"access_control\": \"PASS\", \"idor\": \"PASS\", \"logging\": \"PASS\", \"data_protection\": \"PASS\", \"api_abuse\": \"PASS\", \"rate_limiting\": \"PASS\", \"owasp\": \"PASS\"}, \"requires_hitl\": false}\nCopy every candidate key and value exactly; do not omit schema-optional keys."
+      },
+      "output": {
+        "response": "{\"status\":\"PASS\",\"highest_severity\":\"INFO\",\"findings\":[],\"recommendations\":[],\"sources\":[\"security-guidelines.md\",\"owasp-api-security.md\"],\"checklist\":{\"authentication\":\"PASS\",\"authorization\":\"PASS\",\"input_validation\":\"PASS\",\"sensitive_information\":\"PASS\",\"secrets\":\"PASS\",\"injection\":\"PASS\",\"access_control\":\"PASS\",\"idor\":\"PASS\",\"logging\":\"PASS\",\"data_protection\":\"PASS\",\"api_abuse\":\"PASS\",\"rate_limiting\":\"PASS\",\"owasp\":\"PASS\"},\"requires_hitl\":false}"
+      },
+      "metadata": {
+        "agent": "Security",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 49247,
+        "usage": {
+          "prompt_eval_count": 1179,
+          "eval_count": 107
+        },
+        "structured_output_success": true,
+        "error": null,
+        "retry": 0,
+        "repair": 0
+      },
+      "level": "DEFAULT",
+      "status_message": null
+    },
+    {
+      "name": "Security",
+      "type": "agent",
+      "input": null,
+      "output": {
+        "status": "PASS",
+        "highest_severity": "INFO",
+        "findings": [],
+        "recommendations": [],
+        "sources": [
+          "security-guidelines.md",
+          "owasp-api-security.md"
+        ],
+        "checklist": {
+          "authentication": "PASS",
+          "authorization": "[REDACTED]",
+          "input_validation": "PASS",
+          "sensitive_information": "PASS",
+          "secrets": "PASS",
+          "injection": "PASS",
+          "access_control": "PASS",
+          "idor": "PASS",
+          "logging": "PASS",
+          "data_protection": "PASS",
+          "api_abuse": "PASS",
+          "rate_limiting": "PASS",
+          "owasp": "PASS"
+        },
+        "requires_hitl": false
+      },
+      "metadata": {
+        "iteration": 0
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "route",
+      "type": "span",
+      "input": null,
+      "output": null,
+      "metadata": {
+        "from": "Security",
+        "to": "Testing"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "RAG retrieval",
+      "type": "retriever",
+      "input": {
+        "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once."
+      },
+      "output": [
+        {
+          "source": "testing-strategy.md",
+          "section": "Testing Strategy / Happy paths and business rules",
+          "version": "local",
+          "chunk_id": "testing-strategy.md:f560bc5b58:0",
+          "fragment": "Translate each acceptance criterion into an observable test. Verify password reset expiry at fifteen minutes and single-use behavior, account locking after five failed attempts, and transaction history restricted to the authorized user's latest five records. Assert structured outputs and final workflow status, not only that a function returned without exception.",
+          "domain": "testing",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.8026114106178284,
+          "retrieved_at": "2026-08-26T20:36:57.450083Z"
+        },
+        {
+          "source": "testing-strategy.md",
+          "section": "Testing Strategy / Errors and edge cases",
+          "version": "local",
+          "chunk_id": "testing-strategy.md:1640477e49:0",
+          "fragment": "Cover boundary values, empty data, malformed requests, repeated operations, timeout, unavailable dependencies, and partial progress. Distinguish an MCP transport failure from a tool that ran and reported a functional failure. Confirm invalid model output follows bounded repair policy, connection failures remain availability errors, and real timeouts become `AGENT_TIMEOUT` with preserved evidence.",
+          "domain": "testing",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.622828334569931,
+          "retrieved_at": "2026-08-26T20:36:57.450141Z"
+        },
+        {
+          "source": "testing-strategy.md",
+          "section": "Testing Strategy / Security and isolation",
+          "version": "local",
+          "chunk_id": "testing-strategy.md:5342c5693f:0",
+          "fragment": "Test authentication and authorization separately. Include cross-user identifiers, IDOR attempts, non-expiring or reused tokens, path traversal, symlinks, and secret files. Use only synthetic sentinels when testing secret boundaries. Confirm role allowlists and workspace isolation through the real MCP protocol, and verify that unsafe input never appears in evidence or exported traces.",
+          "domain": "testing",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.6103841364383698,
+          "retrieved_at": "2026-08-26T20:36:57.450145Z"
+        },
+        {
+          "source": "coding-standards.md",
+          "section": "Coding Standards / Verification and failure handling",
+          "version": "local",
+          "chunk_id": "coding-standards.md:5ac6da9d76:0",
+          "fragment": "Add a failing focused test before a behavior change, implement the minimum correction, then run related integration and regression suites. Distinguish transport unavailability, functional tool failure, model availability, timeout, and invalid output. Use bounded retries and deterministic remediation. Log safe error categories and preserve evidence so a workflow failure ends with an explained result instead of collapsing.",
+          "domain": "coding",
+          "query": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+          "score": 0.61551833152771,
+          "retrieved_at": "2026-08-26T20:36:57.450148Z"
+        }
+      ],
+      "metadata": {
+        "agent": "Testing",
+        "status": "OK"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "MCP call",
+      "type": "tool",
+      "input": null,
+      "output": {
+        "tool_name": "run_tests",
+        "allowed_role": "Testing",
+        "status": "SUCCESS",
+        "input_summary": "safe",
+        "output_summary": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0\nrootdir: /private/var/folders/gf/47ptkl190v57hxrhczqw51b00000gn/T/pytest-of-johnbenjamincastrosanabria/pytest-6/test_one_normal_run_invokes_bo0/runs/multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\nplugins: cov-7.1.0, langsmith-0.11.1, anyio-4.14.2\ncollected 2 items\n\ntest_acceptance.py ..                                                    [100%]\n\n============================== 2 passed in 0.04s ===============================\n",
+        "duration_ms": 966,
+        "evidence_reference": "mcp://quality/run_tests",
+        "error": null
+      },
+      "metadata": {
+        "transport": "stdio",
+        "protocol_version": "2026-07-28",
+        "server": "engineering-team-quality"
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "Testing model",
+      "type": "generation",
+      "input": {
+        "system_prompt": "ROLE: Testing\nRESPONSIBILITY: Evaluate happy, error, edge, validation, security, and business-rule coverage.\nBOUNDARIES: Do not change repository files, reinterpret real failures, approve, or invent executions.\nEVIDENCE TO PRESERVE: Proposed/generated/executed tests, actual results, RAG, and MCP ToolResults.\nOUTPUT CONTRACT: Return only the validated TestResult candidate with all four test categories.\nNO ROUTING / NO MODEL SELECTION: Never choose workflow routes, retries, providers, or models.\nReturn only one JSON object matching the supplied role-specific schema. Preserve all governed facts, findings, statuses, and evidence from the candidate artifact. Do not add prose or fields.",
+        "user_prompt": "Task: Testing\nContextEnvelope: {\"agent\": \"Testing\", \"current_task\": \"Testing\", \"state_projection\": {\"run_id\": \"multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\", \"specification\": \"present\", \"architecture\": \"present\", \"implementation\": \"present\", \"security_review\": \"present\"}, \"rag_evidence\": [{\"source\": \"testing-strategy.md\", \"section\": \"Testing Strategy / Happy paths and business rules\", \"chunk_id\": \"testing-strategy.md:f560bc5b58:0\", \"score\": 0.8026114106178284}, {\"source\": \"testing-strategy.md\", \"section\": \"Testing Strategy / Errors and edge cases\", \"chunk_id\": \"testing-strategy.md:1640477e49:0\", \"score\": 0.622828334569931}, {\"source\": \"testing-strategy.md\", \"section\": \"Testing Strategy / Security and isolation\", \"chunk_id\": \"testing-strategy.md:5342c5693f:0\", \"score\": 0.6103841364383698}, {\"source\": \"coding-standards.md\", \"section\": \"Coding Standards / Verification and failure handling\", \"chunk_id\": \"coding-standards.md:5ac6da9d76:0\", \"score\": 0.61551833152771}], \"tool_results\": [{\"tool\": \"run_tests\", \"status\": \"SUCCESS\"}], \"remediation_feedback\": null}\nOutput schema: {\"$defs\": {\"ToolStatus\": {\"enum\": [\"SUCCESS\", \"FAIL\", \"DENIED\", \"UNAVAILABLE\"], \"title\": \"ToolStatus\", \"type\": \"string\"}}, \"additionalProperties\": false, \"properties\": {\"proposed_tests\": {\"items\": {\"type\": \"string\"}, \"title\": \"Proposed Tests\", \"type\": \"array\"}, \"generated_tests\": {\"items\": {\"type\": \"string\"}, \"title\": \"Generated Tests\", \"type\": \"array\"}, \"executed_tests\": {\"items\": {\"type\": \"string\"}, \"title\": \"Executed Tests\", \"type\": \"array\"}, \"actual_results\": {\"items\": {\"type\": \"string\"}, \"title\": \"Actual Results\", \"type\": \"array\"}, \"status\": {\"$ref\": \"#/$defs/ToolStatus\"}, \"failures\": {\"items\": {\"type\": \"string\"}, \"title\": \"Failures\", \"type\": \"array\"}, \"coverage_mapping\": {\"additionalProperties\": {\"items\": {\"type\": \"string\"}, \"type\": \"array\"}, \"title\": \"Coverage Mapping\", \"type\": \"object\"}, \"evidence_references\": {\"items\": {\"type\": \"string\"}, \"title\": \"Evidence References\", \"type\": \"array\"}}, \"required\": [\"proposed_tests\", \"generated_tests\", \"executed_tests\", \"actual_results\", \"status\", \"failures\", \"coverage_mapping\", \"evidence_references\"], \"title\": \"TestResult\", \"type\": \"object\"}\nCandidate artifact: {\"proposed_tests\": [\"happy path\", \"error\", \"edge\", \"validation\", \"security\", \"business rules\"], \"generated_tests\": [], \"executed_tests\": [\"run_tests\"], \"actual_results\": [\"============================= test session starts ==============================\\nplatform darwin -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0\\nrootdir: /private/var/folders/gf/47ptkl190v57hxrhczqw51b00000gn/T/pytest-of-johnbenjamincastrosanabria/pytest-6/test_one_normal_run_invokes_bo0/runs/multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\\nplugins: cov-7.1.0, langsmith-0.11.1, anyio-4.14.2\\ncollected 2 items\\n\\ntest_acceptance.py ..                                                    [100%]\\n\\n============================== 2 passed in 0.04s ===============================\\n\"], \"status\": \"SUCCESS\", \"failures\": [], \"coverage_mapping\": {\"happy_path\": [\"validated scenario checks\"], \"error_edge_validation_security_business\": [\"review matrix\"]}, \"evidence_references\": [\"mcp://quality/run_tests\", \"testing-strategy.md:f560bc5b58:0\", \"testing-strategy.md:1640477e49:0\", \"testing-strategy.md:5342c5693f:0\", \"coding-standards.md:5ac6da9d76:0\"]}\nCopy every candidate key and value exactly; do not omit schema-optional keys."
+      },
+      "output": {
+        "response": "{\n  \"proposed_tests\": [\n    \"happy path\",\n    \"error\",\n    \"edge\",\n    \"validation\",\n    \"security\",\n    \"business rules\"\n  ],\n  \"generated_tests\": [],\n  \"executed_tests\": [\n    \"run_tests\"\n  ],\n  \"actual_results\": [\n    \"============================= test session starts ==============================\\nplatform darwin -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0\\nrootdir: /private/var/folders/gf/47ptkl190v57hxrhczqw51b00000gn/T/pytest-of-johnbenjamincastrosanabria/pytest-6/test_one_normal_run_invokes_bo0/runs/multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\\nplugins: cov-7.1.0, langsmith-0.11.1, anyio-4.14.2\\ncollected 2 items\\n\\ntest_acceptance.py ..                                                    [100%]\\n\\n============================== 2 passed in 0.04s ===============================\\n\"\n  ],\n  \"status\": \"SUCCESS\",\n  \"failures\": [],\n  \"coverage_mapping\": {\n    \"happy_path\": [\n      \"validated scenario checks\"\n    ],\n    \"error_edge_validation_security_business\": [\n      \"review matrix\"\n    ]\n  },\n  \"evidence_references\": [\n    \"mcp://quality/run_tests\",\n    \"testing-strategy.md:f560bc5b58:0\",\n    \"testing-strategy.md:1640477e49:0\",\n    \"testing-strategy.md:5342c5693f:0\",\n    \"coding-standards.md:5ac6da9d76:0\"\n  ]\n}"
+      },
+      "metadata": {
+        "agent": "Testing",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:4b",
+        "actual_model": "qwen3.5:4b",
+        "model_profile": "FAST_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 82635,
+        "usage": {
+          "prompt_eval_count": 1255,
+          "eval_count": 454
+        },
+        "structured_output_success": true,
+        "error": null,
+        "retry": 0,
+        "repair": 0
+      },
+      "level": "DEFAULT",
+      "status_message": null
+    },
+    {
+      "name": "Testing",
+      "type": "agent",
+      "input": null,
+      "output": {
+        "proposed_tests": [
+          "happy path",
+          "error",
+          "edge",
+          "validation",
+          "security",
+          "business rules"
+        ],
+        "generated_tests": [],
+        "executed_tests": [
+          "run_tests"
+        ],
+        "actual_results": [
+          "============================= test session starts ==============================\nplatform darwin -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0\nrootdir: /private/var/folders/gf/47ptkl190v57hxrhczqw51b00000gn/T/pytest-of-johnbenjamincastrosanabria/pytest-6/test_one_normal_run_invokes_bo0/runs/multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\nplugins: cov-7.1.0, langsmith-0.11.1, anyio-4.14.2\ncollected 2 items\n\ntest_acceptance.py ..                                                    [100%]\n\n============================== 2 passed in 0.04s ===============================\n"
+        ],
+        "status": "SUCCESS",
+        "failures": [],
+        "coverage_mapping": {
+          "happy_path": [
+            "validated scenario checks"
+          ],
+          "error_edge_validation_security_business": [
+            "review matrix"
+          ]
+        },
+        "evidence_references": [
+          "mcp://quality/run_tests",
+          "testing-strategy.md:f560bc5b58:0",
+          "testing-strategy.md:1640477e49:0",
+          "testing-strategy.md:5342c5693f:0",
+          "coding-standards.md:5ac6da9d76:0"
+        ]
+      },
+      "metadata": {
+        "iteration": 0
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "Reviewer model",
+      "type": "generation",
+      "input": {
+        "system_prompt": "ROLE: Reviewer\nRESPONSIBILITY: Score validated artifacts and recommend APPROVED or evidence-backed remediation.\nBOUNDARIES: Do not invoke tools, alter evidence, approve contradictions, or execute a route.\nEVIDENCE TO PRESERVE: Requirements, design, implementation, security, testing, RAG, MCP, and errors.\nOUTPUT CONTRACT: Return every key and value of the validated ReviewerDecision candidate exactly; do not omit problems, remediation_category, return_to, or evidence_references. return_to is only a recommendation.\nNO ROUTING / NO MODEL SELECTION: Never choose workflow routes, retries, providers, or models.\nReturn only one JSON object matching the supplied role-specific schema. Preserve all governed facts, findings, statuses, and evidence from the candidate artifact. Do not add prose or fields.",
+        "user_prompt": "Task: Reviewer\nContextEnvelope: {\"agent\": \"Reviewer\", \"current_task\": \"Reviewer\", \"state_projection\": {\"run_id\": \"multimodel-077cda28-59d8-4ae3-955a-dbaed5e6d78e\", \"specification\": \"present\", \"architecture\": \"present\", \"implementation\": \"present\", \"security_review\": \"present\", \"test_results\": \"present\", \"model_usage\": \"present\", \"errors\": \"present\", \"iteration\": \"present\"}, \"rag_evidence\": [{\"source\": \"api-design-guidelines.md\", \"section\": \"API Design Guidelines / Authorization and abuse controls\", \"chunk_id\": \"api-design-guidelines.md:9819348d9a:0\", \"score\": 0.6872470676898956}, {\"source\": \"api-design-guidelines.md\", \"section\": \"API Design Guidelines / Change and validation\", \"chunk_id\": \"api-design-guidelines.md:32089317bd:0\", \"score\": 0.5895797610282898}, {\"source\": \"api-design-guidelines.md\", \"section\": \"API Design Guidelines / Resource and endpoint design\", \"chunk_id\": \"api-design-guidelines.md:5d7ed272fb:0\", \"score\": 0.6043567359447479}, {\"source\": \"architecture-guidelines.md\", \"section\": \"Architecture Guidelines / Data and dependencies\", \"chunk_id\": \"architecture-guidelines.md:cbcb34cb36:0\", \"score\": 0.6046938598155975}, {\"source\": \"security-guidelines.md\", \"section\": \"Security Guidelines / Authentication and session controls\", \"chunk_id\": \"security-guidelines.md:5c85774592:0\", \"score\": 0.7920817732810974}, {\"source\": \"security-guidelines.md\", \"section\": \"Security Guidelines / Abuse, dependencies, and review\", \"chunk_id\": \"security-guidelines.md:4b06fa0828:0\", \"score\": 0.6585870385169983}, {\"source\": \"owasp-api-security.md\", \"section\": \"OWASP API Security Practices / Authentication and sensitive flows\", \"chunk_id\": \"owasp-api-security.md:8b796a9dec:0\", \"score\": 0.7346594035625458}, {\"source\": \"owasp-api-security.md\", \"section\": \"OWASP API Security Practices / Injection and data exposure\", \"chunk_id\": \"owasp-api-security.md:85211ec717:0\", \"score\": 0.5984905362129211}, {\"source\": \"testing-strategy.md\", \"section\": \"Testing Strategy / Happy paths and business rules\", \"chunk_id\": \"testing-strategy.md:f560bc5b58:0\", \"score\": 0.8026114106178284}, {\"source\": \"testing-strategy.md\", \"section\": \"Testing Strategy / Errors and edge cases\", \"chunk_id\": \"testing-strategy.md:1640477e49:0\", \"score\": 0.622828334569931}, {\"source\": \"testing-strategy.md\", \"section\": \"Testing Strategy / Security and isolation\", \"chunk_id\": \"testing-strategy.md:5342c5693f:0\", \"score\": 0.6103841364383698}, {\"source\": \"coding-standards.md\", \"section\": \"Coding Standards / Verification and failure handling\", \"chunk_id\": \"coding-standards.md:5ac6da9d76:0\", \"score\": 0.61551833152771}], \"tool_results\": [{\"tool\": \"list_files\", \"status\": \"SUCCESS\"}, {\"tool\": \"list_files\", \"status\": \"SUCCESS\"}, {\"tool\": \"search_code\", \"status\": \"SUCCESS\"}, {\"tool\": \"search_code\", \"status\": \"SUCCESS\"}, {\"tool\": \"search_code\", \"status\": \"SUCCESS\"}, {\"tool\": \"read_file\", \"status\": \"SUCCESS\"}, {\"tool\": \"read_file\", \"status\": \"SUCCESS\"}, {\"tool\": \"scan_dependencies\", \"status\": \"SUCCESS\"}, {\"tool\": \"run_security_scan\", \"status\": \"SUCCESS\"}, {\"tool\": \"run_tests\", \"status\": \"SUCCESS\"}], \"remediation_feedback\": null}\nOutput schema: {\"$defs\": {\"RemediationCategory\": {\"enum\": [\"ARCHITECTURE\", \"IMPLEMENTATION\", \"SECURITY\", \"TESTING\"], \"title\": \"RemediationCategory\", \"type\": \"string\"}, \"ReviewerStatus\": {\"enum\": [\"APPROVED\", \"REJECTED\"], \"title\": \"ReviewerStatus\", \"type\": \"string\"}, \"RouteTarget\": {\"enum\": [\"Architecture\", \"Developer\", \"Testing\", \"HUMAN_REVIEW_REQUIRED\"], \"title\": \"RouteTarget\", \"type\": \"string\"}}, \"additionalProperties\": false, \"properties\": {\"status\": {\"$ref\": \"#/$defs/ReviewerStatus\"}, \"score\": {\"maximum\": 100, \"minimum\": 0, \"title\": \"Score\", \"type\": \"number\"}, \"subscores\": {\"additionalProperties\": {\"type\": \"number\"}, \"title\": \"Subscores\", \"type\": \"object\"}, \"problems\": {\"items\": {\"type\": \"string\"}, \"title\": \"Problems\", \"type\": \"array\"}, \"reason\": {\"title\": \"Reason\", \"type\": \"string\"}, \"remediation_category\": {\"anyOf\": [{\"$ref\": \"#/$defs/RemediationCategory\"}, {\"type\": \"null\"}], \"default\": null}, \"return_to\": {\"anyOf\": [{\"$ref\": \"#/$defs/RouteTarget\"}, {\"type\": \"null\"}], \"default\": null}, \"confidence\": {\"maximum\": 1, \"minimum\": 0, \"title\": \"Confidence\", \"type\": \"number\"}, \"evidence_references\": {\"items\": {\"type\": \"string\"}, \"title\": \"Evidence References\", \"type\": \"array\"}}, \"required\": [\"status\", \"score\", \"subscores\", \"problems\", \"reason\", \"remediation_category\", \"return_to\", \"confidence\", \"evidence_references\"], \"title\": \"ReviewerDecision\", \"type\": \"object\"}\nCandidate artifact: {\"status\": \"APPROVED\", \"score\": 100.0, \"subscores\": {\"requirements_completeness\": 100.0, \"architecture_correctness\": 100.0, \"security_compliance\": 100.0, \"testing_completeness\": 100.0, \"implementation_consistency\": 100.0, \"rag_grounding\": 100.0}, \"problems\": [], \"reason\": \"validated evidence satisfies acceptance checks\", \"remediation_category\": null, \"return_to\": null, \"confidence\": 1.0, \"evidence_references\": [\"api-design-guidelines.md:9819348d9a:0\", \"api-design-guidelines.md:32089317bd:0\", \"api-design-guidelines.md:5d7ed272fb:0\", \"architecture-guidelines.md:cbcb34cb36:0\", \"security-guidelines.md:5c85774592:0\", \"security-guidelines.md:4b06fa0828:0\", \"owasp-api-security.md:8b796a9dec:0\", \"owasp-api-security.md:85211ec717:0\", \"testing-strategy.md:f560bc5b58:0\", \"testing-strategy.md:1640477e49:0\", \"testing-strategy.md:5342c5693f:0\", \"coding-standards.md:5ac6da9d76:0\", \"mcp://repository/list_files\", \"mcp://repository/list_files\", \"mcp://repository/search_code\", \"mcp://repository/search_code\", \"mcp://repository/search_code\", \"mcp://repository/read_file\", \"mcp://repository/read_file\", \"mcp://quality/scan_dependencies\", \"mcp://quality/run_security_scan\", \"mcp://quality/run_tests\"]}\nCopy every candidate key and value exactly; do not omit schema-optional keys."
+      },
+      "output": {
+        "response": "{\n  \"status\": \"APPROVED\",\n  \"score\": 100.0,\n  \"subscores\": {\n    \"requirements_completeness\": 100.0,\n    \"architecture_correctness\": 100.0,\n    \"security_compliance\": 100.0,\n    \"testing_completeness\": 100.0,\n    \"implementation_consistency\": 100.0,\n    \"rag_grounding\": 100.0\n  },\n  \"problems\": [],\n  \"reason\": \"validated evidence satisfies acceptance checks\",\n  \"remediation_category\": null,\n  \"return_to\": null,\n  \"confidence\": 1.0,\n  \"evidence_references\": [\n    \"api-design-guidelines.md:9819348d9a:0\",\n    \"api-design-guidelines.md:32089317bd:0\",\n    \"api-design-guidelines.md:5d7ed272fb:0\",\n    \"architecture-guidelines.md:cbcb34cb36:0\",\n    \"security-guidelines.md:5c85774592:0\",\n    \"security-guidelines.md:4b06fa0828:0\",\n    \"owasp-api-security.md:8b796a9dec:0\",\n    \"owasp-api-security.md:85211ec717:0\",\n    \"testing-strategy.md:f560bc5b58:0\",\n    \"testing-strategy.md:1640477e49:0\",\n    \"testing-strategy.md:5342c5693f:0\",\n    \"coding-standards.md:5ac6da9d76:0\",\n    \"mcp://repository/list_files\",\n    \"mcp://repository/list_files\",\n    \"mcp://repository/search_code\",\n    \"mcp://repository/search_code\",\n    \"mcp://repository/search_code\",\n    \"mcp://repository/read_file\",\n    \"mcp://repository/read_file\",\n    \"mcp://quality/scan_dependencies\",\n    \"mcp://quality/run_security_scan\",\n    \"mcp://quality/run_tests\"\n  ]\n}"
+      },
+      "metadata": {
+        "agent": "Reviewer",
+        "provider": "ollama",
+        "requested_model": "qwen3.5:9b",
+        "actual_model": "qwen3.5:9b",
+        "model_profile": "DEEP_MODEL",
+        "fallback_used": false,
+        "fallback_reason": null,
+        "degraded": false,
+        "latency_ms": 187483,
+        "usage": {
+          "prompt_eval_count": 2127,
+          "eval_count": 524
+        },
+        "structured_output_success": true,
+        "error": null,
+        "retry": 0,
+        "repair": 0
+      },
+      "level": "DEFAULT",
+      "status_message": null
+    },
+    {
+      "name": "Reviewer",
+      "type": "agent",
+      "input": null,
+      "output": {
+        "status": "APPROVED",
+        "score": 100.0,
+        "subscores": {
+          "requirements_completeness": 100.0,
+          "architecture_correctness": 100.0,
+          "security_compliance": 100.0,
+          "testing_completeness": 100.0,
+          "implementation_consistency": 100.0,
+          "rag_grounding": 100.0
+        },
+        "problems": [],
+        "reason": "validated evidence satisfies acceptance checks",
+        "remediation_category": null,
+        "return_to": null,
+        "confidence": 1.0,
+        "evidence_references": [
+          "api-design-guidelines.md:9819348d9a:0",
+          "api-design-guidelines.md:32089317bd:0",
+          "api-design-guidelines.md:5d7ed272fb:0",
+          "architecture-guidelines.md:cbcb34cb36:0",
+          "security-guidelines.md:5c85774592:0",
+          "security-guidelines.md:4b06fa0828:0",
+          "owasp-api-security.md:8b796a9dec:0",
+          "owasp-api-security.md:85211ec717:0",
+          "testing-strategy.md:f560bc5b58:0",
+          "testing-strategy.md:1640477e49:0",
+          "testing-strategy.md:5342c5693f:0",
+          "coding-standards.md:5ac6da9d76:0",
+          "mcp://repository/list_files",
+          "mcp://repository/list_files",
+          "mcp://repository/search_code",
+          "mcp://repository/search_code",
+          "mcp://repository/search_code",
+          "mcp://repository/read_file",
+          "mcp://repository/read_file",
+          "mcp://quality/scan_dependencies",
+          "mcp://quality/run_security_scan",
+          "mcp://quality/run_tests"
+        ]
+      },
+      "metadata": {
+        "iteration": 0
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "route",
+      "type": "span",
+      "input": null,
+      "output": null,
+      "metadata": {
+        "from": "Reviewer",
+        "to": "FinalReport",
+        "iteration": 0
+      },
+      "level": null,
+      "status_message": null
+    },
+    {
+      "name": "FinalReport",
+      "type": "span",
+      "output": {
+        "feature": "Autonomous Software Engineering Team",
+        "status": "APPROVED",
+        "requirements": "Provide a password-recovery link that expires after 15 minutes and can be used only once.",
+        "architecture": "bounded",
+        "security": "PASS",
+        "testing": "SUCCESS",
+        "implementation": "PROPOSED validation strategy: run_build, run_linter, and run_tests in the isolated workspace after applying changes to 2 inspected path(s).",
+        "risk": "INFO",
+        "iterations": 0,
+        "documentation_used": [
+          "api-design-guidelines.md",
+          "architecture-guidelines.md",
+          "security-guidelines.md",
+          "owasp-api-security.md",
+          "testing-strategy.md",
+          "coding-standards.md"
+        ],
+        "tools_executed": [
+          "list_files",
+          "list_files",
+          "search_code",
+          "search_code",
+          "search_code",
+          "read_file",
+          "read_file",
+          "scan_dependencies",
+          "run_security_scan",
+          "run_tests"
+        ],
+        "models_used": [
+          "qwen3.5:9b",
+          "qwen3.5:4b",
+          "qwen3.5:9b",
+          "qwen3.5:9b",
+          "qwen3.5:4b",
+          "qwen3.5:9b"
+        ],
+        "errors_degradations": [],
+        "trace_id": "114415628cf2584ba51d3c15d2c252a0",
+        "next_action": "none"
+      }
+    }
+  ]
+}
