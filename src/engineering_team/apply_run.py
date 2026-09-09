@@ -1,7 +1,7 @@
 """Run the full engineering workflow directly against a real, external project.
 
 Unlike ``observability.evaluation.run_multimodel_acceptance`` (which always
-works against an isolated copy of the bundled ``sample_app``), this module
+works against an isolated copy of the bundled ``demo-projects/sample_app``), this module
 points Repository/Quality MCP at a caller-supplied project path. When the
 Reviewer approves and ``authorize_writes=True``, the Developer's LLM-authored
 file content is written for real via ``create_file``/``update_file`` — see
@@ -259,7 +259,7 @@ def execute_on_project(
             if settings.langfuse_secret_key else None
         ),
         base_url=settings.langfuse_base_url,
-        offline_directory="evaluation/reports/traces",
+        offline_directory="evaluation/reports/generated/traces",
     ).start_run(run_id, requirement)
     if on_trace_started is not None:
         # Publish the real trace id at the start of execution, not at the end, so a

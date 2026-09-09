@@ -1,6 +1,6 @@
 """A runner whose boundary is a container rather than a process sandbox.
 
-See `docs/architecture/decisions/0002-container-runner.md`. The short version:
+See `docs/architecture/overview.md` for the current module map. The short version:
 supervising processes that share the host kernel from userspace is a race this
 project kept losing, and a process sandbox cannot supply the toolchain a target
 project needs. A container bounds its own descendants and carries its own

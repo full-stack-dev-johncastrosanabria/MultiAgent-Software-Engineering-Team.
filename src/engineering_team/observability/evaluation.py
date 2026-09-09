@@ -105,7 +105,7 @@ class EvaluationHarness:
         self.quality_mcp = quality_mcp
         self.repository_mcp = repository_mcp
         self.test_paths = test_paths
-        self.tracer = tracer or LangfuseTracer(offline_directory="evaluation/reports/traces")
+        self.tracer = tracer or LangfuseTracer(offline_directory="evaluation/reports/generated/traces")
         self.model_runtime_factory = model_runtime_factory
         self.workspace_root = Path(workspace_root)
 
@@ -120,7 +120,7 @@ class EvaluationHarness:
         from engineering_team.mcp.client import MCPQualityClient, MCPRepositoryClient
         from engineering_team.workspace.isolation import create_run_copy
 
-        run_workspace = create_run_copy(run_id, "sample_app", self.workspace_root)
+        run_workspace = create_run_copy(run_id, "demo-projects/sample_app", self.workspace_root)
         timeout = getattr(self.quality_mcp, "timeout_seconds", 60)
         acceptance, acceptance_evidence = _scenario_acceptance(scenario, run_workspace)
         trace.record(
@@ -315,7 +315,7 @@ def run_multimodel_acceptance(
     from engineering_team.workspace.isolation import create_run_copy
 
     run_id = f"multimodel-{uuid.uuid4()}"
-    run_workspace = create_run_copy(run_id, "sample_app", settings.workspace_root)
+    run_workspace = create_run_copy(run_id, "demo-projects/sample_app", settings.workspace_root)
     trace = LangfuseTracer(
         public_key=settings.langfuse_public_key,
         secret_key=(
@@ -323,7 +323,7 @@ def run_multimodel_acceptance(
             if settings.langfuse_secret_key else None
         ),
         base_url=settings.langfuse_base_url,
-        offline_directory="evaluation/reports/traces",
+        offline_directory="evaluation/reports/generated/traces",
     ).start_run(run_id, requirement)
     cloud_first = bool(settings.cloud_enabled and not settings.local_first)
     if cloud_first:

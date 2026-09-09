@@ -1,71 +1,170 @@
+"""Contracts for the active documentation map and the preserved archive."""
+
+import hashlib
+import json
+import re
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+ROOT = Path(__file__).resolve().parents[2]
+ARCHIVE = ROOT / "docs/deprecated"
+OWNERS = (
+    "README.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".github/copilot-instructions.md",
+    "docs/README.md",
+    "docs/architecture/overview.md",
+    "docs/operations.md",
+    "docs/testing.md",
+    "docs/status.md",
+    "docs/history.md",
+)
+# Accepted decisions are active documentation with one page per record, not a single
+# owner file. The index is their entry point; the records themselves are immutable.
+DECISIONS = "docs/architecture/decisions"
+DECISION_INDEX = f"{DECISIONS}/README.md"
+LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\s]+)\)")
 
 
-def test_required_documentation_and_demo_commands_are_present() -> None:
-    required = [
-        "README.md", "docs/architecture/overview.md", "docs/diagrams/architecture.md",
-        "docs/diagrams/langgraph.md", "docs/rag.md", "docs/mcp.md",
-        "docs/evaluation.md", "docs/demo-runbook.md",
-        "docs/evidence/final-audit.md",
-    ]
-    for filename in required:
-        assert Path(filename).is_file(), filename
-
-    combined = "\n".join(Path(filename).read_text(encoding="utf-8") for filename in required)
-    for phrase in (
-        "Sentence Transformers", "Chroma", "NO_RELEVANT_DOCS", "run_tests",
-        "HUMAN_REVIEW_REQUIRED", "qwen3.5:4b", "qwen3.5:9b", "LANGFUSE_PUBLIC_KEY",
-        "SC-01", "SC-05", "scripts/run_evaluation.py", "scripts/run_multimodel.py",
-        "LangChain Document", "MCP Server", "stdio", "--live-models",
-        "scenarios-live.json",
-    ):
-        assert phrase in combined
+def _decision_records() -> set[str]:
+    directory = ROOT / DECISIONS
+    return {
+        p.relative_to(ROOT).as_posix()
+        for p in directory.glob("*.md")
+        if p.name != "README.md"
+    }
 
 
-def test_architecture_documentation_has_its_five_parts() -> None:
-    """Each part answers a different question; a missing one means a homeless fact."""
-    for filename in (
-        "docs/architecture/README.md",
-        "docs/architecture/overview.md",
-        "docs/architecture/roadmap.md",
-        "docs/architecture/decisions/README.md",
-        "docs/architecture/checklists/README.md",
-        "docs/architecture/findings/README.md",
-        "docs/architecture/findings/agent-architecture-audit.json",
-    ):
-        assert Path(filename).is_file(), filename
+def _active_pages() -> set[str]:
+    return set(OWNERS) | {DECISION_INDEX} | _decision_records()
 
 
-def test_every_finding_in_the_audit_appears_in_the_index() -> None:
-    """The JSON is the record; the index is how anyone finds out where it stands."""
-    import json
-
-    audit = json.loads(
-        Path("docs/architecture/findings/agent-architecture-audit.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    index = Path("docs/architecture/findings/README.md").read_text(encoding="utf-8")
-    for number in range(1, len(audit["findings"]) + 1):
-        assert f"| {number} |" in index, f"finding {number} is not in the index"
+def _manifest() -> dict:
+    return json.loads((ARCHIVE / "manifest.json").read_text(encoding="utf-8"))
 
 
-def test_nothing_still_points_at_the_moved_audit() -> None:
-    """A link that survives a move is a link that lies."""
-    stale = []
-    for path in Path(".").rglob("*.md"):
-        if any(part in {".venv", "node_modules", ".git"} for part in path.parts):
+def _specify_manifest() -> dict:
+    return json.loads((ARCHIVE / "specify-manifest.json").read_text(encoding="utf-8"))
+
+
+def _local_links(path: Path) -> list[Path]:
+    # The active map uses inline Markdown links; archived Markdown is untrusted history.
+    links = []
+    for target in LINK.findall(path.read_text(encoding="utf-8")):
+        parsed = urlsplit(target)
+        if parsed.scheme or parsed.netloc or not parsed.path:
             continue
-        if "docs/evidence/agent-architecture-audit" in path.read_text(encoding="utf-8"):
-            stale.append(str(path))
-    assert not stale, f"stale audit path in: {stale}"
+        links.append((path.parent / unquote(parsed.path)).resolve())
+    return links
 
 
-def test_every_decision_record_appears_in_its_index() -> None:
-    """An ADR nobody can find from the index is an ADR nobody reads."""
-    directory = Path("docs/architecture/decisions")
-    index = (directory / "README.md").read_text(encoding="utf-8")
-    records = sorted(p.name for p in directory.glob("[0-9][0-9][0-9][0-9]-*.md"))
-    assert records, "no decision records found"
-    for name in records:
-        assert name in index, f"{name} is not linked from the decisions index"
+def test_active_owners_exist_and_are_reachable_from_entrypoints() -> None:
+    owners = {ROOT / name for name in OWNERS} | {ROOT / DECISION_INDEX}
+    assert all(path.is_file() for path in owners)
+    visited = set()
+    pending = [ROOT / "README.md"]
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        pending.extend(link for link in _local_links(path) if link in owners)
+    # Harness adapters point into the map; they need not be linked by the product README.
+    adapters = {ROOT / "CLAUDE.md", ROOT / ".github/copilot-instructions.md"}
+    assert owners - adapters <= visited
+    for adapter in adapters:
+        assert ROOT / "AGENTS.md" in _local_links(adapter)
+
+
+def test_active_local_links_resolve_without_loading_archived_pages() -> None:
+    failures = []
+    for name in sorted(_active_pages()):
+        for target in _local_links(ROOT / name):
+            if not target.is_relative_to(ROOT) or not target.exists():
+                failures.append(f"{name}: missing or external local target {target}")
+            allowed_archive_metadata = {
+                ARCHIVE / "README.md", ARCHIVE / "manifest.json", ARCHIVE / "specify-manifest.json",
+            }
+            if target.is_relative_to(ARCHIVE) and target not in allowed_archive_metadata:
+                failures.append(f"{name}: links directly into historical content")
+    assert not failures, "\n".join(failures)
+
+
+def test_active_documentation_has_no_unmapped_pages() -> None:
+    active = {p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md")
+              if not p.is_relative_to(ARCHIVE)}
+    assert active == {name for name in _active_pages() if name.startswith("docs/")}
+
+
+def test_every_decision_record_is_listed_by_its_index() -> None:
+    index = ROOT / DECISION_INDEX
+    linked = {
+        link.relative_to(ROOT).as_posix()
+        for link in _local_links(index)
+        if link.is_relative_to(ROOT / DECISIONS)
+    }
+    records = _decision_records()
+    assert records, "the decisions directory holds the accepted records"
+    assert records == linked, "a record exists that the index does not list, or vice versa"
+
+
+def test_archive_preserves_original_bytes_and_has_no_unrecorded_files() -> None:
+    manifest = _manifest()
+    assert manifest["schema_version"] == 1
+    entries = manifest["archived"]
+    assert entries
+    sources = [entry["source"] for entry in entries]
+    destinations = [entry["destination"] for entry in entries]
+    assert len(sources) == len(set(sources))
+    assert len(destinations) == len(set(destinations))
+    for entry in entries:
+        source = Path(entry["source"])
+        assert not source.is_absolute() and ".." not in source.parts
+        # Reserve the archive's README for its non-authoritative entry notice.
+        relative = "root/README.md" if source.as_posix() == "README.md" else source.as_posix()
+        assert entry["destination"] == f"docs/deprecated/{relative}"
+        archived = ROOT / entry["destination"]
+        assert archived.is_file(), entry["destination"]
+        assert hashlib.sha256(archived.read_bytes()).hexdigest() == entry["sha256"]
+        if replacement := entry.get("replacement"):
+            runtime_paths = {resource["path"] for resource in manifest["retained"]}
+            assert replacement in OWNERS or replacement in runtime_paths
+            assert (ROOT / replacement).is_file()
+        else:
+            assert not (ROOT / source).exists(), f"retired path recreated: {source}"
+    actual = {p.relative_to(ROOT).as_posix() for p in ARCHIVE.rglob("*") if p.is_file()}
+    expected = set(destinations) | {
+        "docs/deprecated/README.md", "docs/deprecated/manifest.json",
+        "docs/deprecated/specify-manifest.json",
+    } | {entry["destination"] for entry in _specify_manifest()["archived"]}
+    assert actual == expected
+
+
+def test_archived_speckit_installation_is_complete() -> None:
+    manifest = _specify_manifest()
+    entries = manifest["archived"]
+    assert entries
+    for entry in entries:
+        source = Path(entry["source"])
+        archived = ROOT / entry["destination"]
+        assert source.parts[0] == ".specify"
+        assert archived.is_file(), entry["destination"]
+        assert hashlib.sha256(archived.read_bytes()).hexdigest() == entry["sha256"]
+        assert not (ROOT / source).exists(), f"SpecKit path recreated: {source}"
+
+
+def test_runtime_markdown_remains_outside_the_archive() -> None:
+    # Hashes in the manifest are the migration baseline. Later authorized prompt/corpus
+    # edits are allowed; their behavior is covered by runtime tests, not frozen here.
+    entries = _manifest()["retained"]
+    paths = [entry["path"] for entry in entries]
+    assert len(paths) == len(set(paths))
+    assert {entry["role"] for entry in entries} == {
+        "runtime-system-prompt", "unresolved-user-prompt", "rag-input", "benchmark-input",
+        "demo-case-input",
+    }
+    for name in paths:
+        path = (ROOT / name).resolve()
+        assert path.is_relative_to(ROOT) and not path.is_relative_to(ARCHIVE)
+        assert path.is_file(), name

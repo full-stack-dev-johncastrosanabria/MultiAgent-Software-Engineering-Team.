@@ -5,6 +5,10 @@ tracked in git deliberately: `PROJECT_STATE.md` and the handoff files are
 ephemeral working state, and anything recorded only there is lost when a session
 rotates it out.
 
+Each record explains why the system is the way it is. What it does today belongs
+to the [implemented architecture](../overview.md); what has actually been run
+belongs to [status](../../status.md).
+
 | # | Decision | Status |
 |---|---|---|
 | [1](0001-target-multiple-language-ecosystems.md) | Target multiple language ecosystems | accepted |
@@ -20,9 +24,77 @@ rotates it out.
 | [11](0011-the-operator-states-which-tests-the-gate-runs.md) | The operator states which tests the gate runs | accepted |
 | [12](0012-a-started-database-is-not-a-prepared-one.md) | A started database is not a prepared one | accepted |
 | [13](0013-a-prompt-is-redacted-before-it-is-refused.md) | A prompt is redacted before it is refused | accepted |
+| [14](0014-a-docker-api-that-is-not-the-hosts.md) | The run gets a Docker API that is not the host's | accepted |
 
 A decision here outranks the same claim made anywhere untracked. When they
 disagree, this directory is right and the other file is stale.
 
-For where the product is going rather than why it is as it is, see
-[../roadmap.md](../roadmap.md).
+## Which module each decision governs
+
+Every edge points at the code where the decision is observable, so the distance
+from "why" to "where it is checked" stays one hop.
+
+```mermaid
+flowchart LR
+  subgraph D["Decisions"]
+    A1["ADR 1<br/>multi-language"]
+    A2["ADR 2<br/>container runner"]
+    A3["ADR 3<br/>split QualityMCP"]
+    A4["ADR 4<br/>profile per component"]
+    A5["ADR 5<br/>services per run"]
+    A6["ADR 6<br/>pull-request delivery"]
+    A7["ADR 7<br/>declared coverage"]
+    A8["ADR 8<br/>security per stack"]
+    A9["ADR 9<br/>multistack validation"]
+    A10["ADR 10<br/>tests under sandbox"]
+    A11["ADR 11<br/>operator test filter"]
+    A12["ADR 12<br/>prepared schema"]
+    A13["ADR 13<br/>redact before refuse"]
+    A14["ADR 14<br/>run-scoped Docker API"]
+  end
+
+  subgraph M["Modules"]
+    ST["stacks.py<br/>StackProfile"]
+    QU["mcp/quality.py<br/>QualityMCP"]
+    RU["mcp/runner.py<br/>CommandRunner"]
+    SV["services.py<br/>ServiceStack"]
+    DE["delivery.py<br/>GitDelivery"]
+    CO["contracts/<br/>evidence_sufficient"]
+    GR["graph/stategraph.py<br/>routing"]
+    GU["guardrails/secrets.py<br/>redact_secrets"]
+    EV["evaluation/benchmarks/<br/>multistack"]
+    CF["config.py<br/>Settings"]
+    CN["mcp/container.py<br/>ContainerRunner"]
+  end
+
+  A1 --> ST
+  A2 --> RU
+  A3 --> QU
+  A3 --> RU
+  A3 --> ST
+  A4 --> ST
+  A4 --> QU
+  A5 --> SV
+  A6 --> DE
+  A7 --> CO
+  A7 --> GR
+  A8 --> ST
+  A8 --> QU
+  A9 --> EV
+  A10 --> RU
+  A11 --> CF
+  A11 --> ST
+  A12 --> ST
+  A12 --> SV
+  A13 --> GU
+  A14 --> CN
+  A14 --> SV
+```
+
+## About the "finding N" references
+
+Several records cite a `finding N`. Those come from the multistack audit
+register of 2026-09-05, retired from active documentation because it is a dated
+inventory rather than current design. Any conclusion of it that is still open
+belongs to [status](../../status.md); the original register stays in the
+[historical archive](../../deprecated/README.md), outside normal navigation.

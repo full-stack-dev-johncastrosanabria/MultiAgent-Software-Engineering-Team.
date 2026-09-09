@@ -5,9 +5,10 @@ build-backend = "hatchling.build"
 [project]
 name = "autonomous-engineering-team"
 version = "0.1.0"
-description = "Local-first hierarchical software-engineering agent team"
+description = "Self-hosted hierarchical software-engineering agent team with deterministic gating"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { file = "LICENSE" }
 dependencies = [
   "pydantic>=2.8,<3",
   "pydantic-settings>=2.4,<3",

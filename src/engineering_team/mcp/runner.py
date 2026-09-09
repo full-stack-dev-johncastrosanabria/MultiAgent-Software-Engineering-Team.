@@ -6,9 +6,8 @@ output means -- that belongs to the quality layer and to each stack profile.
 
 `ProcessRunner` is the boundary this project started with: an OS process sandbox,
 `sandbox-exec` on Darwin and Bubblewrap on Linux, refusing to run anywhere else
-rather than running unprotected. See `docs/architecture/decisions/0002-container-runner.md`
-for why a container backend is intended to replace it, and why this one stays as
-the fallback for hosts without a container runtime.
+rather than running unprotected. The container backend and quality-layer module
+map are documented in `docs/architecture/overview.md`.
 """
 
 from __future__ import annotations

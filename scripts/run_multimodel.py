@@ -17,7 +17,7 @@ def main() -> None:
             "Provide a password-recovery link that expires after 15 minutes "
             "and can be used only once."
         ),
-        report_path="evaluation/reports/multimodel-live.json",
+        report_path="evaluation/reports/curated/multimodel-live.json",
     )
     print(json.dumps({"status": evidence["final_status"], "trace_id": evidence["trace_id"],
                       "bonus_pass": evidence["bonus_pass"]}))

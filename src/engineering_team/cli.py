@@ -21,7 +21,7 @@ def main() -> None:
 def run(
     requirement: Annotated[str, typer.Argument(min=1)],
     report_path: Annotated[Path, typer.Option(help="Sanitized evidence output")] = Path(
-        "evaluation/reports/cli-run.json"
+        "evaluation/reports/runs/cli-run.json"
     ),
 ) -> None:
     """Execute a complete local-first run with real configured Ollama models."""
@@ -56,7 +56,7 @@ def run_project(
         ),
     ] = False,
     report_path: Annotated[Path, typer.Option(help="Sanitized evidence output")] = Path(
-        "evaluation/reports/apply-run.json"
+        "evaluation/reports/runs/apply-run.json"
     ),
 ) -> None:
     """Run Product->Architecture->Developer->Security->Testing->Reviewer against a

@@ -1,0 +1,485 @@
+{
+  "base_commit": "4294b9ef5904bed3b239a06c95e77491437b9aed",
+  "archived": [
+    {
+      "source": ".github/copilot-instructions.md",
+      "destination": "docs/deprecated/.github/copilot-instructions.md",
+      "sha256": "157ef06e6a7847009c2596565c9e2cb7136a08c64285c2eb9883c8d10dcc2c22",
+      "disposition": "archived",
+      "replacement": ".github/copilot-instructions.md"
+    },
+    {
+      "source": ".github/instructions/sdd.instructions.md",
+      "destination": "docs/deprecated/.github/instructions/sdd.instructions.md",
+      "sha256": "5a6321a858baab092cd784a2413f6d7bbea96191914125a696cada12fd25d06e",
+      "disposition": "archived"
+    },
+    {
+      "source": ".github/skills/speckit-analyze/SKILL.md",
+      "destination": "docs/deprecated/.github/skills/speckit-analyze/SKILL.md",
+      "sha256": "26cb669066c9097c6a1c745fafabfc31cd3088b0f0f0c051a96e4ba0d3080ea6",
+      "disposition": "archived"
+    },
+    {
+      "source": ".github/skills/speckit-checklist/SKILL.md",
+      "destination": "docs/deprecated/.github/skills/speckit-checklist/SKILL.md",
+      "sha256": "1c9c6f02d2f49f02c26ca364b1b825f9bc39644549051b840ea1a2d60a126334",
+      "disposition": "archived"
+    },
+    {
+      "source": ".github/skills/speckit-clarify/SKILL.md",
+      "destination": "docs/deprecated/.github/skills/speckit-clarify/SKILL.md",
+      "sha256": "ab6dc72377646a06156e8a327d9b856f3662cbb0ca6ca54e895bce5f9e1e7cff",
+      "disposition": "archived"
+    },
+    {
+      "source": ".github/skills/speckit-constitution/SKILL.md",
+      "destination": "docs/deprecated/.github/skills/speckit-constitution/SKILL.md",
+      "sha256": "24da670731f2dcabd64f9829b76a6c913dfdc10673de57e223deba55548805ec",
+      "disposition": "archived"
+    },
+    {
+      "source": ".github/skills/speckit-implement/SKILL.md",
+      "destination": "docs/deprecated/.github/skills/speckit-implement/SKILL.md",
+      "sha256": "9ae7cc9aa57a2c87f2617e0f34c8495a9a5f05ecba23a86d3f8ebec86a71caa4",
+      "disposition": "archived"
+    },
+    {
+      "source": ".github/skills/speckit-plan/SKILL.md",
+      "destination": "docs/deprecated/.github/skills/speckit-plan/SKILL.md",
+      "sha256": "ec59c99955d227876b12a0c61541b18f2bcc463b09bb54864f721f2c26bb4eb0",
+      "disposition": "archived"
+    },
+    {
+      "source": ".github/skills/speckit-specify/SKILL.md",
+      "destination": "docs/deprecated/.github/skills/speckit-specify/SKILL.md",
+      "sha256": "43c60952f68601e12ead230f9685584fd0455fb1ad925d251406ed95cd296554",
+      "disposition": "archived"
+    },
+    {
+      "source": ".github/skills/speckit-tasks/SKILL.md",
+      "destination": "docs/deprecated/.github/skills/speckit-tasks/SKILL.md",
+      "sha256": "d8587c3860e6ef168864b1b64c0db859a828e089d61536d542f3499d39094c68",
+      "disposition": "archived"
+    },
+    {
+      "source": ".github/skills/speckit-taskstoissues/SKILL.md",
+      "destination": "docs/deprecated/.github/skills/speckit-taskstoissues/SKILL.md",
+      "sha256": "e0ab59506d15b9a221367a03405b4370f578761b101f04a2c77abe517964e51e",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/extensions/git/README.md",
+      "destination": "docs/deprecated/.specify/extensions/git/README.md",
+      "sha256": "38c0140b7804028cf0d212a29b930c9183f4eec7dcaf3ebc4af080653e290924",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.commit.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.commit.md",
+      "sha256": "445ed4cd43c8e685de294b68c841b8f15e082f7033f74b042feddd59edf7779c",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.feature.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.feature.md",
+      "sha256": "8e5788984c7423ecf9cbb984cca8043c2f35f28987c955f6a999154fe8d4059a",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.initialize.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.initialize.md",
+      "sha256": "07bf0e1a9fc251482774141be5a903cbeb018f90cb66b2d29a5fff7f0bd3ecb7",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.remote.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.remote.md",
+      "sha256": "00397aff45bf00d3111b4f162e4220fd5a9020e72e4afe9179859c21bcd8aac3",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.validate.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.validate.md",
+      "sha256": "d8f8e5ecc52e819749f355b6dd1ad8400e9b1dfe03882a12c0d2369530f1f083",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/memory/constitution.md",
+      "destination": "docs/deprecated/.specify/memory/constitution.md",
+      "sha256": "c7c16d91491794c3e33542b23713e5ce0e60785b0a5030f37c9a3c7ab3616fcc",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/templates/checklist-template.md",
+      "destination": "docs/deprecated/.specify/templates/checklist-template.md",
+      "sha256": "c37695297e5d3153d64f82c21223509940b13932046c7961c42d1d669516130c",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/templates/constitution-template.md",
+      "destination": "docs/deprecated/.specify/templates/constitution-template.md",
+      "sha256": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/templates/plan-template.md",
+      "destination": "docs/deprecated/.specify/templates/plan-template.md",
+      "sha256": "cc7f7979cf8d8836ec26492785affd80791d3422a2b745062ec695be8c985ef7",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/templates/spec-template.md",
+      "destination": "docs/deprecated/.specify/templates/spec-template.md",
+      "sha256": "3945437fc35cd30a5b2bf7beea680337c3516826d3efa5a6b92c4a7eca1ba28e",
+      "disposition": "archived"
+    },
+    {
+      "source": ".specify/templates/tasks-template.md",
+      "destination": "docs/deprecated/.specify/templates/tasks-template.md",
+      "sha256": "fc29a233f6f5a27ca31f1aa46b596af6500c627441c6e62b2bc4a1d721525842",
+      "disposition": "archived"
+    },
+    {
+      "source": "README.md",
+      "destination": "docs/deprecated/root/README.md",
+      "sha256": "dd01a8004fb03956421aa06fcd07f7e29efaa30b2f15c71f77c0888d05976bf2",
+      "disposition": "archived",
+      "replacement": "README.md"
+    },
+    {
+      "source": "SDDtask-multistack-coverage-fix.md",
+      "destination": "docs/deprecated/SDDtask-multistack-coverage-fix.md",
+      "sha256": "c6953c1e90dd096916f8dcca49bf588935b85ac37eac18ee3826096ca7a5972b",
+      "disposition": "archived"
+    },
+    {
+      "source": "demo-projects/banca-demo-support/MODEL_EVALUATION.md",
+      "destination": "docs/deprecated/demo-projects/banca-demo-support/MODEL_EVALUATION.md",
+      "sha256": "a288a46f00c236390e610d9c0930506ffbc30b93f3beb42a607d59b788aa5b3b",
+      "disposition": "archived"
+    },
+    {
+      "source": "demo-projects/banca-demo-support/README.md",
+      "destination": "docs/deprecated/demo-projects/banca-demo-support/README.md",
+      "sha256": "5e41d267dced6af71715dc8edbed2b6a4b3fcc76eee95f4de5c2042d33034211",
+      "disposition": "archived"
+    },
+    {
+      "source": "demo-projects/banca-demo-support/VALIDATION.md",
+      "destination": "docs/deprecated/demo-projects/banca-demo-support/VALIDATION.md",
+      "sha256": "6038886a7cb1ba2eb5202106439dbfc0d66ca7292695c8c6ed24e8615aced6ab",
+      "disposition": "archived"
+    },
+    {
+      "source": "demo-projects/banca-demo/README.md",
+      "destination": "docs/deprecated/demo-projects/banca-demo/README.md",
+      "sha256": "f56cfc8670a5f60cb2b97cbae4c654e3724021af224c1c7a336bdc15fd074022",
+      "disposition": "archived-copy-runtime-original-retained",
+      "replacement": "demo-projects/banca-demo/README.md"
+    },
+    {
+      "source": "demo-projects/calculadora-qa-demo/README.md",
+      "destination": "docs/deprecated/demo-projects/calculadora-qa-demo/README.md",
+      "sha256": "7a14831b6aa6c44b3defecdd9b19c60454320c7b30c3b481c3c9e5f7fc16c8f5",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/apply-run-example.md",
+      "destination": "docs/deprecated/docs/apply-run-example.md",
+      "sha256": "2327e02a4f38003ce77053c56250bbcfc1c6a441d8e34fcb369c473e196fd71b",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/architecture/README.md",
+      "destination": "docs/deprecated/docs/architecture/README.md",
+      "sha256": "fc9f5d4d5847acfe172016ed690d9254b9c86912ed6a6699908c24ac341ec3af",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/architecture/checklists/README.md",
+      "destination": "docs/deprecated/docs/architecture/checklists/README.md",
+      "sha256": "b6f1a3ff85c829bfb7e7ab7f4bf115ce68eafdcb5091a4e6cbf1fce29544bf21",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/architecture/checklists/code-change-delivery.md",
+      "destination": "docs/deprecated/docs/architecture/checklists/code-change-delivery.md",
+      "sha256": "414edf5ce616418f7c6c7f800dac93c41901ef5dd0a2abb1824bb0c5a114bd11",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/architecture/checklists/multistack-live-validation.md",
+      "destination": "docs/deprecated/docs/architecture/checklists/multistack-live-validation.md",
+      "sha256": "56a1b180c40c6c598eff3df60c39b8be241e3db981dd8b4388c6658e7d16e0a3",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/architecture/checklists/stack-profile.md",
+      "destination": "docs/deprecated/docs/architecture/checklists/stack-profile.md",
+      "sha256": "8800694cbcf1265c4194056ccd59f0fbaba6a7fecd38ad90414c7aa68c40d47d",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/architecture/findings/README.md",
+      "destination": "docs/deprecated/docs/architecture/findings/README.md",
+      "sha256": "df86dc40146132545d6837b906f02233745391fd58bff5231ec7db8024438196",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/architecture/findings/multistack-review-2026-09-05.md",
+      "destination": "docs/deprecated/docs/architecture/findings/multistack-review-2026-09-05.md",
+      "sha256": "1d950081e3fa11428e8c2e04c9cba6b70f682dd595afe8e14c6a8462487d391e",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/architecture/overview.md",
+      "destination": "docs/deprecated/docs/architecture/overview.md",
+      "sha256": "acf191d4f7a741e34317e1106b61f8a2df2057dd76d686a9af86d63976731309",
+      "disposition": "archived",
+      "replacement": "docs/architecture/overview.md"
+    },
+    {
+      "source": "docs/architecture/roadmap.md",
+      "destination": "docs/deprecated/docs/architecture/roadmap.md",
+      "sha256": "0f245a90287208678dd797573546b0bd1965395297579127115f6aceac2f950f",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/demo-runbook.md",
+      "destination": "docs/deprecated/docs/demo-runbook.md",
+      "sha256": "f95cdb06594c5e6c79321c4a9f1592541462d7a399f8c33ee7705eb49cf596f6",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/diagrams/architecture.md",
+      "destination": "docs/deprecated/docs/diagrams/architecture.md",
+      "sha256": "47dc5cc70362cf1db2bd49143b777ba01bf54490a1f3652b4cb9d2f64922f228",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/diagrams/langgraph.md",
+      "destination": "docs/deprecated/docs/diagrams/langgraph.md",
+      "sha256": "5eccba979f47c23d457a1a2c0423767c4d0357451098398d16f5803e95460936",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/evaluation.md",
+      "destination": "docs/deprecated/docs/evaluation.md",
+      "sha256": "addf35cd5891ad008bd4c273debfce292c814fe3a47cf3d3acb54a4b817d997a",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/evidence/final-audit.md",
+      "destination": "docs/deprecated/docs/evidence/final-audit.md",
+      "sha256": "d33b373d99cbb7938d2d28f04afc1fd39a0d568d49852107422cdb33731c59c9",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/evidence/ingresos-multistack-series.md",
+      "destination": "docs/deprecated/docs/evidence/ingresos-multistack-series.md",
+      "sha256": "133e01376ff76a13c57a9db37875133a78fd111ac0f1688d9c6e1a6aac26bc9f",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/evidence/interview-cleanapi-dotnet.md",
+      "destination": "docs/deprecated/docs/evidence/interview-cleanapi-dotnet.md",
+      "sha256": "02b6020b5e9ee8c5ca1d5ec3b6c980242e4052f07fe47115834291d093fa0a58",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/mcp.md",
+      "destination": "docs/deprecated/docs/mcp.md",
+      "sha256": "d99c49e654f876b9347023be86b78b97143d264ecd0eb74daaabc31b73951152",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/rag.md",
+      "destination": "docs/deprecated/docs/rag.md",
+      "sha256": "39f2c393054f27cf1e48d5fcac019dd5a41901089782efea59aca98eb1772b42",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/superpowers/plans/2026-08-27-chat-first-multiagent-ui.md",
+      "destination": "docs/deprecated/docs/superpowers/plans/2026-08-27-chat-first-multiagent-ui.md",
+      "sha256": "73317ab3081633e18eb940dcd32d3ef26c10595010834793a14e627305e3c11f",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/superpowers/plans/2026-08-28-banca-demo.md",
+      "destination": "docs/deprecated/docs/superpowers/plans/2026-08-28-banca-demo.md",
+      "sha256": "c39c919ce0eda3785d731a5a3821258089d30f78f9ebffee7183468281a393da",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/superpowers/specs/2026-08-27-backend-migration-proposal.md",
+      "destination": "docs/deprecated/docs/superpowers/specs/2026-08-27-backend-migration-proposal.md",
+      "sha256": "1c1c549958f574c44ce393bc498bf22342c906ce03a2e3577a41fea2039b8f99",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/superpowers/specs/2026-08-27-chat-first-multiagent-ui-design.md",
+      "destination": "docs/deprecated/docs/superpowers/specs/2026-08-27-chat-first-multiagent-ui-design.md",
+      "sha256": "f9f095221f51027680e147b12020e76c82d39e30b956bbd6ccb21dd3de20e101",
+      "disposition": "archived"
+    },
+    {
+      "source": "evaluation/benchmarks/multistack/experiments.md",
+      "destination": "docs/deprecated/evaluation/benchmarks/multistack/experiments.md",
+      "sha256": "1647d2397a27586fb7ac1820ba14a9809c90205101db3f4b30daad140bd2c81e",
+      "disposition": "archived"
+    },
+    {
+      "source": "evaluation/evidence/flask-low-stock-2026-09-03/INDEX.md",
+      "destination": "docs/deprecated/evaluation/evidence/flask-low-stock-2026-09-03/INDEX.md",
+      "sha256": "2c095333aad24609646a3e420325a74a46e23db7db579744607c0e926d1ba995",
+      "disposition": "archived"
+    },
+    {
+      "source": "frontend/README.md",
+      "destination": "docs/deprecated/frontend/README.md",
+      "sha256": "9177c8a6b8bf93ed8f829465737a6daad58dff33e4893ffa50941ec11c396704",
+      "disposition": "archived"
+    },
+    {
+      "source": "specs/001-autonomous-engineering-team/plan.md",
+      "destination": "docs/deprecated/specs/001-autonomous-engineering-team/plan.md",
+      "sha256": "e7cb74af09acf3686bcf1bbe0910ad7f7d4fa5de3144820938085f848076579f",
+      "disposition": "archived"
+    },
+    {
+      "source": "specs/001-autonomous-engineering-team/spec.md",
+      "destination": "docs/deprecated/specs/001-autonomous-engineering-team/spec.md",
+      "sha256": "c2abdbd8703c34c9e6f8083cdab8ce5e0746162d19f8175598dffbac70017f15",
+      "disposition": "archived"
+    },
+    {
+      "source": "specs/001-autonomous-engineering-team/tasks.md",
+      "destination": "docs/deprecated/specs/001-autonomous-engineering-team/tasks.md",
+      "sha256": "d5de2bd25f7da1837f9b16a315f197f0e85616e60b60f05c8a691d2a561056ba",
+      "disposition": "archived"
+    },
+    {
+      "source": "docs/architecture/findings/agent-architecture-audit.json",
+      "destination": "docs/deprecated/docs/architecture/findings/agent-architecture-audit.json",
+      "sha256": "d0156204452d5825b0ad47e439be08f09ba953ec9ee6013f011c9c638abaf938",
+      "disposition": "archived"
+    }
+  ],
+  "retained": [
+    {
+      "path": "evaluation/benchmarks/multistack/cases/ingresos.md",
+      "sha256": "a43940f120f334ae681580bdf20aa7f62ef2122ca4113178fc130b4f48d88550",
+      "role": "benchmark-input"
+    },
+    {
+      "path": "evaluation/benchmarks/multistack/cases/interview.md",
+      "sha256": "aaa20375d32865bede4f27500fb1fead4ce22e85662877900baf2dcc258c3185",
+      "role": "benchmark-input"
+    },
+    {
+      "path": "evaluation/benchmarks/multistack/cases/northgate.md",
+      "sha256": "2fc41c9c4db0afe6916384c3e9ae1e5d892bb82d9babbc99d79102a5c5752b46",
+      "role": "benchmark-input"
+    },
+    {
+      "path": "knowledge/api-design-guidelines.md",
+      "sha256": "6e20d793bda5bc89b2118191b08c56fc411d1ad28075b33785e0b139def97d8c",
+      "role": "rag-input"
+    },
+    {
+      "path": "knowledge/architecture-guidelines.md",
+      "sha256": "f792cee4d23a29579db0ef5091190f9eb5957c11d5119faf4e7c4077feeba962",
+      "role": "rag-input"
+    },
+    {
+      "path": "knowledge/coding-standards.md",
+      "sha256": "55c344f15806707c4e0d0d6b1ab4d198262f1c6e9a5d24c081eb32234a30c719",
+      "role": "rag-input"
+    },
+    {
+      "path": "knowledge/owasp-api-security.md",
+      "sha256": "117ef06348fd1226dd24e463c662e1e5d986c9a3818b9e726cf239b333033ba3",
+      "role": "rag-input"
+    },
+    {
+      "path": "knowledge/security-guidelines.md",
+      "sha256": "993be107e87770b61eca0303baeb346db94161a5bf1a71bb9366bf41e7ab716d",
+      "role": "rag-input"
+    },
+    {
+      "path": "knowledge/testing-strategy.md",
+      "sha256": "a7f3d3ef3046317f18aba039abfe3026f1660bf4229c1ea5058bee344a347764",
+      "role": "rag-input"
+    },
+    {
+      "path": "src/engineering_team/prompts/architecture/system.md",
+      "sha256": "70dcf16d345a6415927fc8288cc78f0a64e98f6e10f9fbe97c3d6032c9ee33b6",
+      "role": "runtime-system-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/architecture/user.md",
+      "sha256": "e89af960044061437b7c8dd413a4f36ba4136c976ce7db8f92984fea6ded8709",
+      "role": "unresolved-user-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/developer/system.md",
+      "sha256": "f8a5f30188bfa71a12244653575c9ec0f1c9ef357940a4a7a8275f3ac9d12272",
+      "role": "runtime-system-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/developer/user.md",
+      "sha256": "b06db495289dd908f948b51503980b67cc51444b60f23cf0b133f6db1f798f6f",
+      "role": "unresolved-user-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/product/system.md",
+      "sha256": "2cf292e7d5b881ae78f1b0599e2446a64e9387b01d234de430bb7294f35ba5b0",
+      "role": "runtime-system-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/product/user.md",
+      "sha256": "3df490d1228aad3be7bcdfb6bd6cadcb0bc6cc0f54a9d08874cec2686fd253b7",
+      "role": "unresolved-user-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/reviewer/system.md",
+      "sha256": "1de7168719d63ed7a37a141363dc52970ee687e15812314010d660f8f8547854",
+      "role": "runtime-system-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/reviewer/user.md",
+      "sha256": "d6708eee75f8c8ddcb88f9511c08f4ba198a0e2ad5eed2e6dce443418d8f5783",
+      "role": "unresolved-user-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/security/system.md",
+      "sha256": "310fd5f6aea8f428c21ef99a8ff19f18790abda2dcb379b549b8b4139a4a4db9",
+      "role": "runtime-system-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/security/user.md",
+      "sha256": "61110821d4b7ff4e0682be4f24230cd355c9806f8732d2b8b6874bf61b4fd717",
+      "role": "unresolved-user-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/testing/system.md",
+      "sha256": "90b6059c3efd5dd50526e41582079e0043745fd562ea3b1bc9e56dd48bc1f591",
+      "role": "runtime-system-prompt"
+    },
+    {
+      "path": "src/engineering_team/prompts/testing/user.md",
+      "sha256": "61110821d4b7ff4e0682be4f24230cd355c9806f8732d2b8b6874bf61b4fd717",
+      "role": "unresolved-user-prompt"
+    },
+    {
+      "path": "demo-projects/banca-demo/README.md",
+      "sha256": "f56cfc8670a5f60cb2b97cbae4c654e3724021af224c1c7a336bdc15fd074022",
+      "role": "demo-case-input",
+      "decision": "User confirmed retaining the operational README at its original path without extracting the cases."
+    }
+  ],
+  "schema_version": 1,
+  "date": "2026-09-08",
+  "description": "Approved documentation retirement; archive hashes are immutable originals. Retained hashes record migration-time preservation, not a ban on future authorized runtime changes."
+}

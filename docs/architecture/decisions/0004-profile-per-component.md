@@ -69,9 +69,9 @@ measured against.
 
 Component detection is cheap and total, which makes it a better repository
 summary than what Architecture reads today. That is a hint about
-[finding 8](../findings/README.md), not a fix for it.
+finding 8, not a fix for it.
 
 A directory with a manifest is not always a component worth building — vendored
 dependencies and example directories also carry manifests. Detection needs the
 same exclusion discipline the repository listing already learned in
-[finding 4](../findings/README.md).
+finding 4.

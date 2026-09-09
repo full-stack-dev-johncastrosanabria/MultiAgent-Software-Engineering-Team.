@@ -1,0 +1,286 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-08",
+  "archived": [
+    {
+      "source": ".specify/extensions/.registry",
+      "destination": "docs/deprecated/.specify/extensions/.registry",
+      "sha256": "cfb14c3da3e2af1ae24e67d2d932e80fcc7d1baba92c8a5526307cb118379a26",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/README.md",
+      "destination": "docs/deprecated/.specify/extensions/git/README.md",
+      "sha256": "38c0140b7804028cf0d212a29b930c9183f4eec7dcaf3ebc4af080653e290924",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.commit.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.commit.md",
+      "sha256": "445ed4cd43c8e685de294b68c841b8f15e082f7033f74b042feddd59edf7779c",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.feature.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.feature.md",
+      "sha256": "8e5788984c7423ecf9cbb984cca8043c2f35f28987c955f6a999154fe8d4059a",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.initialize.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.initialize.md",
+      "sha256": "07bf0e1a9fc251482774141be5a903cbeb018f90cb66b2d29a5fff7f0bd3ecb7",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.remote.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.remote.md",
+      "sha256": "00397aff45bf00d3111b4f162e4220fd5a9020e72e4afe9179859c21bcd8aac3",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/commands/speckit.git.validate.md",
+      "destination": "docs/deprecated/.specify/extensions/git/commands/speckit.git.validate.md",
+      "sha256": "d8f8e5ecc52e819749f355b6dd1ad8400e9b1dfe03882a12c0d2369530f1f083",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/config-template.yml",
+      "destination": "docs/deprecated/.specify/extensions/git/config-template.yml",
+      "sha256": "d07938ce94303be1c8afac77d4b0ea84654f811490850e744f8ee3021b59f8e3",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/extension.yml",
+      "destination": "docs/deprecated/.specify/extensions/git/extension.yml",
+      "sha256": "9731aa8143a72fbebfdb440f155038ab42642517c2b2bdbbf67c8fdbe076ed79",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/git-config.yml",
+      "destination": "docs/deprecated/.specify/extensions/git/git-config.yml",
+      "sha256": "d07938ce94303be1c8afac77d4b0ea84654f811490850e744f8ee3021b59f8e3",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/scripts/bash/auto-commit.sh",
+      "destination": "docs/deprecated/.specify/extensions/git/scripts/bash/auto-commit.sh",
+      "sha256": "e12ff0e010c8891bbe7445950ea00a49ef7e0b387b050e382fed57bd09d0c8bc",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/scripts/bash/create-new-feature.sh",
+      "destination": "docs/deprecated/.specify/extensions/git/scripts/bash/create-new-feature.sh",
+      "sha256": "373ff6e1a232bbf383b29d7994eea90f0113931583dcd6496289885136e24182",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/scripts/bash/git-common.sh",
+      "destination": "docs/deprecated/.specify/extensions/git/scripts/bash/git-common.sh",
+      "sha256": "5d2451b6c4ceee67e0f1b524e1ef1e4114cc08ccb173b5c2908fb031c540d7e5",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/scripts/bash/initialize-repo.sh",
+      "destination": "docs/deprecated/.specify/extensions/git/scripts/bash/initialize-repo.sh",
+      "sha256": "34624e18854106bb793b0baeff9f6e8e4e9da39aa4ea443195fd745d3bdb8b6d",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/scripts/powershell/auto-commit.ps1",
+      "destination": "docs/deprecated/.specify/extensions/git/scripts/powershell/auto-commit.ps1",
+      "sha256": "d74d67ffab73485c3ba208a6389fe9a325c0bb8d90d31f5d490555e11910e7f9",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/scripts/powershell/create-new-feature.ps1",
+      "destination": "docs/deprecated/.specify/extensions/git/scripts/powershell/create-new-feature.ps1",
+      "sha256": "e04167c21ca0e1ad77f065553ee07107ff0475f205fa7417e352094315f95e5f",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/scripts/powershell/git-common.ps1",
+      "destination": "docs/deprecated/.specify/extensions/git/scripts/powershell/git-common.ps1",
+      "sha256": "ebb2bf88d6504ff648176cf8c9c739aa24b8d3fe17d57bcc44d4dc854b51bfee",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions/git/scripts/powershell/initialize-repo.ps1",
+      "destination": "docs/deprecated/.specify/extensions/git/scripts/powershell/initialize-repo.ps1",
+      "sha256": "bb2660d4bdf35e8202db9eb78ab0b4ba226ddf35e08f101ab26f247fb0f39f65",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/extensions.yml",
+      "destination": "docs/deprecated/.specify/extensions.yml",
+      "sha256": "87ad9c3f6ecf5790ff378fae08d7b7d9859edbf149817a0cfdd8ea723f535dda",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/init-options.json",
+      "destination": "docs/deprecated/.specify/init-options.json",
+      "sha256": "c8f995243a56278e7e515d9592487805e89c5f7489fac8a71b60768a51f695f5",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/integration.json",
+      "destination": "docs/deprecated/.specify/integration.json",
+      "sha256": "ad3a10483f765933924cb714e7fe269ff1c2b6c6d4b879161044797fde1c16b3",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/integrations/.cache/catalog-3ef71b1cc239a1c0-metadata.json",
+      "destination": "docs/deprecated/.specify/integrations/.cache/catalog-3ef71b1cc239a1c0-metadata.json",
+      "sha256": "a2af6680f76e4a96d44f80c82cb44b2320f40dec57ccfb4857e400c187ca32fc",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/integrations/.cache/catalog-3ef71b1cc239a1c0.json",
+      "destination": "docs/deprecated/.specify/integrations/.cache/catalog-3ef71b1cc239a1c0.json",
+      "sha256": "dfc2d9a709c1710c75085da3e49284786a96d2ce56bab96a6ec2f61769aeff19",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/integrations/.cache/catalog-67d04329c6a0400d-metadata.json",
+      "destination": "docs/deprecated/.specify/integrations/.cache/catalog-67d04329c6a0400d-metadata.json",
+      "sha256": "d73035cc913199babcff80afb6ff62b10a8355bb2f5bc1da79546ba4f5c73599",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/integrations/.cache/catalog-67d04329c6a0400d.json",
+      "destination": "docs/deprecated/.specify/integrations/.cache/catalog-67d04329c6a0400d.json",
+      "sha256": "fe79e7d771e9094454445183a544de1a10349e3a5076d5f04fdccd2cb43bdaff",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/integrations/copilot.manifest.json",
+      "destination": "docs/deprecated/.specify/integrations/copilot.manifest.json",
+      "sha256": "18f2095be5081763aa84cb1b1118194d2776dbffe7d632a3b561470c6de92d24",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/integrations/speckit.manifest.json",
+      "destination": "docs/deprecated/.specify/integrations/speckit.manifest.json",
+      "sha256": "5284bf9b213a0c544f035c5400d6f0f07876e6340836aead8c3117b6c122b047",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/memory/constitution.md",
+      "destination": "docs/deprecated/.specify/memory/constitution.md",
+      "sha256": "c7c16d91491794c3e33542b23713e5ce0e60785b0a5030f37c9a3c7ab3616fcc",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/scripts/powershell/check-prerequisites.ps1",
+      "destination": "docs/deprecated/.specify/scripts/powershell/check-prerequisites.ps1",
+      "sha256": "bcb37804b0757c37799b65a9321c1d3fb7b7ddcab6703c55c5b9a142c9166bf1",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/scripts/powershell/common.ps1",
+      "destination": "docs/deprecated/.specify/scripts/powershell/common.ps1",
+      "sha256": "916b3ea1e29ef626a353f0ec011f906c6afff6818a97d560a0321b8557d970ec",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/scripts/powershell/create-new-feature.ps1",
+      "destination": "docs/deprecated/.specify/scripts/powershell/create-new-feature.ps1",
+      "sha256": "84227d4cde2af8ae7c854a2cbfb9145325cfce1be67f8018a63febcff8b1a272",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/scripts/powershell/setup-plan.ps1",
+      "destination": "docs/deprecated/.specify/scripts/powershell/setup-plan.ps1",
+      "sha256": "bcd5391f3b36c639d87c2b20944874becb62365a26291a06fff97212cd471637",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/scripts/powershell/setup-tasks.ps1",
+      "destination": "docs/deprecated/.specify/scripts/powershell/setup-tasks.ps1",
+      "sha256": "aa7b19077dc4f6feee1dae47f68dc3e6d8ac75adf572a949443f3322b753cfa2",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/templates/checklist-template.md",
+      "destination": "docs/deprecated/.specify/templates/checklist-template.md",
+      "sha256": "c37695297e5d3153d64f82c21223509940b13932046c7961c42d1d669516130c",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/templates/constitution-template.md",
+      "destination": "docs/deprecated/.specify/templates/constitution-template.md",
+      "sha256": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/templates/plan-template.md",
+      "destination": "docs/deprecated/.specify/templates/plan-template.md",
+      "sha256": "cc7f7979cf8d8836ec26492785affd80791d3422a2b745062ec695be8c985ef7",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/templates/spec-template.md",
+      "destination": "docs/deprecated/.specify/templates/spec-template.md",
+      "sha256": "3945437fc35cd30a5b2bf7beea680337c3516826d3efa5a6b92c4a7eca1ba28e",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/templates/tasks-template.md",
+      "destination": "docs/deprecated/.specify/templates/tasks-template.md",
+      "sha256": "fc29a233f6f5a27ca31f1aa46b596af6500c627441c6e62b2bc4a1d721525842",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/workflows/speckit/workflow.yml",
+      "destination": "docs/deprecated/.specify/workflows/speckit/workflow.yml",
+      "sha256": "30862b06e500cf482819b8b8db31de86a9d621633110692598e806ba0407b3d1",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    },
+    {
+      "source": ".specify/workflows/workflow-registry.json",
+      "destination": "docs/deprecated/.specify/workflows/workflow-registry.json",
+      "sha256": "ace8e00081a3955251072f2916f345431c5c30b72ff692adf29a9d5d9d82a1c2",
+      "disposition": "archived",
+      "reason": "SpecKit installation retired by explicit user approval."
+    }
+  ]
+}

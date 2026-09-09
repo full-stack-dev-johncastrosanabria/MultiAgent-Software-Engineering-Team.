@@ -1,10 +1,8 @@
 """What a stack profile attaches to.
 
-A component is a directory that carries a build manifest. See
-`docs/architecture/decisions/0004-profile-per-component.md` for why this is not a
-property of the repository: of the six repositories this system is meant to be
-pointed at, none is a single stack, and one of them is Java across seven Maven
-modules plus a Python service plus a React frontend.
+A component is a directory that carries a build manifest. Stack profiles attach
+to components rather than the repository as a whole. The current module map is
+in `docs/architecture/overview.md`.
 
 Detection is the existence of a file and nothing else. It has to stay that way:
 asking a model which stack a directory is would make a routing decision depend on

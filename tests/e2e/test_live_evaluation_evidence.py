@@ -3,8 +3,8 @@ from pathlib import Path
 
 
 def test_five_scenario_live_evidence_uses_real_local_models_and_fixed_outcomes() -> None:
-    scenarios_path = Path("evaluation/reports/scenarios-live.json")
-    aggregate_path = Path("evaluation/reports/aggregate-live.json")
+    scenarios_path = Path("evaluation/reports/curated/scenarios-live.json")
+    aggregate_path = Path("evaluation/reports/curated/aggregate-live.json")
 
     assert scenarios_path.exists(), "run: python scripts/run_evaluation.py --live-models"
     assert aggregate_path.exists(), "run: python scripts/run_evaluation.py --live-models"

@@ -36,7 +36,7 @@ removing it removes the reason a human is in the loop.
 
 **Merge automatically when the evidence gates pass.** The gates are good enough
 to reject work, which is not the same as being good enough to accept it
-unattended. [Finding 7](../findings/README.md) is the example: the gates caught a
+unattended. Finding 7 is the example: the gates caught a
 rewrite that had deleted fifteen symbols, and they caught it only because tests
 existed and failed to import.
 
@@ -48,7 +48,7 @@ requests, and it does not need more than that.
 
 **Cloned repositories carry secrets.** Reviewing the six candidate repositories
 turned up a database password committed in an `appsettings.json`. That is exactly
-what [finding 2](../findings/README.md) excluded manifests for, and it now
+what finding 2 excluded manifests for, and it now
 arrives over the network from repositories nobody on this side audited. Evidence
 exclusion is no longer a nicety.
 

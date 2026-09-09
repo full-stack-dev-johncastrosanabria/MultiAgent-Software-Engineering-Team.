@@ -13,7 +13,7 @@ _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
-    """Settings with local-first safe defaults required by the SDD contracts."""
+    """Class defaults are the offline-safe profile; `.env` selects the operating policy."""
 
     model_config = SettingsConfigDict(env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 

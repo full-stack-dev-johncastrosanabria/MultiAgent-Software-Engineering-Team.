@@ -1158,8 +1158,8 @@ class QualityMCP:
             target = (
                 "app" if (self.root / "app").is_dir()
                 else (
-                    "sample_app/app"
-                    if (self.root / "sample_app" / "app").is_dir()
+                    "demo-projects/sample_app/app"
+                    if (self.root / "demo-projects" / "sample_app" / "app").is_dir()
                     else "."
                 )
             )

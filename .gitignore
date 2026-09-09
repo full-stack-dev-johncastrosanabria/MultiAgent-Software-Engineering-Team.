@@ -15,7 +15,7 @@ workspace/evaluation/
 workspace/*.log
 rag/chroma/
 langfuse-local/
-evaluation/reports/traces/
+evaluation/reports/generated/
 evaluation/reports/ui-audit-*
 .worktrees/
 .DS_Store
@@ -25,11 +25,19 @@ DESIGN.md
 PROJECT_STATE.md
 .claude/
 .github/
-CLAUDE.md
-AGENTS.md
 .superpowers/
 .specify/
 .ruff_cache/
 specs/
 scripts/handoff.py
 .codex/
+.serena/
+# Herramientas de agente instaladas por el operador: .agents/skills y su manifiesto.
+.agents/
+skills-lock.json
+
+# Keep the approved historical archive versioned, including former hidden trees.
+!/docs/deprecated/
+!/docs/deprecated/**
+
+.rembric

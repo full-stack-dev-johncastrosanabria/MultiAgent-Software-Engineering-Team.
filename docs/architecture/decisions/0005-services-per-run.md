@@ -69,7 +69,7 @@ which is the first state the container runner has to hold across commands.
 **A service failure must not be reported as a test failure.** If the database
 never starts, the tests fail, and a gate reading "tests failed" turns an
 infrastructure problem into a code problem — the misleading headline that made
-[finding 7](../findings/README.md) point at the wrong thing.
+finding 7 point at the wrong thing.
 
 The derived topology is itself a deliverable. A compose file that makes
 NorthgateTollPlaza run without `brew services` is a useful pull request that

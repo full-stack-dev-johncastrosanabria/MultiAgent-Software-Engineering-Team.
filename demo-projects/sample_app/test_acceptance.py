@@ -5,7 +5,7 @@ import pytest
 try:
     from app.service import BankService
 except ModuleNotFoundError:  # Collected from the repository root.
-    from sample_app.app.service import BankService
+    from app.service import BankService
 
 
 def test_password_recovery_is_exactly_fifteen_minutes_and_single_use(tmp_path):

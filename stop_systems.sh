@@ -5,7 +5,7 @@ set -u
 
 stopped=0
 
-for pattern in "uvicorn sample_app.app.main:app" "vite"; do
+for pattern in "uvicorn app.main:app --app-dir" "vite"; do
     pids=$(pgrep -f "$pattern" 2>/dev/null)
     if [ -n "$pids" ]; then
         # shellcheck disable=SC2086
