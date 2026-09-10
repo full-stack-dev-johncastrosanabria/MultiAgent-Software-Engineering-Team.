@@ -79,6 +79,57 @@ para descartarlo, y ninguno de los dos tests fue tocado por este cambio.
 El coste medido de mover las pruebas al contenedor real: `tests/unit` y
 `tests/mcp` pasaron de unos 197 s a unos 227 s.
 
+## Comprobaciones del 2026-09-10 (inventario y limpieza de recursos Docker)
+
+Medidas sobre el host del operador (macOS 27.0 arm64, Docker Desktop), no sobre
+un run controlado. Sustentan las decisiones
+[16](architecture/decisions/0016-every-docker-resource-carries-its-run.md),
+[17](architecture/decisions/0017-the-project-lives-in-the-run.md) y
+[18](architecture/decisions/0018-missing-infrastructure-is-a-blocking-prerequisite.md),
+**ninguna de las cuales está implementada**.
+
+| Medición | Antes | Después de la limpieza |
+|---|---|---|
+| Imágenes | 31 / 9.34 GB | 26 / 8.33 GB |
+| Volúmenes | 36 / 5.12 GB | 1 / 218.8 MB |
+| Contenedores | 4 | 3 |
+| Caché de build | 198 / 10.09 GB | 77 / 1.69 GB |
+| Reclamado | — | ≈ 14.3 GB |
+
+Lo eliminado: el contenedor demonio `aset-dind-run-f0e96bbe25cb`, 22 volúmenes
+anónimos, 10 volúmenes `aset-env-*`, un volumen de compose
+`aset-<run_id>-postgres_data`, 2 imágenes colgantes, 5 imágenes
+`aset-northgate-*`, 3 imágenes `aset/quality-*` y 8.405 GB de caché de build.
+
+Lo deliberadamente **no** eliminado: `icapi-mysql` y su volumen de datos
+(218 MB), porque nada en la máquina permite decidir quién lo creó, y las
+imágenes base que un run vuelve a necesitar.
+
+| Hallazgo | Evidencia |
+|---|---|
+| ASET no etiqueta ningún recurso | `grep -rn -- '--label' src` no devuelve nada |
+| `docker volume prune` sin `-a` no toca volúmenes con nombre | ejecutado: no reclamó ningún `aset-env-*` |
+| `compose down -v --remove-orphans` no borra las imágenes que compose construyó | quedaron 1.6 GB de `aset-northgate-*` tras el `down` |
+| La caché de build no se poda nunca | ningún punto del código la invoca |
+| El grueso del disco son imágenes de ASET, no del operador | 26 imágenes / 8.33 GB, de las que ≈ 7.5 GB corresponden a la ventana de validación multistack (2026-09-05 a 2026-09-07); el operador declara no haber descargado ninguna |
+| `workspace/runs` no se recolecta | 923 MB en 96 directorios de run, ninguno borrado; el mayor 356 MB |
+| Lo que se acumula es salida de build, no fuente | en un trial de `order-ms`: 80 MB de workspace, 79 MB en `target/` |
+| El compose derivado que ASET infiere se descarta | `services.py` lo borra en `down()` con `self._derived_file.unlink(missing_ok=True)` |
+
+**Corrección, 2026-09-10:** en el primer análisis de este día se atribuyeron al
+operador las imágenes `order-ms`, `payment-ms`, `interview-*`,
+`northgatetollplaza-*` y `mcr.microsoft.com/dotnet/sdk:10.0`. El operador
+corrigió que no descargó ninguna, y las fechas de creación coinciden con las
+corridas de validación multistack. La atribución correcta es ASET. El error tuvo
+una causa concreta y es la misma que documenta la decisión 16: **ningún recurso
+lleva marca de quién lo creó**.
+
+Sobre `icapi-mysql`: el operador cree que lo creó ASET durante una prueba del
+proyecto de entrevista, y sus credenciales coinciden con las de
+`InterviewCleanApi`. No es verificable — no tiene etiquetas de compose, así que
+no lo arrancó el camino de la [decisión 5](architecture/decisions/0005-services-per-run.md).
+Se deja intacto por esa razón.
+
 ## Soporte por plataforma
 
 **Corrección del 2026-09-10 ([decisión 15](architecture/decisions/0015-container-only.md)).**
