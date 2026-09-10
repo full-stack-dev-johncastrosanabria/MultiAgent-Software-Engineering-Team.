@@ -1,0 +1,15 @@
+com/prueba/orderms/service/OrderServiceTest.class
+com/prueba/orderms/card/CardBrandResolverTest.class
+com/prueba/orderms/web/GlobalExceptionHandlerTest.class
+com/prueba/orderms/OrderMsApplicationTests.class
+com/prueba/orderms/messaging/OrderPlacedEventTest.class
+com/prueba/orderms/IntegrationTestBase.class
+com/prueba/orderms/crypto/RsaCipherServiceTest.class
+com/prueba/orderms/card/LuhnValidatorTest.class
+com/prueba/orderms/web/CryptoControllerTest$CifradorDePrueba.class
+com/prueba/orderms/OrderFlowIntegrationTest.class
+com/prueba/orderms/domain/OrderTest.class
+com/prueba/orderms/service/OrderServiceStatusTest.class
+com/prueba/orderms/web/CryptoControllerTest.class
+com/prueba/orderms/observability/CorrelationIdFilterTest.class
+com/prueba/orderms/web/OrderControllerTest.class
