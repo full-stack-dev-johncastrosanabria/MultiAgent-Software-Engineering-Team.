@@ -20,11 +20,12 @@ belongs to [status](../../status.md).
 | [7](0007-declared-coverage-decides-remediation.md) | A stage declares what it could not see, and the router believes the count | accepted |
 | [8](0008-security-evidence-per-stack.md) | Security evidence belongs to the component toolchain | accepted |
 | [9](0009-real-multistack-validation.md) | Validate infrastructure before expanding model tasks | accepted |
-| [10](0010-integration-tests-need-the-host-docker-api.md) | Integration tests run under the process sandbox, not the container runner | accepted |
+| [10](0010-integration-tests-need-the-host-docker-api.md) | Integration tests run under the process sandbox, not the container runner | superseded by [15](0015-container-only.md) |
 | [11](0011-the-operator-states-which-tests-the-gate-runs.md) | The operator states which tests the gate runs | accepted |
 | [12](0012-a-started-database-is-not-a-prepared-one.md) | A started database is not a prepared one | accepted |
 | [13](0013-a-prompt-is-redacted-before-it-is-refused.md) | A prompt is redacted before it is refused | accepted |
 | [14](0014-a-docker-api-that-is-not-the-hosts.md) | The run gets a Docker API that is not the host's | accepted |
+| [15](0015-container-only.md) | The process sandbox is retired: the container is the only boundary | accepted |
 
 A decision here outranks the same claim made anywhere untracked. When they
 disagree, this directory is right and the other file is stale.
@@ -51,12 +52,13 @@ flowchart LR
     A12["ADR 12<br/>prepared schema"]
     A13["ADR 13<br/>redact before refuse"]
     A14["ADR 14<br/>run-scoped Docker API"]
+    A15["ADR 15<br/>container-only"]
   end
 
   subgraph M["Modules"]
     ST["stacks.py<br/>StackProfile"]
     QU["mcp/quality.py<br/>QualityMCP"]
-    RU["mcp/runner.py<br/>CommandRunner"]
+    RU["mcp/command.py<br/>CommandRunner"]
     SV["services.py<br/>ServiceStack"]
     DE["delivery.py<br/>GitDelivery"]
     CO["contracts/<br/>evidence_sufficient"]
@@ -89,6 +91,8 @@ flowchart LR
   A13 --> GU
   A14 --> CN
   A14 --> SV
+  A15 --> CN
+  A15 --> RU
 ```
 
 ## About the "finding N" references

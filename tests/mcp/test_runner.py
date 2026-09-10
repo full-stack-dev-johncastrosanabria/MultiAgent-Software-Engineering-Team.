@@ -10,19 +10,14 @@ from __future__ import annotations
 import dataclasses
 import json
 import subprocess
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
+from engineering_team.mcp.command import CommandRequest, CommandRunner
 from engineering_team.mcp.quality import QualityMCP
-from engineering_team.mcp.runner import (
-    CommandRequest,
-    CommandRunner,
-    ProcessRunner,
-)
 from engineering_team.stacks import profile_for
 
 
@@ -73,14 +68,6 @@ class NoPythonRecordingRunner(RecordingRunner):
         raise AssertionError("a non-Python security operation prepared Python")
 
 
-def test_process_runner_stands_alone_without_quality() -> None:
-    """The sandbox no longer needs a QualityMCP to exist."""
-    runner = ProcessRunner(Path.cwd())
-    assert isinstance(runner, CommandRunner)
-    assert runner.environment is None
-    assert runner.closing is False
-    runner.close()
-    assert runner.closing is True
 
 
 def test_recording_runner_satisfies_the_interface() -> None:
@@ -322,46 +309,5 @@ def test_quality_refuses_when_the_runner_reports_no_boundary() -> None:
     assert runner.requests == []
 
 
-@pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"), reason="sandbox backend is host-specific"
-)
-def test_process_runner_still_runs_a_real_command(tmp_path: Path) -> None:
-    """The extraction kept a working runner, not just the shape of one."""
-    runner = ProcessRunner(tmp_path)
-    runner.environment = tmp_path
-    completed = runner.execute(
-        CommandRequest(
-            args=("/bin/echo", "bounded"),
-            cwd=tmp_path,
-            deadline=time.monotonic() + 30,
-        )
-    )
-    assert completed.returncode == 0
-    assert "bounded" in completed.stdout
-    runner.close()
 
 
-@pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"), reason="sandbox backend is host-specific"
-)
-def test_process_runner_still_denies_reads_outside_its_roots(tmp_path: Path) -> None:
-    """The boundary survived the move.
-
-    `sys.executable` is the operator's own virtual environment, outside the
-    workspace and the ephemeral environment the runner grants. Launching it must
-    fail on its own configuration file rather than start an interpreter that can
-    see the operator's site-packages.
-    """
-    runner = ProcessRunner(tmp_path)
-    runner.environment = tmp_path
-    completed = runner.execute(
-        CommandRequest(
-            args=(sys.executable, "-c", "print('escaped')"),
-            cwd=tmp_path,
-            deadline=time.monotonic() + 30,
-        )
-    )
-    assert completed.returncode != 0
-    assert "escaped" not in completed.stdout
-    assert "not permitted" in completed.stderr.lower()
-    runner.close()

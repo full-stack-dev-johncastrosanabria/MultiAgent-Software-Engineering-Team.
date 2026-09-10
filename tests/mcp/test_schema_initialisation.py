@@ -15,9 +15,13 @@ import pytest
 
 from engineering_team.components import migration_projects
 from engineering_team.contracts.enums import AgentRole, ToolStatus
+from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.quality import QualityMCP
-from engineering_team.mcp.runner import ProcessRunner
 from engineering_team.stacks import profile_for
+
+# These tests patch the command executor, so the runner only has to be the
+# boundary the gate would really use. The digest never has to resolve.
+PINNED = "python@sha256:" + "0" * 64
 
 
 def _dotnet_tree() -> list[str]:
@@ -96,7 +100,7 @@ def test_a_schema_that_will_not_apply_is_infrastructure_not_a_failing_test(
     clothes sends the next cycle after the wrong thing.
     """
     root = _project(tmp_path)
-    quality = QualityMCP(root, runner=ProcessRunner(root), profile=profile_for("dotnet"))
+    quality = QualityMCP(root, runner=ContainerRunner(root, image=PINNED), profile=profile_for("dotnet"))
     monkeypatch.setattr(
         QualityMCP,
         "_execute_process",
@@ -119,7 +123,7 @@ def test_every_declared_command_runs_in_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _project(tmp_path)
-    quality = QualityMCP(root, runner=ProcessRunner(root), profile=profile_for("dotnet"))
+    quality = QualityMCP(root, runner=ContainerRunner(root, image=PINNED), profile=profile_for("dotnet"))
     seen: list[list[str]] = []
 
     def record(self, args, **kwargs):
@@ -140,7 +144,7 @@ def test_a_stack_without_migrations_does_no_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _project(tmp_path)
-    quality = QualityMCP(root, runner=ProcessRunner(root), profile=profile_for("jvm"))
+    quality = QualityMCP(root, runner=ContainerRunner(root, image=PINNED), profile=profile_for("jvm"))
     monkeypatch.setattr(
         QualityMCP,
         "_execute_process",
@@ -176,7 +180,7 @@ def test_the_schema_is_applied_after_the_services_and_before_any_phase(
     root = _project(tmp_path)
     services = _Services()
     quality = QualityMCP(
-        root, runner=ProcessRunner(root), profile=profile_for("dotnet"),
+        root, runner=ContainerRunner(root, image=PINNED), profile=profile_for("dotnet"),
         services=services,
     )
     order: list[str] = []
@@ -199,7 +203,7 @@ def test_a_project_that_declares_no_services_is_not_migrated(
 ) -> None:
     """No database was started, so there is nothing to bring up to date."""
     root = _project(tmp_path)
-    quality = QualityMCP(root, runner=ProcessRunner(root), profile=profile_for("dotnet"))
+    quality = QualityMCP(root, runner=ContainerRunner(root, image=PINNED), profile=profile_for("dotnet"))
     monkeypatch.setattr(
         QualityMCP,
         "_apply_schema",

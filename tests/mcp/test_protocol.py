@@ -10,6 +10,21 @@ from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.mcp.client import MCPQualityClient, MCPRepositoryClient
 
 
+def _declare_interpreter(root: Path) -> None:
+    """Give a synthetic project the pin the container image derives from.
+
+    The default runner is the container (ADR 14), and an image follows what the
+    project's pins publish (ADR 2). A bare directory declares nothing, so the
+    run refuses rather than guessing an interpreter -- correct for a real
+    project, and something a fixture has to supply.
+    """
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "fixture"\nversion = "0"\n'
+        'requires-python = ">=3.13,<3.14"\n',
+        encoding="utf-8",
+    )
+
+
 def test_mcp_server_bootstrap_is_isolated_from_project_cwd(tmp_path: Path) -> None:
     """Isolation is `-I` and a cwd of our own, whatever shape the launch takes.
 
@@ -38,7 +53,6 @@ def test_mcp_server_runs_the_same_source_tree_as_its_parent(
     described only the parent.
     """
     import engineering_team
-
     from engineering_team.mcp.client import _parent_aset_src
 
     expected = Path(engineering_team.__file__).resolve().parents[1]
@@ -97,6 +111,7 @@ def test_repository_search_code_excludes_secret_paths_over_real_protocol(tmp_pat
 
 
 def test_quality_run_tests_executes_through_real_stdio_mcp_session(tmp_path: Path) -> None:
+    _declare_interpreter(tmp_path)
     (tmp_path / "test_failure.py").write_text(
         "def test_failure():\n    assert False\n", encoding="utf-8"
     )
@@ -118,6 +133,7 @@ def test_quality_getters_preserve_results_in_one_real_stdio_session(tmp_path: Pa
         "def test_ok():\n    assert True\n", encoding="utf-8"
     )
     (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    _declare_interpreter(tmp_path)
 
     with MCPQualityClient(tmp_path) as client:
         executed_tests = client.run_tests(AgentRole.TESTING, ["test_ok.py"])

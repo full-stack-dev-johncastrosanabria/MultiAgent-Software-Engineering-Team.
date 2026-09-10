@@ -78,7 +78,7 @@ class _MCPStdioClient:
                 "--kind", self.kind,
                 "--root", str(self.root), "--timeout", str(self.timeout_seconds),
                 # Explicit, because the SDK gives the child almost no environment.
-                "--runner", getattr(self.settings, "quality_runner", None) or "process",
+                "--runner", getattr(self.settings, "quality_runner", None) or "container",
                 "--image", getattr(self.settings, "quality_container_image", None) or "",
                 "--run-daemon-image",
                 getattr(self.settings, "quality_run_daemon_image", "") or "",

@@ -24,15 +24,24 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from engineering_team.mcp.run_daemon import RunDaemon
-from engineering_team.mcp.runner import (
+from engineering_team.mcp.command import (
     _OUTPUT_LIMIT,
     CommandRequest,
     _BoundedOutput,
     _remaining,
 )
+from engineering_team.mcp.run_daemon import RunDaemon
 
-WORKSPACE_MOUNT = PurePosixPath("/aset/workspace")
+# The leaf name is deliberately not a valid Python identifier. Mounted at
+# /aset/workspace, a project whose root carries an `__init__.py` was read by
+# pytest as a package: collection walked up to /aset, imported the suite as
+# `workspace.test_x`, and the project's own modules stopped being importable --
+# the sample application's own tests failed on `from app.service import ...`.
+# On the host the same tree collected only because a run directory is named
+# after a run id and never spells a package. The run has to see the project the
+# way a developer standing in its root does, so the mount refuses to be a
+# package name.
+WORKSPACE_MOUNT = PurePosixPath("/aset/project-root")
 ENVIRONMENT_MOUNT = PurePosixPath("/aset/env")
 
 _DIGEST_PINNED = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")

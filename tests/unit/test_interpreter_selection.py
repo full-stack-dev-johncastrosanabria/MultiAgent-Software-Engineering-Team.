@@ -143,3 +143,30 @@ def test_an_index_that_cannot_be_reached_does_not_invent_a_version(tmp_path) -> 
 
     (tmp_path / "requirements.txt").write_text("pandas==2.1.4\n", encoding="utf-8")
     assert select_interpreter(tmp_path, fetch=unreachable) is None
+
+
+def test_an_open_ended_floor_picks_an_interpreter_a_run_can_supply(tmp_path) -> None:
+    """`>=3.10` is a floor, not a claim that 3.15 was tested.
+
+    Reading it as the latter derived a version no image carries, and the run
+    refused before it started -- this repository's own declaration is `>=3.10`.
+    """
+    from engineering_team.interpreter import PYTHON_IMAGES, select_interpreter
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nrequires-python = ">=3.10"\n', encoding="utf-8"
+    )
+    chosen = select_interpreter(tmp_path, fetch=_fake_index({}))
+    assert chosen == max(PYTHON_IMAGES)
+
+
+def test_a_declaration_that_admits_no_offered_image_is_not_widened(tmp_path) -> None:
+    """The range stays authoritative: nothing outside it is ever chosen."""
+    from engineering_team.interpreter import PYTHON_IMAGES, select_interpreter
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nrequires-python = ">=3.8,<3.9"\n', encoding="utf-8"
+    )
+    chosen = select_interpreter(tmp_path, fetch=_fake_index({}))
+    assert chosen == (3, 8)
+    assert chosen not in PYTHON_IMAGES

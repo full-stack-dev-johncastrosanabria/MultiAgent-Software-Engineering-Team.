@@ -18,18 +18,15 @@ from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole, ErrorCode, ToolStatus
 from engineering_team.contracts.models import ToolResult
 from engineering_team.interpreter import (
+    PYTHON_IMAGES,
     describe_install_failure,
     pinned_requirements,
     python_image,
     python_requirement,
     select_interpreter,
 )
+from engineering_team.mcp.command import CommandRequest, CommandRunner
 from engineering_team.mcp.container import ContainerRunner
-from engineering_team.mcp.runner import (
-    CommandRequest,
-    CommandRunner,
-    ProcessRunner,
-)
 from engineering_team.mcp.test_evidence import collect_test_cases, snapshot_reports
 from engineering_team.stacks import INTERPRETER, StackProfile, profile_for
 
@@ -64,21 +61,22 @@ def build_runner(
     derived from what the project's pins publish (ADR 2, the answer to finding
     11); for every other stack, the pinned image its profile already names
     (ADR 4). An operator who names an image means it, and is not overridden.
+
+    A project that constrains nothing gets the newest interpreter this repository
+    ships an image for. ADR 2 refused here, and that refusal was right while the
+    process sandbox could still run such a project on the operator's own
+    interpreter; with the container as the only boundary it means no gate at all.
+    Finding 11 is not reopened: it was a project whose pins did constrain the
+    choice, and those still decide. Nothing constraining the choice is not the
+    same as the choice being impossible.
     """
     choice = settings.quality_runner
-    if choice == "process":
-        return ProcessRunner(root)
     if choice == "container":
         image = settings.quality_container_image
         if not image:
             if settings.quality_stack == "python":
                 chosen = (interpreter or select_interpreter)(root)
-                if chosen is None:
-                    raise ValueError(
-                        "no container image is configured and none could be "
-                        "derived from this project; set quality_container_image"
-                    )
-                image = python_image(chosen)
+                image = python_image(chosen or max(PYTHON_IMAGES))
             else:
                 try:
                     image = profile_for(settings.quality_stack).image
@@ -174,12 +172,11 @@ class QualityMCP:
         self._project_result: ToolResult | None = None
         self._prepared_tools: set[str] = set()
         self._python: str | None = None
-        # An explicitly supplied runner always wins. Without settings the process
-        # sandbox is used, so constructing a QualityMCP directly does not depend on
-        # whatever .env happens to hold on this machine.
-        self._runner: CommandRunner = runner or (
-            build_runner(self.root, settings) if settings is not None
-            else ProcessRunner(self.root)
+        # An explicitly supplied runner always wins. Without one the boundary is
+        # whatever configuration names, and configuration names a container by
+        # default (ADR 15): there is no second backend left to fall back to.
+        self._runner: CommandRunner = runner or build_runner(
+            self.root, settings if settings is not None else Settings()
         )
         self._environment_lock = threading.RLock()
         self._mutation_lock = threading.Lock()
@@ -277,8 +274,9 @@ class QualityMCP:
         Testcontainers suite spends the run pulling an image it will never get
         and fails on a `ContainerFetchException` that names neither cause nor
         remedy. It did that three times in one benchmark before anyone read it
-        as a boundary rather than a flake. ADR 10 settles where such a suite
-        runs; saying so before the work starts is the whole point.
+        as a boundary rather than a flake. ADR 14 settles where such a suite
+        runs -- a daemon owned by the run; saying so before the work starts is
+        the whole point.
         """
         if not isinstance(self._runner, ContainerRunner):
             return None
@@ -294,9 +292,11 @@ class QualityMCP:
                 return RuntimeError(
                     f"{self.root.name} declares {marker} in {manifest}, and a "
                     "suite that starts its own containers cannot reach the "
-                    "Docker API from inside the quality container. Run this "
-                    "component with quality_runner=process (ADR 10); mounting "
-                    "the host socket is refused."
+                    "Docker API from inside the quality container. Give this "
+                    "run its own daemon: set quality_run_daemon_image to a "
+                    "digest-pinned dind image and name the suite's images in "
+                    "quality_run_daemon_images (ADR 14). Mounting the host "
+                    "socket is refused."
                 )
         return None
 
@@ -1190,11 +1190,16 @@ class QualityMCP:
         con "Failed to read ... Operation not permitted", Security lo reporta
         como herramienta caida y el Reviewer rechaza por un problema que el
         proyecto no tiene.
+
+        El nombre viaja relativo, no absoluto. Ruff lo resuelve contra el
+        directorio de trabajo, que es la raiz del componente en cualquiera de
+        los dos limites; una ruta del host no existe dentro del contenedor y
+        ruff la rechaza con "invalid value for --config", que el Reviewer lee
+        igual de mal que el error anterior.
         """
         for name in ("ruff.toml", ".ruff.toml", "pyproject.toml"):
-            candidate = self.root / name
-            if candidate.is_file():
-                return ["--config", str(candidate)]
+            if (self.root / name).is_file():
+                return ["--config", name]
         return ["--isolated"]
 
     def run_security_scan(self, role: AgentRole) -> ToolResult:
@@ -1337,7 +1342,7 @@ class CompositeQuality:
         self._backends = list(backends)
         self.last_component_results: list[ToolResult] = []
 
-    def __enter__(self) -> "CompositeQuality":
+    def __enter__(self) -> CompositeQuality:
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

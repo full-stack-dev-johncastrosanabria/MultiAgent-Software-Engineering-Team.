@@ -21,15 +21,22 @@ from engineering_team.components import Component
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole
 from engineering_team.mcp.client import MCPQualityClient
+from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.quality import CompositeQuality
-from engineering_team.mcp.runner import ProcessRunner
+
+PINNED = "python@sha256:" + "0" * 64
 
 
-class _Recorder(ProcessRunner):
-    """Records argv instead of running anything."""
+class _Recorder(ContainerRunner):
+    """Records argv instead of running anything.
+
+    It subclasses the boundary the gate really uses, so what argv this asserts
+    on is what a container would have been handed. Nothing is executed, so the
+    digest never has to resolve.
+    """
 
     def __init__(self, root: Path) -> None:
-        super().__init__(root)
+        super().__init__(root, image=PINNED)
         self.commands: list[list[str]] = []
 
     def require_available(self) -> None:
@@ -136,6 +143,30 @@ def test_multi_maven_and_node_never_invokes_pytest(tmp_path: Path) -> None:
     assert not any("pytest" in part for cmd in recorder.commands for part in cmd)
 
 
+def _stack_flags_for(root: Path, settings: Settings, component) -> dict[str, str]:
+    """The `--stack` / `--component-root` a detected component travels under.
+
+    Since ADR 14 made the container the default, ``open_project_quality`` hands
+    a container run to the infrastructure owner instead of the MCP subprocess,
+    so the argv is no longer reachable through it. What these tests are about --
+    that detection, not a global python default, decides the stack -- lives in
+    the settings the dispatcher copies per component, and those are what the
+    client turns into flags.
+    """
+    adjusted = settings.model_copy(
+        update={
+            "quality_stack": component.stack,
+            "quality_component_path": component.path,
+        }
+    )
+    args = MCPQualityClient(root, timeout_seconds=30, settings=adjusted)._parameters().args
+    return {
+        flag: args[args.index(flag) + 1]
+        for flag in ("--stack", "--component-root")
+        if flag in args
+    }
+
+
 def test_explicit_quality_stack_python_is_not_overridden_by_pom(tmp_path: Path) -> None:
     """Flask sets QUALITY_STACK=python; detection must not steal that choice."""
     (tmp_path / "pom.xml").write_text("<project/>", encoding="utf-8")
@@ -144,21 +175,18 @@ def test_explicit_quality_stack_python_is_not_overridden_by_pom(tmp_path: Path) 
     targets = quality_targets_for(settings, tmp_path)
     assert len(targets) == 1
     assert targets[0].stack == "python"
-    client = open_project_quality(tmp_path, settings, timeout_seconds=30)
-    assert isinstance(client, MCPQualityClient)
-    args = client._parameters().args
-    assert args[args.index("--stack") + 1] == "python"
+    assert _stack_flags_for(tmp_path, settings, targets[0])["--stack"] == "python"
 
 
 def test_single_detected_jvm_component_keeps_mcp_stack_flags(tmp_path: Path) -> None:
     (tmp_path / "order-ms").mkdir()
     (tmp_path / "order-ms" / "pom.xml").write_text("<project/>", encoding="utf-8")
     settings = _settings_without_quality_override()
-    client = open_project_quality(tmp_path, settings, timeout_seconds=30)
-    assert isinstance(client, MCPQualityClient)
-    args = client._parameters().args
-    assert args[args.index("--stack") + 1] == "jvm"
-    assert args[args.index("--component-root") + 1] == "order-ms"
+    targets = quality_targets_for(settings, tmp_path)
+    assert len(targets) == 1
+    flags = _stack_flags_for(tmp_path, settings, targets[0])
+    assert flags["--stack"] == "jvm"
+    assert flags["--component-root"] == "order-ms"
 
 
 def test_unknown_detected_stack_fails_closed(tmp_path: Path, monkeypatch) -> None:

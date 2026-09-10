@@ -12,7 +12,12 @@ from engineering_team.agents.testing import TestingAgent
 from engineering_team.contracts.enums import AgentRole, ReviewerStatus, ToolStatus
 from engineering_team.contracts.models import ToolResult
 from engineering_team.contracts.state import EngineeringState
+from engineering_team.mcp.container import ContainerRunner
 from engineering_team.models.context import build_context
+
+# The role refusals below never execute a command, but constructing a gate still
+# means naming the boundary it would have used. The digest never has to resolve.
+PINNED = "python@sha256:" + "0" * 64
 
 
 def _component_result(component: str, status: ToolStatus) -> ToolResult:
@@ -102,7 +107,7 @@ def test_quality_results_are_anonymous_until_a_component_is_named(tmp_path) -> N
     """Today's default is unchanged, so a single-component run behaves as before."""
     from engineering_team.mcp.quality import QualityMCP
 
-    result = QualityMCP(tmp_path).run_tests(AgentRole.DEVELOPER)  # denied role
+    result = QualityMCP(tmp_path, runner=ContainerRunner(tmp_path, image=PINNED)).run_tests(AgentRole.DEVELOPER)  # denied role
     assert result.evidence_reference is None
 
 
@@ -110,7 +115,7 @@ def test_a_named_component_stamps_every_result_it_produces(tmp_path) -> None:
     """Without this the grouping collapses ten components into one bucket."""
     from engineering_team.mcp.quality import QualityMCP
 
-    quality = QualityMCP(tmp_path, component="ai-service")
+    quality = QualityMCP(tmp_path, runner=ContainerRunner(tmp_path, image=PINNED), component="ai-service")
     denied = quality.run_tests(AgentRole.DEVELOPER)
     assert denied.evidence_reference == "mcp://quality/run_tests#ai-service"
 
@@ -118,6 +123,6 @@ def test_a_named_component_stamps_every_result_it_produces(tmp_path) -> None:
 def test_two_components_do_not_share_a_bucket(tmp_path) -> None:
     from engineering_team.mcp.quality import QualityMCP
 
-    first = QualityMCP(tmp_path, component="api-gateway").run_tests(AgentRole.DEVELOPER)
-    second = QualityMCP(tmp_path, component="ai-service").run_tests(AgentRole.DEVELOPER)
+    first = QualityMCP(tmp_path, runner=ContainerRunner(tmp_path, image=PINNED), component="api-gateway").run_tests(AgentRole.DEVELOPER)
+    second = QualityMCP(tmp_path, runner=ContainerRunner(tmp_path, image=PINNED), component="ai-service").run_tests(AgentRole.DEVELOPER)
     assert first.evidence_reference != second.evidence_reference

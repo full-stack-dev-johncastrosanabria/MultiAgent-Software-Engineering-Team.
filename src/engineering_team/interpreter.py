@@ -216,7 +216,11 @@ def highest_supported(
         common = versions if common is None else (common & versions)
     if not common:
         return None
-    return max(common)
+    # A version-agnostic wheel admits every interpreter considered, including
+    # ones no image carries. Prefer the newest a run can actually supply, and
+    # fall back to the newest admitted so the refusal names a real answer.
+    offered = common & set(PYTHON_IMAGES)
+    return max(offered or common)
 
 
 def python_image(version: tuple[int, int]) -> str:
@@ -231,9 +235,25 @@ def python_image(version: tuple[int, int]) -> str:
 
 
 def _declared_version(requirement: str) -> tuple[int, int] | None:
-    """The single interpreter a declared range actually admits, if only one does."""
+    """The newest interpreter a declared range admits and a run can supply.
+
+    An open-ended floor -- `>=3.10`, what this repository itself declares -- is
+    a floor, not a claim that the newest interpreter in existence was tested.
+    Reading it as the latter made every such project unrunnable the moment the
+    container became the only boundary: the derived version had no image, and
+    the run refused before it started.
+
+    So the range is still authoritative -- nothing outside it is ever chosen --
+    but within it the choice is the newest version a container can actually
+    carry. When the range admits nothing that is offered, the newest admitted
+    version is returned anyway, so the refusal names the version the project
+    asked for rather than one it did not.
+    """
     admitted = [v for v in _CONSIDERED if satisfies(requirement, v)]
-    return max(admitted) if admitted else None
+    if not admitted:
+        return None
+    offered = [v for v in admitted if v in PYTHON_IMAGES]
+    return max(offered) if offered else max(admitted)
 
 
 def select_interpreter(

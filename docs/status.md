@@ -18,7 +18,7 @@ La reorganización de `evaluation/` fue verificada con los tests de multistack, 
 | Revisión final de documentación y demo | Siete tests pasan: seis comprobaciones documentales y lectura de los siete casos de la demo; sin ejecutar la demo |
 | Ayuda CLI | Pasan `--help` y `run-project --help`; no se lanzaron runs |
 | Lint de tests modificados, components y container | Pasa Ruff |
-| Lint de runner | F841 preexistente en `src/engineering_team/mcp/runner.py`: variable `environment` sin usar; reproducido sobre el archivo del commit base |
+| Lint de runner | F841 preexistente en `src/engineering_team/mcp/runner.py`: variable `environment` sin usar; reproducido sobre el archivo del commit base. *Ese archivo ya no existe: eliminado por la [decisión 15](architecture/decisions/0015-container-only.md); la fila queda como registro de lo que se midió entonces* |
 | Higiene del diff | Pasa `git diff --check` |
 | Frontend | No ejecutado; `frontend/node_modules` no está instalado en este worktree |
 | Docker, proveedores de modelos y trials | No ejecutados en esta migración |
@@ -51,34 +51,68 @@ El grupo ejecutado es el comando de backend de [testing](testing.md), junto con 
 
 Se comparó el AST de los tres módulos Python cuyas referencias se corrigieron: su código ejecutable es idéntico al del commit base, excluidos los docstrings de módulo. Los recursos conservados mantienen sus hashes originales. La búsqueda normal `rg --files --hidden` desde la raíz excluye el archivo; las rutas explícitas pueden abrirlo. El grafo también registra `docs/deprecated/` como subárbol excluido.
 
+## Comprobaciones del 2026-09-10 (retirada del sandbox de proceso)
+
+Corresponden a la [decisión 15](architecture/decisions/0015-container-only.md).
+Ejecutadas en macOS 27.0 arm64 con Docker Desktop, en entorno limpio
+(`env -i`) y con el intérprete del venv del repositorio.
+
+| Comprobación | Resultado |
+|---|---|
+| Suite completa `tests/` | 902 tests, 15 omitidos, **2 fallos**, 671.5 s |
+| Los 2 fallos | `test_quality_uses_one_end_to_end_deadline_across_setup_phases` y `test_environment_lock_wait_is_inside_operation_deadline`, ambos en `tests/mcp/test_quality.py` |
+| Los mismos 2, aislados | Pasan |
+| Módulo `tests/mcp` completo | 239 tests, 15 omitidos, **0 fallos**, 199.8 s |
+| Contrato documental | 7 tests pasan, incluidos enlaces locales activos |
+| Ruff sobre los archivos modificados | Un único hallazgo, `PYI034` en `CompositeQuality.__enter__`, **preexistente**: se reproduce al revertir el cambio |
+| Higiene del diff | Pasa `git diff --check` |
+
+**Los dos fallos son afirmaciones de reloj de pared, no de comportamiento.**
+Uno exige que una operación termine en menos de 0.12 s y midió 0.67 s; el otro
+depende de que el presupuesto de tiempo se reparta entre varias llamadas, cosa
+que deja de ocurrir si la primera ya agota el plazo. Ambos pasan aislados y el
+módulo entero pasa por sí solo. La explicación más simple es la carga: este
+cambio añade a ese mismo módulo pruebas que arrancan contenedores reales.
+**No está probado que sean sólo intermitencia**; no se repitió la suite completa
+para descartarlo, y ninguno de los dos tests fue tocado por este cambio.
+
+El coste medido de mover las pruebas al contenedor real: `tests/unit` y
+`tests/mcp` pasaron de unos 197 s a unos 227 s.
+
 ## Soporte por plataforma
 
-El backend de proceso es específico por host y el de contenedor no lo es. Esto
-sale de leer el código, no de haber ejecutado en las tres plataformas.
+**Corrección del 2026-09-10 ([decisión 15](architecture/decisions/0015-container-only.md)).**
+Esta sección describía dos backends y el límite que su asimetría producía. Ya no
+hay dos: el sandbox de proceso fue eliminado y el contenedor es la única
+frontera. Lo que sigue reemplaza esa descripción; el texto anterior está en el
+historial de git y en la propia decisión 15.
 
-| Host | `process` | `container` |
+| Host | Frontera | Estado |
 |---|---|---|
-| macOS | `sandbox-exec` | Docker Desktop |
-| Linux | Bubblewrap | Docker |
-| Windows | rechazado en `mcp/runner.py:447` | Docker Desktop |
+| macOS | Docker Desktop | **Ejecutado**: arm64, es el único host medido |
+| Linux | Docker | No ejecutado |
+| Windows | Docker Desktop | No ejecutado |
 
-Cruzado con la [decisión 10](architecture/decisions/0010-integration-tests-need-the-host-docker-api.md),
-que exige `quality_runner=process` para componentes cuya suite arranca sus
-propios contenedores, resulta un límite que hasta ahora no estaba enunciado:
-**un proyecto objetivo con Testcontainers no tiene camino soportado en
-Windows**. No es degradación, es ausencia de backend.
+Lo que cambió respecto a la tabla anterior es qué significa un fallo, no dónde
+se ha corrido. Antes Windows no tenía backend de proceso y quedaba sin camino
+para un proyecto objetivo con Testcontainers; ese límite desaparece porque la
+decisión 14 da a cada run su propio daemon Docker y la 15 deja de ofrecer una
+alternativa por host. Pero **eliminar el backend alternativo no ejecuta nada en
+ninguna plataforma nueva**: Linux y Windows siguen sin medirse, y ahora un fallo
+ahí es un fallo del único camino, no del preferido.
 
-Dos observaciones asociadas, ambas verificadas sobre el código de este worktree:
+Docker pasa a ser dependencia dura: sin él no hay gate de calidad, no hay
+degradación a un runner de host. `QUALITY_RUNNER` sólo admite `container` y
+`.env.example` se corrigió en el mismo cambio, porque hasta entonces ofrecía
+`process`, un valor que el código ya rechaza por nombre.
 
-- `sandbox-exec` está deprecado por Apple; su propio manual lo declara así. El
-  camino `process` no es un piso estable en dos de los tres hosts.
-- `ProcessRunner` ya está escrito para Windows salvo la frontera: `_VENV_BIN`
-  elige `Scripts` bajo `nt`, el passthrough incluye las variables de Windows, y
-  `_terminate_windows_tree` existe completo. Lo que falta es la primitiva de
-  aislamiento, no la supervisión.
+De las dos observaciones que sostenían la sección anterior, una se cumplió y la
+otra caducó: `sandbox-exec` estaba deprecado por Apple y sale de la ruta
+crítica; el trabajo de Windows que `ProcessRunner` ya tenía escrito (`_VENV_BIN`
+bajo `nt`, `_terminate_windows_tree`) se fue con el módulo, y sólo es
+recuperable desde git.
 
-No se ejecutó nada en Windows ni en Linux durante esta revisión: la tabla
-describe lo que el código admite o rechaza, no una ejecución observada. La
+No se ejecutó nada en Windows ni en Linux durante esta revisión. La
 [decisión 14](architecture/decisions/0014-a-docker-api-that-is-not-the-hosts.md)
 cierra el hueco de diseño y pasó a `accepted` tras la evaluación de abajo.
 
@@ -114,7 +148,10 @@ fuerza `needs_network=False` en la fase de test cuando hay daemon y antepone una
 preparación con red. El daemon no es un default silencioso: exige
 `quality_run_daemon_image` pinneada por digest junto a `quality_runner=container`,
 y `config.py:47-59` rechaza cualquier otra combinación. `QUALITY_RUNNER=process`
-sigue siendo el camino por defecto y `.env.example` no cambió.
+sigue siendo el camino por defecto y `.env.example` no cambió. *(Corrección del
+2026-09-10: esa última frase caducó con la [decisión 15](architecture/decisions/0015-container-only.md).
+`container` es el default y el único valor admitido, y `.env.example` sí
+cambió.)*
 
 El alcance de esta evidencia es un solo host: macOS 27.0 arm64 con Docker
 Desktop, cuyo kernel es la VM linuxkit. **Linux y Windows no se ejecutaron**, y
@@ -246,5 +283,6 @@ Su contenido no se certifica como documentación vigente. Cambiarlo puede cambia
 | `docs/diagrams/`, `docs/architecture/checklists/`, `docs/architecture/findings/`, `docs/architecture/roadmap.md` | Diagramas: Mermaid embebido en [arquitectura](architecture/overview.md). Checklists y findings: [estado](status.md). Roadmap: sin propietario activo | Necesidad nueva y aprobación explícita; los diagramas se regeneran desde el código, no se restauran |
 | README y evidencia narrativa anteriores | Propietarios del mapa | Verificar cada afirmación antes de redactar contenido nuevo |
 | Notas de demos, frontend y bitácoras experimentales | [Operaciones](operations.md), [testing](testing.md) y Git | Solo información útil, actual y con propietario claro |
+| `src/engineering_team/mcp/runner.py` y su suite `tests/mcp/test_process_sandbox.py` (backend de proceso: `sandbox-exec`, Bubblewrap, rechazo de Windows) | `ContainerRunner` en [container.py](../src/engineering_team/mcp/container.py), única implementación de `CommandRunner` | Sólo por una decisión nueva que traiga la evidencia de plataforma que hoy falta, no como fallback silencioso ([decisión 15](architecture/decisions/0015-container-only.md)) |
 
 La decisión está en [historia](history.md); los originales permanecen en el [archivo](deprecated/README.md), fuera de la navegación habitual.

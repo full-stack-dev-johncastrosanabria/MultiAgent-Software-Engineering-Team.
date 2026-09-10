@@ -174,8 +174,8 @@ def test_a_command_reaches_the_projects_database_and_nothing_else(tmp_path: Path
     resolves the database by the name the compose file gave it, and still has no
     route off that network.
     """
+    from engineering_team.mcp.command import CommandRequest
     from engineering_team.mcp.container import ContainerRunner
-    from engineering_team.mcp.runner import CommandRequest
 
     (tmp_path / "docker-compose.yml").write_text(WITH_DATABASE, encoding="utf-8")
     stack = ServiceStack(tmp_path, run_id="reach")

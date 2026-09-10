@@ -1,7 +1,8 @@
 # 10. Integration tests run under the process sandbox, not the container runner
 
-Date: 2026-09-07. Status: accepted.
-Constraint lifted by: [ADR 14](0014-a-docker-api-that-is-not-the-hosts.md), which
+Date: 2026-09-07. Status: superseded by [ADR 15](0015-container-only.md).
+Decision superseded by: [ADR 15](0015-container-only.md); the process
+sandbox this record selects no longer exists. Constraint lifted by: [ADR 14](0014-a-docker-api-that-is-not-the-hosts.md), which
 supplies the run-scoped Docker API this record said it lacked. The refusal to
 mount the host socket is unchanged.
 

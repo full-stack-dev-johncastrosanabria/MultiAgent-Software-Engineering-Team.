@@ -16,13 +16,13 @@ from pathlib import Path
 
 import pytest
 
+from engineering_team.mcp.command import CommandRequest, CommandRunner
 from engineering_team.mcp.container import (
     ENVIRONMENT_MOUNT,
     WORKSPACE_MOUNT,
     ContainerLimits,
     ContainerRunner,
 )
-from engineering_team.mcp.runner import CommandRequest, CommandRunner
 
 PINNED = "python@sha256:" + "0" * 64
 INTEGRATION_IMAGE = os.environ.get("ASET_CONTAINER_TEST_IMAGE", "")
@@ -434,7 +434,7 @@ def test_the_environment_survives_between_containers(tmp_path: Path) -> None:
 def test_no_command_carries_a_host_path_into_the_container(tmp_path: Path) -> None:
     """Measured: `pip install -r /private/tmp/.../requirements.txt` reached a
     container where that path does not exist. The workspace is mounted at
-    /aset/workspace, and a command that names the host has already lost."""
+    the workspace mount, and a command that names the host has already lost."""
     from engineering_team.config import Settings
     from engineering_team.contracts.enums import AgentRole
     from engineering_team.mcp.quality import QualityMCP
