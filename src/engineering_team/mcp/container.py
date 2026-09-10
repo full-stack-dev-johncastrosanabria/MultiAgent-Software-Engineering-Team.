@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from engineering_team.mcp.run_daemon import RunDaemon
-from engineering_team.mcp.runner import (
+from engineering_team.mcp.command import (
     _OUTPUT_LIMIT,
     CommandRequest,
     _BoundedOutput,

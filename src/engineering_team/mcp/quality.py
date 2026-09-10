@@ -25,11 +25,8 @@ from engineering_team.interpreter import (
     select_interpreter,
 )
 from engineering_team.mcp.container import ContainerRunner
-from engineering_team.mcp.runner import (
-    CommandRequest,
-    CommandRunner,
-    ProcessRunner,
-)
+from engineering_team.mcp.command import CommandRequest, CommandRunner
+from engineering_team.mcp.runner import ProcessRunner
 from engineering_team.mcp.test_evidence import collect_test_cases, snapshot_reports
 from engineering_team.stacks import INTERPRETER, StackProfile, profile_for
 

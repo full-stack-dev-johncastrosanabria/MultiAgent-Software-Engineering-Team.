@@ -36,8 +36,8 @@ flowchart LR
     SRV["mcp/server.py"]
     RMCP["RepositoryMCP"]
     QMCP["QualityMCP"]
-    RUN["mcp/runner.py<br/>CommandRunner"]
-    PROC["proceso<br/>sandbox-exec · Bubblewrap"]
+    CMD["mcp/command.py<br/>CommandRunner"]
+    RUN["mcp/runner.py<br/>proceso · sandbox-exec · Bubblewrap"]
     CONT["mcp/container.py<br/>Docker"]
     SP["stacks.py<br/>python · jvm · dotnet · go · node"]
     SVC["services.py<br/>ServiceStack por run"]
@@ -66,12 +66,12 @@ flowchart LR
   SRV --> RMCP
   SRV --> QMCP
   QMCP --> SP
-  QMCP --> RUN
+  QMCP --> CMD
   QMCP --> SVC
-  RUN --> PROC
-  RUN --> CONT
+  CMD --> RUN
+  CMD --> CONT
   RMCP --> WS
-  PROC --> WS
+  RUN --> WS
   CONT --> WS
   AG --> CT
   G --> RS
@@ -172,9 +172,13 @@ de su arquitectura.
 [mcp/server.py](../../src/engineering_team/mcp/server.py) construye servidores de
 repositorio y calidad por stdio.
 [QualityMCP](../../src/engineering_team/mcp/quality.py) es la superficie de
-operaciones de calidad; [runner.py](../../src/engineering_team/mcp/runner.py) y
+operaciones de calidad.
+[command.py](../../src/engineering_team/mcp/command.py) declara el contrato
+`CommandRunner` y lo que toda ejecución comparte —el comando, su límite de
+salida y su plazo—; [runner.py](../../src/engineering_team/mcp/runner.py) y
 [container.py](../../src/engineering_team/mcp/container.py) implementan los dos
-mecanismos de ejecución. Esa separación es la
+mecanismos de ejecución. El contrato vive aparte de sus implementaciones porque
+sobrevive a cualquiera de ellas. Esa separación es la
 [decisión 3](decisions/0003-split-quality-mcp.md), y el runner en contenedor, la
 [decisión 2](decisions/0002-container-runner.md).
 
