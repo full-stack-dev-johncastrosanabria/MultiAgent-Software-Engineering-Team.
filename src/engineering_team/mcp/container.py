@@ -24,6 +24,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from engineering_team.mcp.run_daemon import RunDaemon
 from engineering_team.mcp.runner import (
     _OUTPUT_LIMIT,
     CommandRequest,
@@ -66,6 +67,8 @@ class ContainerRunner:
         allow_unpinned_image: bool = False,
         network: str | None = None,
         networks: tuple[str, ...] = (),
+        daemon: RunDaemon | None = None,
+        owns_daemon: bool = False,
     ) -> None:
         if not allow_unpinned_image and not _DIGEST_PINNED.match(image):
             raise ValueError(
@@ -80,6 +83,8 @@ class ContainerRunner:
         self.environment: Path | None = Path(ENVIRONMENT_MOUNT)
         self.image = image
         self.runtime = runtime
+        self.daemon = daemon
+        self.owns_daemon = owns_daemon
         self.limits = limits or ContainerLimits()
         # The run's service network, when the project declares dependencies. It
         # is internal, so a command that also needs the registry is attached to
@@ -164,6 +169,8 @@ class ContainerRunner:
     def execute(self, request: CommandRequest) -> subprocess.CompletedProcess[str]:
         if self._closing_event.is_set():
             raise RuntimeError("quality environment is closing")
+        if self.daemon is not None and not request.allow_network:
+            self.daemon.up(request.deadline)
         self._ensure_volume()
         name = self._reserve_name()
         args = self._container_command(name, request)
@@ -188,6 +195,9 @@ class ContainerRunner:
                 [self.runtime, "volume", "rm", "--force", self._volume], timeout=30
             )
             self._volume_created = False
+
+        if self.daemon is not None and self.owns_daemon:
+            self.daemon.close()
 
     # -- construction ------------------------------------------------------
 
@@ -235,7 +245,17 @@ class ContainerRunner:
         # leaves the run workspace owned by a user the host cannot clean up.
         if hasattr(os, "getuid"):
             args += ["--user", f"{os.getuid()}:{os.getgid()}"]
-        for variable, value in request.env:
+        environment = dict(request.env)
+        if self.daemon is not None:
+            # Endpoint and transport policy belong to the run, never to target
+            # configuration or inherited client TLS settings.
+            environment = {
+                key: value for key, value in environment.items()
+                if not key.startswith(("DOCKER_", "TESTCONTAINERS_"))
+            }
+            if not request.allow_network:
+                environment.update(self.daemon.environment)
+        for variable, value in environment.items():
             args += ["--env", f"{variable}={value}"]
         args.append(self.image)
         args.extend(request.args)
@@ -248,12 +268,21 @@ class ContainerRunner:
         database is not optional, and the route to the registry is added
         afterwards for the commands that need it.
         """
+        if self.daemon is not None:
+            return "bridge" if request.allow_network else self.daemon.network
         if self.network:
             return self.network
         return "bridge" if request.allow_network else "none"
 
     def _additional_networks(self, request: CommandRequest) -> tuple[str, ...]:
         """Networks attached after create, excluding the primary network."""
+        if self.daemon is not None:
+            if request.allow_network:
+                return ()
+            return tuple(dict.fromkeys(
+                network for network in (self.network, *self.networks)
+                if network and network != self.daemon.network
+            ))
         primary = self._primary_network(request)
         additional = [network for network in self.networks if network != primary]
         if self.network and request.allow_network and "bridge" != primary:

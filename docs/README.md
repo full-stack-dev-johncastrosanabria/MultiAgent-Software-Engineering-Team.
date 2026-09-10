@@ -14,6 +14,7 @@ Este índice responde dónde mirar y cómo verificar. El [estado](status.md) con
 | Cambiar interfaz o conexión con la API | [Frontend](../frontend/src/), [cliente](../frontend/src/api/runClient.ts), [Vite](../frontend/vite.config.ts) | Scripts de [package.json](../frontend/package.json) |
 | Cambiar entrega GitHub | [Delivery](../src/engineering_team/delivery.py) | [Delivery tests](../tests/unit/test_delivery.py) |
 | Cambiar evaluación multistack | [Runner](../evaluation/benchmarks/multistack/run_trial.py) | [Trial tests](../tests/unit/test_multistack_trial.py) |
+| Cambiar el daemon Docker por run (decisión 14) | [RunDaemon](../src/engineering_team/mcp/run_daemon.py), [red y fases](../src/engineering_team/mcp/container.py) | [Configuración](../tests/unit/test_run_daemon_config.py), [unitarios](../tests/mcp/test_run_daemon.py), [en vivo](../tests/mcp/test_run_daemon_live.py), [trial](../evaluation/benchmarks/adr14/verify_run_daemon.py) |
 | Cambiar la demo bancaria usada como fixture | [Demo](../demo-projects/sample_app/), [evaluación](../src/engineering_team/observability/evaluation.py) | [Demo tests](../tests/integration/test_sample_app.py) |
 | Cambiar guardarraíles o redacción de secretos | [Guardrails](../src/engineering_team/guardrails/secrets.py) | [Guardrails tests](../tests/unit/test_guardrails.py), [redacción en nube](../tests/unit/test_cloud_redaction.py) |
 | Cambiar configuración | [Settings](../src/engineering_team/config.py) | [Config tests](../tests/unit/test_config.py) |

@@ -106,19 +106,91 @@ Dos supuestos de la decisión quedaron refutados y se corrigieron en su texto:
 **no** se resuelve por su propio nombre — se alcanza en el alias del daemon,
 sobre el puerto publicado.
 
-**La decisión está aceptada, no implementada.** No hay código que la ejecute:
-`dind`, `docker-in-docker` y `DOCKER_HOST` no aparecen en `src/`. Lo medido es
-que el mecanismo funciona, no que el sistema lo use; hoy `QUALITY_RUNNER=process`
-sigue siendo el camino soportado para la clase Testcontainers y `.env.example` lo
-documenta así con razón.
+**La decisión está implementada desde el 2026-09-09.** Esto corrige la
+afirmación anterior de esta sección, que decía que no había código que la
+ejecutara. `mcp/run_daemon.py` crea la red `--internal` y el daemon rootless;
+`mcp/container.py:172` lo arranca sólo en la fase sin red; `mcp/quality.py:549`
+fuerza `needs_network=False` en la fase de test cuando hay daemon y antepone una
+preparación con red. El daemon no es un default silencioso: exige
+`quality_run_daemon_image` pinneada por digest junto a `quality_runner=container`,
+y `config.py:47-59` rechaza cualquier otra combinación. `QUALITY_RUNNER=process`
+sigue siendo el camino por defecto y `.env.example` no cambió.
 
 El alcance de esta evidencia es un solo host: macOS 27.0 arm64 con Docker
 Desktop, cuyo kernel es la VM linuxkit. **Linux y Windows no se ejecutaron**, y
 son justamente las plataformas que motivan la decisión 14. El mecanismo está
-probado; el soporte de Windows sigue siendo una afirmación no verificada.
-Tampoco se ejecutó el componente `order-ms` del que habla la decisión 10: no
-existe en este worktree, es un proyecto objetivo externo del benchmark. La
-prueba se hizo con un cliente Testcontainers equivalente, no con ese componente.
+probado; el soporte de Windows sigue siendo una afirmación no verificada. Esa
+medición se hizo con un cliente Testcontainers equivalente, no con el componente
+`order-ms` del que habla la decisión 10; ese componente sí se ejecutó después, y
+lo que devolvió está abajo.
+
+### Trial de la decisión 14 contra `order-ms` (2026-09-09 a 2026-09-10)
+
+Primera ejecución del mecanismo contra un componente objetivo real, no contra un
+cliente equivalente. Runner:
+[`evaluation/benchmarks/adr14/verify_run_daemon.py`](../evaluation/benchmarks/adr14/verify_run_daemon.py),
+sobre `order-ms` del repositorio externo `PruebaNuevosIngresosBackend`, con la
+misma imagen dind pinneada de arriba. Cuatro intentos, reportes saneados en
+`evaluation/reports/runs/adr14-trial-{1..4}/report.json`; el que cuenta es
+`adr14-trial-4/report.json` (`finished: true`).
+
+**Veredicto: `SUCCESS` en el trial 4, con 75 tests ejecutados y 0 fallos.**
+
+| Comprobación | Resultado |
+|---|---|
+| Daemon y red creados para el run | Pasa: red `Internal: true`, subred `172.20.0.0/16`, daemon `running` durante la fase |
+| Suite ejecutada dentro de la red cerrada | Pasa: 75 casos, 0 fallos, 0 errores |
+| Clase Testcontainers | Pasa: `OrderFlowIntegrationTest`, 6 tests en 25.21 s — la clase que los trials 6b y 9 no lograban |
+| Teardown | Pasa: contenedor y red ya no existen al cerrar el run |
+| Contenedores nietos observados | **No medido**: la sonda corre cuando la JVM ya salió y Testcontainers ya los retiró |
+
+Esto es lo que faltaba a la decisión 14: hasta ahora el mecanismo estaba probado
+con un cliente Testcontainers equivalente, no con el componente objetivo. Ahora
+lo está. La última fila es una limitación de la sonda, no un hallazgo: el
+benchmark inspecciona el daemon después de `run_tests`, y para entonces la suite
+ya cerró sus contenedores. La evidencia de que el daemon los sirvió es indirecta
+pero firme — `OrderFlowIntegrationTest` necesita PostgreSQL y antes moría con
+`ContainerFetchException`.
+
+Costó tres intentos, y los dos primeros importan:
+
+**Trial 2 — `FAIL` a los 180.9 s por preparación offline incompleta.**
+`maven-surefire-plugin:3.5.6` resuelve su *provider*
+(`surefire-junit-platform:3.5.6`) al ejecutarse, y `dependency:go-offline` no lo
+ve. Ya dentro de la red interna, Maven obtiene `Unknown host
+repo.maven.apache.org`. La red hizo lo que debía; la fase con red no dejó el
+repositorio local completo. Corregido en `quality.py` precargando los cuatro
+providers por coordenada, con la versión leída de `surefire-booter` en la caché
+en vez de fijada. Medido antes de escribir el arreglo: seleccionar cero tests
+**no** calienta el provider, porque surefire corta antes de resolverlo.
+
+**Trial 3 — `SUCCESS` falso.** La preparación pasó a ser una secuencia de
+comandos y su variable de bucle pisaba la que guarda el comando de la suite, así
+que la fase ejecutaba el último paso de preparación y reportaba su éxito como
+propio: `SUCCESS`, `output_summary` vacío, ningún `target/surefire-reports/` y
+`test_cases: 0`. Lo detectó el criterio de aceptación, no el código de salida.
+Queda fijado por `tests/unit/test_surefire_preseed.py`, verificado en rojo sobre
+la versión con el defecto.
+
+**La lección operativa:** para esta clase de run, `SUCCESS` no es evidencia.
+`test_cases > 0` sí.
+
+El trial 1 (`evaluation/reports/runs/adr14-trial-1/`) quedó `finished: false`
+tras 444.9 s, interrumpido antes de registrar resultado. No cuenta como
+evidencia y se conserva sólo como traza.
+
+**Lo que este trial no cubre.** El trial recorre un componente a través de
+`verify_run_daemon.py`. El cableado del daemon en la ruta de infraestructura de
+proyecto — `_ProjectInfrastructureQuality` en
+[apply_run.py](../src/engineering_team/apply_run.py), donde un mismo daemon se
+comparte entre varios componentes con `owns_daemon=False` — **no se ejecutó de
+extremo a extremo**. Sólo tiene pruebas unitarias. Un daemon compartido entre N
+componentes es una superficie que un trial de un componente no puede tocar:
+colisiones de puertos, carreras de caché de imagen, estado residual entre
+componentes. Lo que sí está verificado por lectura es el ciclo de vida: si
+`__enter__` falla a mitad, su `except BaseException` llama a `close()`, y
+`close()` registra `self.daemon.down`, de modo que el daemon no queda huérfano
+pese a `owns_daemon=False`.
 
 ### Contradicción entre el benchmark y la decisión 10, resuelta
 
@@ -129,21 +201,27 @@ proceso para él; esa selección no existía en el código, ni existía en el co
 base.
 
 Se corrigió el código, no la decisión: el runner pasó a ser parte de la
-definición del caso en `CASES`, de modo que `ingresos` selecciona `process` y
-los otros dos siguen en `container`. La regla vive donde vive la diferencia
-entre casos, y no hay override por CLI: un flag invitaría exactamente a la
-deriva que la decisión 10 quería evitar.
+definición del caso en `CASES`. La regla vive donde vive la diferencia entre
+casos, y no hay override por CLI: un flag invitaría exactamente a la deriva que
+la decisión 10 quería evitar.
 
-**Esto cambia qué ejecuta la evaluación.** El caso `ingresos` ahora corre bajo el
-sandbox de proceso. Es el comportamiento que la decisión 10 siempre describió,
-pero ningún trial se ejecutó para confirmarlo aquí: los proyectos objetivo no
-están en este worktree y un trial exige proveedores de modelo en vivo. Lo
-verificado es la selección, con dos pruebas nuevas en
-[test_multistack_trial.py](../tests/unit/test_multistack_trial.py) — una fija la
-selección por caso y la otra exige que todo caso nuevo declare su backend. La
-primera se comprobó reintroduciendo el defecto: falla con
-`assert 'container' == 'process'`. La ausencia de esa comprobación es lo que
-permitió la deriva original.
+**Corrección del 2026-09-10.** Esa corrección dejó `ingresos` en `process`, que
+era lo único correcto mientras la decisión 14 no existiera en código. Ahora
+existe, así que `ingresos` vuelve a `container` — pero por la razón contraria a
+la deriva original: con `quality_run_daemon_image` pinneada por digest y las
+imágenes de su suite (`postgres:17-alpine`, `apache/kafka:4.3.1`) declaradas
+como entrada explícita del caso. Los otros dos casos siguen en `container` sin
+daemon. Esta es la línea que la propia decisión 14 señaló para revisitar.
+
+**Esto cambia qué ejecuta la evaluación**, y no se ejecutó aquí: los proyectos
+objetivo no están en este worktree y un trial multistack exige proveedores de
+modelo en vivo. Lo verificado es la selección, con las pruebas de
+[test_multistack_trial.py](../tests/unit/test_multistack_trial.py) — una fija
+las entradas por caso y la otra exige que todo caso nuevo declare runner y
+daemon. La ausencia de esa comprobación es lo que permitió la deriva original.
+Que `order-ms` pasa bajo el daemon del run está medido, pero por el runner de
+[`adr14/verify_run_daemon.py`](../evaluation/benchmarks/adr14/verify_run_daemon.py),
+no por esta ruta.
 
 ## SpecKit retirado
 

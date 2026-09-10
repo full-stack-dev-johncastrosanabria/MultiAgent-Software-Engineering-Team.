@@ -122,13 +122,20 @@ def build_quality_server(
     return server
 
 
-def settings_from_arguments(*, runner: str, image: str, stack: str = "python") -> Settings:
+def settings_from_arguments(
+    *, runner: str, image: str, stack: str = "python",
+    run_daemon_image: str = "", run_daemon_images: tuple[str, ...] = (),
+) -> Settings:
     """Settings for a server told what to be, rather than left to infer it.
 
     The file-based settings still load, so everything else behaves as it does in
     the parent; only the choices that must not be lost are overridden.
     """
-    return Settings(quality_runner=runner, quality_container_image=image, quality_stack=stack)
+    return Settings(
+        quality_runner=runner, quality_container_image=image, quality_stack=stack,
+        quality_run_daemon_image=run_daemon_image,
+        quality_run_daemon_images=run_daemon_images,
+    )
 
 
 def main() -> None:
@@ -141,6 +148,8 @@ def main() -> None:
     # setting given as an environment variable never arrives.
     parser.add_argument("--runner", default="process")
     parser.add_argument("--image", default="")
+    parser.add_argument("--run-daemon-image", default="")
+    parser.add_argument("--run-daemon-suite-image", action="append", default=[])
     # ADR 4: which ecosystem's commands to run, and where that component lives
     # relative to --root. Both explicit, like --runner and --image: a repository
     # with more than one buildable component (finding 19) has no single correct
@@ -157,7 +166,9 @@ def main() -> None:
         server = build_quality_server(
             quality_root, args.timeout,
             settings=settings_from_arguments(
-                runner=args.runner, image=args.image, stack=args.stack
+                runner=args.runner, image=args.image, stack=args.stack,
+                run_daemon_image=args.run_daemon_image,
+                run_daemon_images=tuple(args.run_daemon_suite_image),
             ),
         )
     server.run("stdio")

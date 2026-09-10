@@ -84,7 +84,14 @@ def build_runner(
                     image = profile_for(settings.quality_stack).image
                 except KeyError as exc:
                     raise ValueError(str(exc)) from exc
-        return ContainerRunner(root, image=image)
+        from engineering_team.mcp.run_daemon import RunDaemon
+
+        daemon = (
+            RunDaemon(image=settings.quality_run_daemon_image,
+                      images=settings.quality_run_daemon_images)
+            if settings.quality_run_daemon_image else None
+        )
+        return ContainerRunner(root, image=image, daemon=daemon, owns_daemon=daemon is not None)
     raise ValueError(f"unknown quality_runner: {choice!r}")
 
 
@@ -93,6 +100,31 @@ def build_runner(
 # an environment empty and attributed the resulting ModuleNotFoundError to the
 # code under test.
 PROJECT_MANIFESTS = ("pyproject.toml", "setup.py", "requirements.txt")
+
+# Which provider Surefire runs with is decided by the project's test framework,
+# and Surefire resolves it through its own resolver when it executes -- so
+# `dependency:go-offline` never sees it and the closed network cannot fetch it.
+# ADR 14's trial 2 died exactly there, on `surefire-junit-platform`. Selecting no
+# test does not warm it either: Surefire short-circuits before resolving. So the
+# providers are fetched by coordinate, and all of them, because guessing which
+# one a target project needs is the mistake this avoids. The version is not
+# guessed: `surefire-booter` in the cache carries the plugin's own version.
+_SUREFIRE_PROVIDERS = (
+    "surefire-junit-platform", "surefire-junit47", "surefire-junit4",
+    "surefire-testng",
+)
+
+
+def _surefire_providers(environment: str) -> str:
+    """Shell that pre-fetches every Surefire provider for the cached version."""
+    repository = f"{environment}/m2"
+    return (
+        f'set -e; for path in {repository}/org/apache/maven/surefire/'
+        'surefire-booter/*/; do version=$(basename "$path"); done; '
+        f'for provider in {" ".join(_SUREFIRE_PROVIDERS)}; do '
+        f'mvn -B -q -Dmaven.repo.local={repository} dependency:get '
+        '-Dartifact=org.apache.maven.surefire:$provider:$version; done'
+    )
 
 
 class QualityMCP:
@@ -249,6 +281,8 @@ class QualityMCP:
         runs; saying so before the work starts is the whole point.
         """
         if not isinstance(self._runner, ContainerRunner):
+            return None
+        if self._runner.daemon is not None:
             return None
         for manifest, marker in self._CONTAINER_API_MARKERS:
             path = self.root / manifest
@@ -537,6 +571,33 @@ class QualityMCP:
         needs_network = allow_network or bool(
             getattr(self.profile, f"{phase}_needs_network", False)
         )
+        if phase == "test" and getattr(self._runner, "daemon", None) is not None:
+            needs_network = False
+            # Resolve dependencies before entering the closed daemon network.
+            # None of these commands runs the project's test code: what makes
+            # that true is the argument list, not the lifecycle phase named in
+            # it, so read them before adding one.
+            preparation = {
+                "jvm": (
+                    ["mvn", "-B", f"-Dmaven.repo.local={environment}/m2",
+                     "-DskipTests", "dependency:go-offline", "test-compile"],
+                    ["sh", "-c", _surefire_providers(environment)],
+                ),
+                "dotnet": (["dotnet", "restore",
+                            f"-p:RestorePackagesPath={environment}/nuget"],),
+                "go": (["go", "mod", "download"],),
+            }.get(self.profile.name)
+            # Not `command`: that name holds the suite's own command, and
+            # rebinding it here made a run report the last preparation step's
+            # success as the test phase's, with no test executed (trial 3).
+            for preparatory in preparation or ():
+                prepared = self._run(
+                    role, tool, preparatory, allowed, deadline,
+                    cwd=cwd or self.root, allow_network=True,
+                    env=self.profile.env(environment),
+                )
+                if prepared.status is not ToolStatus.SUCCESS:
+                    return prepared
         fail_on_output = (
             self._dotnet_reports_vulnerabilities
             if self.profile.name == "dotnet" and phase == "security"

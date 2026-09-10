@@ -43,6 +43,25 @@ def test_container_runner_satisfies_the_interface(tmp_path: Path) -> None:
     assert isinstance(_runner(tmp_path), CommandRunner)
 
 
+def test_run_daemon_separates_downloads_from_suite(tmp_path):
+    from engineering_team.mcp.run_daemon import RunDaemon
+
+    daemon = RunDaemon(image=PINNED, images=())
+    runner = _runner(tmp_path, network="compose-internal", daemon=daemon)
+    request = _request(tmp_path, "true", env=(("DOCKER_HOST", "tcp://host:2375"),))
+    offline = runner._container_command("suite", request)
+    assert offline[offline.index("--network") + 1] == daemon.network
+    assert runner._additional_networks(request) == ("compose-internal",)
+    assert "DOCKER_HOST=tcp://dind:2375" in offline
+    assert "DOCKER_HOST=tcp://host:2375" not in offline
+    online = _request(tmp_path, "pip", "install", "x", allow_network=True,
+                      env=(("DOCKER_HOST", "tcp://dind:2375"),))
+    args = runner._container_command("download", online)
+    assert args[args.index("--network") + 1] == "bridge"
+    assert runner._additional_networks(online) == ()
+    assert not any(item.startswith("DOCKER_HOST=") for item in args)
+
+
 def test_image_must_be_pinned_by_digest(tmp_path: Path) -> None:
     """An unpinned tag is a different image tomorrow."""
     with pytest.raises(ValueError, match="pinned by digest"):

@@ -18,6 +18,7 @@ from engineering_team.contracts.enums import AgentRole
 from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.llm.cloud import CloudRouter
 
+
 def _anonymised_path(value: str | None) -> str | None:
     """A PATH-like value with the operator's home directory replaced by `~`.
 
@@ -38,15 +39,16 @@ def _anonymised_path(value: str | None) -> str | None:
     return os.pathsep.join(entries)
 
 
-# The runner belongs to the case, not to the trial. A suite that drives
-# containers itself has no route to a Docker API from inside the quality
-# container, so it runs under the process sandbox (ADR 10). `order-ms` proves
-# its behaviour against PostgreSQL and Kafka through Testcontainers; the other
-# two do not, and stay on the container runner this benchmark exists to exercise.
+# ADR 14: order-ms uses a daemon owned by the run and cached suite images.
+# The remaining cases need only the quality container.
 CASES = {
-    "ingresos": ("PruebaNuevosIngresosBackend", "jvm", "order-ms", "process"),
-    "northgate": ("NorthgateTollPlaza", "jvm", "northgate-backend", "container"),
-    "interview": ("InterviewCleanApi", "dotnet", "", "container"),
+    "ingresos": (
+        "PruebaNuevosIngresosBackend", "jvm", "order-ms", "container",
+        "docker:dind-rootless@sha256:e17fa54c2ffd511d8407c746eec77f7814e6f74fe20caf822dad1870599984c0",
+        ("postgres:17-alpine", "apache/kafka:4.3.1"),
+    ),
+    "northgate": ("NorthgateTollPlaza", "jvm", "northgate-backend", "container", "", ()),
+    "interview": ("InterviewCleanApi", "dotnet", "", "container", "", ()),
 }
 
 
@@ -94,9 +96,11 @@ def main() -> None:
         records.append(record)
         state_path.write_text(json.dumps(records, indent=2))
         try:
-            repo, stack, component, runner = CASES[args.case]
+            repo, stack, component, runner, daemon_image, daemon_images = CASES[args.case]
             settings = Settings(
                 quality_runner=runner, quality_stack=stack,
+                quality_run_daemon_image=daemon_image,
+                quality_run_daemon_images=daemon_images,
                 quality_component_path=component, quality_timeout_seconds=900,
                 cloud_role_timeout_seconds=180, llm_timeout_seconds=60,
                 max_remediation_iterations=3,
