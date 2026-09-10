@@ -205,3 +205,27 @@ One operational note the evaluation surfaced: Testcontainers' reaper container
 was disabled, because it exists to clean up containers a crashed run leaves
 behind, and a daemon that dies with the run already does that. Leaving it
 enabled would also make the reaper image one more thing to pre-seed.
+
+## Implementation note — 2026-09-10
+
+This record is implemented. Two of its paragraphs above were written while it
+was not, and are corrected here rather than rewritten, so the reasoning that
+produced them stays readable.
+
+*"Should this record ever be implemented, that is the line to revisit: a
+run-scoped daemon is what would let `ingresos` move back to `container` on
+purpose rather than by omission."* — That line was revisited. `ingresos` now
+selects `container` with a digest-pinned daemon image and the images its suite
+needs declared as an explicit case input, which is the "on purpose" this
+paragraph asked for.
+
+*"The mechanism is proven; the platform claim it exists to serve is not."* — The
+first half is now stronger and the second is unchanged. The mechanism has since
+run against `order-ms` itself, not an equivalent client: 75 tests, 0 failures,
+with `OrderFlowIntegrationTest` passing six of six in 25.21 s inside the closed
+network — the class trials 6b and 9 could not run. It still ran on macOS arm64
+with Docker Desktop only. Linux and Windows remain unexecuted, so the platform
+claim this record was written to serve is still a claim.
+[Status](../../status.md) holds the evidence and the boundary of what it covers,
+including the multi-component path in `apply_run.py`, which has unit tests and
+no executed run.
