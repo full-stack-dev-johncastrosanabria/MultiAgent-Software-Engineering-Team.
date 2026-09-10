@@ -37,6 +37,38 @@ from engineering_team.mcp.runner import (
 )
 
 
+def _patch_executor(monkeypatch, callback) -> None:
+    """Intercept at the runner, which is where every command now converges.
+
+    Environment provisioning goes straight through the runner rather than back
+    up through QualityMCP, so patching the runner is what sees the whole
+    sequence: venv, ensurepip, installs and the tool itself.
+    """
+
+    def execute(
+        runner,
+        args,
+        *,
+        cwd,
+        deadline,
+        allow_network=False,
+        allow_subprocesses=False,
+        extra_env=(),
+        writable_paths=(),
+    ):
+        return callback(
+            args,
+            cwd=cwd,
+            deadline=deadline,
+            allow_network=allow_network,
+            allow_subprocesses=allow_subprocesses,
+            env=runner._subprocess_environment(),
+            timeout=max(0.0, deadline - time.monotonic()),
+        )
+
+    monkeypatch.setattr(ProcessRunner, "_execute_process", execute)
+
+
 def test_windows_termination_uses_recursive_forced_tree_kill(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -771,3 +803,67 @@ def test_subprocess_output_is_bounded_while_draining(tmp_path: Path) -> None:
         assert len(completed.stderr.encode()) <= 4096
     finally:
         quality.close()
+
+
+def test_quality_subprocess_environment_drops_host_injection_and_credentials(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sentinels = {
+        "PYTHONPATH": "/untrusted/python",
+        "PYTHONHOME": "/untrusted/home",
+        "PIP_TARGET": str(tmp_path / "outside"),
+        "PIP_PREFIX": str(tmp_path / "prefix"),
+        "PIP_USER": "1",
+        "OPENAI_API_KEY": "secret-openai",
+        "GROQ_API_KEY": "secret-groq",
+        "LANGFUSE_SECRET_KEY": "secret-langfuse",
+        "GIT_ASKPASS": "steal-credentials",
+    }
+    for name, value in sentinels.items():
+        monkeypatch.setenv(name, value)
+    environments: list[dict[str, str]] = []
+
+    def run(args, **kwargs):
+        environments.append(kwargs["env"])
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    _patch_executor(monkeypatch, run)
+    quality = QualityMCP(tmp_path)
+
+    assert quality.run_build(AgentRole.TESTING).status is ToolStatus.SUCCESS
+
+    try:
+        assert environments
+        environment = environments[-1]
+        assert not sentinels.keys() & environment.keys()
+        assert Path(environment["VIRTUAL_ENV"]) == Path(quality._interpreter()).parent.parent
+        assert Path(environment["HOME"]).is_relative_to(Path(environment["VIRTUAL_ENV"]))
+        assert environment["PIP_CONFIG_FILE"] == os.devnull
+        assert not (tmp_path / "outside").exists()
+    finally:
+        quality.close()
+
+
+def test_venv_bootstrap_uses_base_runtime_outside_operator_home(
+    tmp_path: Path, monkeypatch
+) -> None:
+    base_interpreter = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
+    operator_python = tmp_path / "operator-home" / "venv" / "bin" / "python"
+    calls: list[list[str]] = []
+    monkeypatch.setattr(sys, "executable", str(operator_python))
+    _patch_executor(
+        monkeypatch,
+        lambda args, **kwargs: (
+            calls.append(args),
+            subprocess.CompletedProcess(args, 0, "", ""),
+        )[1],
+    )
+    quality = QualityMCP(tmp_path)
+
+    try:
+        quality._interpreter()
+    finally:
+        quality.close()
+
+    assert calls[0][0] == str(base_interpreter)
+    assert calls[0][0] != str(operator_python)

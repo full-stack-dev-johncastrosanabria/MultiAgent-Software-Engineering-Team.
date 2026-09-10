@@ -1190,11 +1190,16 @@ class QualityMCP:
         con "Failed to read ... Operation not permitted", Security lo reporta
         como herramienta caida y el Reviewer rechaza por un problema que el
         proyecto no tiene.
+
+        El nombre viaja relativo, no absoluto. Ruff lo resuelve contra el
+        directorio de trabajo, que es la raiz del componente en cualquiera de
+        los dos limites; una ruta del host no existe dentro del contenedor y
+        ruff la rechaza con "invalid value for --config", que el Reviewer lee
+        igual de mal que el error anterior.
         """
         for name in ("ruff.toml", ".ruff.toml", "pyproject.toml"):
-            candidate = self.root / name
-            if candidate.is_file():
-                return ["--config", str(candidate)]
+            if (self.root / name).is_file():
+                return ["--config", name]
         return ["--isolated"]
 
     def run_security_scan(self, role: AgentRole) -> ToolResult:

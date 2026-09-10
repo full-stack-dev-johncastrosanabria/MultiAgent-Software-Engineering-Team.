@@ -1,5 +1,4 @@
 import importlib.metadata
-import os
 import subprocess
 import sys
 import threading
@@ -10,61 +9,79 @@ import pytest
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.contracts.models import ToolResult
+from engineering_team.interpreter import python_image
 from engineering_team.mcp.client import MCPQualityClient
+from engineering_team.mcp.command import CommandRequest
+from engineering_team.mcp.container import ENVIRONMENT_MOUNT, ContainerRunner
 from engineering_team.mcp.quality import QualityMCP
-from engineering_team.mcp.runner import (
-    ProcessRunner,
-)
+
+# Two images, and the difference is deliberate. A test that patches `execute`
+# never starts a container, so the digest only has to satisfy the runner's
+# refusal to accept an unpinned name. A test that runs commands for real needs
+# an image that exists, and takes the same one the interpreter selection would
+# have derived.
+PINNED = "python@sha256:" + "0" * 64
+REAL = python_image((3, 13))
+
+
+def _quality(root: Path, *, image: str = PINNED, **kwargs) -> QualityMCP:
+    """A gate on the boundary the gate actually uses.
+
+    QualityMCP takes the runner it is given. Naming it here rather than letting
+    the constructor pick keeps the choice of boundary a decision the test makes,
+    which is the same rule production follows.
+    """
+    kwargs.setdefault("runner", ContainerRunner(root, image=image))
+    return QualityMCP(root, **kwargs)
 
 
 def _patch_executor(monkeypatch, callback) -> None:
-    """Intercept at the runner, which is where every command now converges.
+    """Intercept at the runner, which is where every command converges.
 
     Environment provisioning goes straight through the runner rather than back
     up through QualityMCP, so patching the runner is what sees the whole
-    sequence: venv, ensurepip, installs and the tool itself.
+    sequence: venv, ensurepip, installs and the tool itself. The callback keeps
+    the keyword shape it had when the process sandbox was the boundary; what
+    changed is which runner is asked, not what the gate asks it.
     """
 
-    def execute(
-        runner,
-        args,
-        *,
-        cwd,
-        deadline,
-        allow_network=False,
-        allow_subprocesses=False,
-        extra_env=(),
-        writable_paths=(),
-    ):
+    def execute(runner, request: CommandRequest):
         return callback(
-            args,
-            cwd=cwd,
-            deadline=deadline,
-            allow_network=allow_network,
-            allow_subprocesses=allow_subprocesses,
-            env=runner._subprocess_environment(),
-            timeout=max(0.0, deadline - time.monotonic()),
+            list(request.args),
+            cwd=request.cwd,
+            deadline=request.deadline,
+            allow_network=request.allow_network,
+            allow_subprocesses=request.allow_subprocesses,
+            env=dict(request.env),
+            timeout=max(0.0, request.deadline - time.monotonic()),
         )
 
-    monkeypatch.setattr(ProcessRunner, "_execute_process", execute)
+    monkeypatch.setattr(ContainerRunner, "execute", execute)
 
 
 def _base_python() -> str:
-    return str(Path(getattr(sys, "_base_executable", sys.executable)).resolve())
+    """The interpreter the venv is built from, named as the boundary sees it.
+
+    The process sandbox resolved the host's base executable so a venv could not
+    be layered on another venv. A container has one interpreter and it is on
+    PATH, so the same property needs no resolution: `python` is the image's,
+    and there is no operator runtime to pick up by accident.
+    """
+    return "python"
 
 
 def test_quality_mcp_preserves_failed_test_result(tmp_path: Path) -> None:
     (tmp_path / "test_failure.py").write_text(
         "def test_fails():\n    assert False\n", encoding="utf-8"
     )
-    result = QualityMCP(tmp_path).run_tests(AgentRole.TESTING, ["test_failure.py"])
+    result = _quality(tmp_path, image=REAL).run_tests(AgentRole.TESTING, ["test_failure.py"])
 
     assert result.status is ToolStatus.FAIL
     assert "failed" in result.output_summary.lower()
 
 
 def test_quality_mcp_is_deny_by_default_for_every_operation(tmp_path: Path) -> None:
-    mcp = QualityMCP(tmp_path)
+    mcp = _quality(tmp_path)
     operations = {
         "run_tests": ({AgentRole.TESTING}, lambda role: mcp.run_tests(role, [])),
         "get_test_results": ({AgentRole.TESTING}, mcp.get_test_results),
@@ -90,13 +107,13 @@ def test_denied_quality_operation_never_starts_subprocess(tmp_path: Path, monkey
         raise AssertionError("subprocess must not execute for a denied role")
 
     _patch_executor(monkeypatch, forbidden)
-    result = QualityMCP(tmp_path).scan_dependencies(AgentRole.PRODUCT)
+    result = _quality(tmp_path).scan_dependencies(AgentRole.PRODUCT)
     assert result.status is ToolStatus.DENIED
 
 
 def test_quality_getter_preserves_last_real_result(tmp_path: Path) -> None:
     (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
-    mcp = QualityMCP(tmp_path)
+    mcp = _quality(tmp_path, image=REAL)
     executed = mcp.run_tests(AgentRole.TESTING, ["test_ok.py"])
     retrieved = mcp.get_test_results(AgentRole.TESTING)
 
@@ -119,7 +136,7 @@ def test_quality_installs_declared_project_dependencies_once_before_pytest(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     _patch_executor(monkeypatch, run)
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
 
     assert quality.run_tests(AgentRole.TESTING).status is ToolStatus.SUCCESS
     assert quality.run_tests(AgentRole.TESTING).status is ToolStatus.SUCCESS
@@ -160,7 +177,7 @@ def test_quality_installs_dependencies_outside_the_shared_interpreter(
         monkeypatch,
         lambda args, **kw: (calls.append(args), subprocess.CompletedProcess(args, 0, "", ""))[1],
     )
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
 
     assert quality.run_tests(AgentRole.TESTING).status is ToolStatus.SUCCESS
     assert quality.run_tests(AgentRole.TESTING).status is ToolStatus.SUCCESS
@@ -190,7 +207,7 @@ def test_quality_project_is_installed_even_without_runtime_dependencies(
         lambda args, **kw: (calls.append(args), subprocess.CompletedProcess(args, 0, "", ""))[1],
     )
 
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
     quality.run_tests(AgentRole.TESTING)
 
     assert any("install" in call and call[-1] == "." for call in calls)
@@ -209,7 +226,7 @@ def test_denied_quality_operations_never_create_an_environment(
         raise AssertionError("a denied operation must not create an environment or subprocess")
 
     _patch_executor(monkeypatch, forbidden)
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
 
     assert quality.run_tests(AgentRole.PRODUCT).status is ToolStatus.DENIED
     assert quality.run_build(AgentRole.PRODUCT).status is ToolStatus.DENIED
@@ -230,7 +247,7 @@ def test_quality_environment_creation_is_thread_safe(tmp_path: Path, monkeypatch
         return subprocess.CompletedProcess(args, 0, "", "")
 
     _patch_executor(monkeypatch, execute)
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
     interpreters: list[str] = []
     threads = [
         threading.Thread(target=lambda: interpreters.append(quality._interpreter()))
@@ -260,7 +277,7 @@ def test_quality_environment_does_not_inherit_shared_site_packages(
             subprocess.CompletedProcess(args, 0, "", ""),
         )[1],
     )
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
 
     try:
         quality._interpreter()
@@ -272,29 +289,6 @@ def test_quality_environment_does_not_inherit_shared_site_packages(
         quality.close()
 
 
-def test_venv_bootstrap_uses_base_runtime_outside_operator_home(
-    tmp_path: Path, monkeypatch
-) -> None:
-    base_interpreter = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
-    operator_python = tmp_path / "operator-home" / "venv" / "bin" / "python"
-    calls: list[list[str]] = []
-    monkeypatch.setattr(sys, "executable", str(operator_python))
-    _patch_executor(
-        monkeypatch,
-        lambda args, **kwargs: (
-            calls.append(args),
-            subprocess.CompletedProcess(args, 0, "", ""),
-        )[1],
-    )
-    quality = QualityMCP(tmp_path)
-
-    try:
-        quality._interpreter()
-    finally:
-        quality.close()
-
-    assert calls[0][0] == str(base_interpreter)
-    assert calls[0][0] != str(operator_python)
 
 
 def test_quality_close_removes_environment_and_is_idempotent(
@@ -304,14 +298,21 @@ def test_quality_close_removes_environment_and_is_idempotent(
         monkeypatch,
         lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
     )
-    quality = QualityMCP(tmp_path)
+    runner = ContainerRunner(tmp_path, image=PINNED)
+    quality = _quality(tmp_path, runner=runner)
     environment = Path(quality._interpreter()).parent.parent
 
-    assert environment.is_dir()
+    # The environment is a volume the runner owns, mounted at a fixed path, so
+    # what closing has to guarantee is that no further work reaches it -- not
+    # that a host directory disappeared, which is how the process sandbox
+    # released it.
+    assert environment == Path(ENVIRONMENT_MOUNT)
+    assert not runner.closing
     quality.close()
     quality.close()
 
-    assert not environment.exists()
+    assert runner.closing
+    assert not tmp_path.joinpath("aset-env").exists()
 
 
 def test_quality_reports_environment_bootstrap_failure_as_unavailable(
@@ -322,7 +323,7 @@ def test_quality_reports_environment_bootstrap_failure_as_unavailable(
 
     _patch_executor(monkeypatch, fail)
 
-    result = QualityMCP(tmp_path).run_build(AgentRole.TESTING)
+    result = _quality(tmp_path).run_build(AgentRole.TESTING)
 
     assert result.status is ToolStatus.UNAVAILABLE
     assert result.tool_name == "run_build"
@@ -340,7 +341,7 @@ def test_all_quality_commands_use_the_same_isolated_environment(
             subprocess.CompletedProcess(args, 0, "", ""),
         )[1],
     )
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
 
     assert quality.run_build(AgentRole.TESTING).status is ToolStatus.SUCCESS
     assert quality.run_tests(AgentRole.TESTING).status is ToolStatus.SUCCESS
@@ -386,7 +387,7 @@ def test_concurrent_tests_wait_for_dependency_installation(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     _patch_executor(monkeypatch, run)
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
     results: list[ToolResult] = []
     first = threading.Thread(
         target=lambda: results.append(quality.run_tests(AgentRole.TESTING))
@@ -413,43 +414,6 @@ def test_concurrent_tests_wait_for_dependency_installation(
         quality.close()
 
 
-def test_quality_subprocess_environment_drops_host_injection_and_credentials(
-    tmp_path: Path, monkeypatch
-) -> None:
-    sentinels = {
-        "PYTHONPATH": "/untrusted/python",
-        "PYTHONHOME": "/untrusted/home",
-        "PIP_TARGET": str(tmp_path / "outside"),
-        "PIP_PREFIX": str(tmp_path / "prefix"),
-        "PIP_USER": "1",
-        "OPENAI_API_KEY": "secret-openai",
-        "GROQ_API_KEY": "secret-groq",
-        "LANGFUSE_SECRET_KEY": "secret-langfuse",
-        "GIT_ASKPASS": "steal-credentials",
-    }
-    for name, value in sentinels.items():
-        monkeypatch.setenv(name, value)
-    environments: list[dict[str, str]] = []
-
-    def run(args, **kwargs):
-        environments.append(kwargs["env"])
-        return subprocess.CompletedProcess(args, 0, "", "")
-
-    _patch_executor(monkeypatch, run)
-    quality = QualityMCP(tmp_path)
-
-    assert quality.run_build(AgentRole.TESTING).status is ToolStatus.SUCCESS
-
-    try:
-        assert environments
-        environment = environments[-1]
-        assert not sentinels.keys() & environment.keys()
-        assert Path(environment["VIRTUAL_ENV"]) == Path(quality._interpreter()).parent.parent
-        assert Path(environment["HOME"]).is_relative_to(Path(environment["VIRTUAL_ENV"]))
-        assert environment["PIP_CONFIG_FILE"] == os.devnull
-        assert not (tmp_path / "outside").exists()
-    finally:
-        quality.close()
 
 
 def test_project_and_tool_installs_share_one_mutation_lock(
@@ -473,7 +437,7 @@ def test_project_and_tool_installs_share_one_mutation_lock(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     _patch_executor(monkeypatch, run)
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
     test_thread = threading.Thread(target=lambda: quality.run_tests(AgentRole.TESTING))
     lint_thread = threading.Thread(target=lambda: quality.run_linter(AgentRole.TESTING))
 
@@ -509,7 +473,7 @@ def test_quality_uses_one_end_to_end_deadline_across_setup_phases(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     _patch_executor(monkeypatch, run)
-    quality = QualityMCP(tmp_path, timeout_seconds=0.07)
+    quality = _quality(tmp_path, timeout_seconds=0.07)
     started = time.perf_counter()
 
     result = quality.run_tests(AgentRole.TESTING)
@@ -541,7 +505,7 @@ def test_quality_prefers_hashed_lock_and_installs_project_without_deps(
             subprocess.CompletedProcess(args, 0, "", ""),
         )[1],
     )
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
 
     assert quality.run_tests(AgentRole.TESTING).status is ToolStatus.SUCCESS
 
@@ -583,7 +547,7 @@ def test_real_project_modules_cannot_shadow_quality_toolchain(tmp_path: Path) ->
     )
     for module in ("pip", "pytest", "ruff", "compileall"):
         (tmp_path / f"{module}.py").write_text(shadow, encoding="utf-8")
-    quality = QualityMCP(tmp_path, timeout_seconds=60)
+    quality = _quality(tmp_path, image=REAL, timeout_seconds=60)
 
     try:
         tested = quality.run_tests(AgentRole.TESTING, ["test_import.py"])
@@ -613,7 +577,7 @@ def test_mutation_lock_wait_is_inside_operation_deadline(tmp_path: Path, monkeyp
         monkeypatch,
         lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
     )
-    quality = QualityMCP(tmp_path, timeout_seconds=0.05)
+    quality = _quality(tmp_path, timeout_seconds=0.05)
     quality._mutation_lock.acquire()
     release = threading.Timer(0.2, quality._mutation_lock.release)
     release.start()
@@ -630,7 +594,7 @@ def test_mutation_lock_wait_is_inside_operation_deadline(tmp_path: Path, monkeyp
 
 
 def test_environment_lock_wait_is_inside_operation_deadline(tmp_path: Path) -> None:
-    quality = QualityMCP(tmp_path, timeout_seconds=0.05)
+    quality = _quality(tmp_path, timeout_seconds=0.05)
     locked = threading.Event()
     release = threading.Event()
 
@@ -666,7 +630,7 @@ def test_venv_creation_is_an_interruptible_isolated_subprocess(
             subprocess.CompletedProcess(args, 0, "", ""),
         )[1],
     )
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
 
     try:
         quality._interpreter()
@@ -691,7 +655,7 @@ def test_quality_tools_install_uses_the_complete_declared_lock(tmp_path: Path) -
         "[project]\nname='d'\nversion='0.1.0'\ndependencies=['example']\n", encoding="utf-8"
     )
     calls: list[list[str]] = []
-    quality = QualityMCP(tmp_path, timeout_seconds=10)
+    quality = _quality(tmp_path, image=REAL, timeout_seconds=10)
 
     def record(args, **kwargs):
         calls.append(list(args))
@@ -737,7 +701,7 @@ def test_missing_workspace_is_reported_without_starting_a_server(tmp_path: Path)
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin TLS sandbox regression")
 def test_install_phase_can_download_over_real_pypi_tls(tmp_path: Path) -> None:
-    quality = QualityMCP(tmp_path, timeout_seconds=30)
+    quality = _quality(tmp_path, image=REAL, timeout_seconds=30)
     try:
         interpreter = quality._interpreter()
         environment = Path(interpreter).parent.parent
@@ -768,7 +732,7 @@ def test_quality_tool_requirements_come_from_exact_project_declarations(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(importlib.metadata, "version", lambda _name: "999.999")
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path, image=REAL)
 
     assert quality._quality_requirement("pytest") == "pytest==8.4.2"
     assert quality._quality_requirement("ruff") == "ruff==0.16.5"
@@ -853,7 +817,7 @@ def test_only_pip_install_subprocesses_receive_network_access(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     _patch_executor(monkeypatch, record)
-    quality = QualityMCP(tmp_path)
+    quality = _quality(tmp_path)
     try:
         assert quality.run_tests(AgentRole.TESTING).status is ToolStatus.SUCCESS
     finally:
@@ -896,7 +860,7 @@ def test_ruff_config_stays_inside_the_sandboxed_project(tmp_path: Path) -> None:
     )
     (project / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
 
-    quality = QualityMCP(project, timeout_seconds=180)
+    quality = _quality(project, image=REAL, timeout_seconds=180)
     try:
         linted = quality.run_linter(AgentRole.DEVELOPER)
         scanned = quality.run_security_scan(AgentRole.SECURITY)
