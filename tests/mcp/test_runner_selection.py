@@ -20,9 +20,9 @@ from engineering_team.mcp.runner import ProcessRunner
 PINNED = "python@sha256:" + "0" * 64
 
 
-def test_the_process_sandbox_stays_the_default(tmp_path: Path) -> None:
-    assert Settings().quality_runner == "process"
-    assert isinstance(QualityMCP(tmp_path)._runner, ProcessRunner)
+def test_the_container_is_the_default(tmp_path: Path) -> None:
+    """The default is the boundary that exists on every host, not this one."""
+    assert Settings().quality_runner == "container"
 
 
 def test_configuring_a_container_runner_selects_it(tmp_path: Path) -> None:

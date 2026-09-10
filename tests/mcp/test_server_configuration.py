@@ -40,7 +40,7 @@ def test_the_runner_choice_travels_as_an_argument(tmp_path) -> None:
 
 def test_the_default_carries_the_default(tmp_path) -> None:
     args = MCPQualityClient(tmp_path)._parameters().args
-    assert args[args.index("--runner") + 1] == "process"
+    assert args[args.index("--runner") + 1] == "container"
 
 
 def test_quality_timeout_travels_to_the_server(tmp_path) -> None:

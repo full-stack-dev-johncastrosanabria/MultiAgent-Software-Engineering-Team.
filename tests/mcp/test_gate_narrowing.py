@@ -54,7 +54,10 @@ def test_a_stack_without_filter_syntax_refuses_before_running_anything(
 def test_the_filter_reaches_quality_from_settings(tmp_path: Path) -> None:
     quality = QualityMCP(
         tmp_path,
-        settings=Settings(quality_test_filter="FullyQualifiedName!~E2ETests"),
+        settings=Settings(
+            quality_test_filter="FullyQualifiedName!~E2ETests",
+            quality_stack="dotnet",
+        ),
         profile=profile_for("dotnet"),
     )
     try:

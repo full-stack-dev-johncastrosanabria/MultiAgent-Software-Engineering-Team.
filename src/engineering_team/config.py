@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # auto-detected: a runner that varies silently by machine would isolate the
     # same run differently depending on whether a daemon happened to be up, and
     # nothing would say so -- the failure finding 5 describes for telemetry.
-    quality_runner: str = "process"
+    quality_runner: str = "container"
     quality_container_image: str = ""
     # ADR 14: a nonempty pinned image opts into a daemon owned by this run.
     quality_run_daemon_image: str = ""

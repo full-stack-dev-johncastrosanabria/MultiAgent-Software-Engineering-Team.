@@ -98,7 +98,8 @@ def test_a_testcontainers_suite_is_refused_before_the_run_not_during(
 
     `ContainerFetchException` after minutes of work names neither the cause nor
     the remedy. The refusal has to arrive before the work, and say where the
-    suite does run.
+    suite does run. Since ADR 14 that place is a daemon of the run's own, not
+    the process sandbox the first version of this refusal pointed at.
     """
     root = _component("<project>org.testcontainers</project>")
     quality = QualityMCP(
@@ -112,8 +113,9 @@ def test_a_testcontainers_suite_is_refused_before_the_run_not_during(
 
     assert result.status is ToolStatus.UNAVAILABLE
     assert result.duration_ms == 0
-    assert "quality_runner=process" in (result.error or "")
-    assert "ADR 10" in (result.error or "")
+    assert "quality_run_daemon_image" in (result.error or "")
+    assert "quality_run_daemon_images" in (result.error or "")
+    assert "ADR 14" in (result.error or "")
 
 
 def test_the_same_component_is_not_refused_on_the_process_sandbox() -> None:

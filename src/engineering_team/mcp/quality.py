@@ -175,8 +175,8 @@ class QualityMCP:
         self._prepared_tools: set[str] = set()
         self._python: str | None = None
         # An explicitly supplied runner always wins. Without settings the process
-        # sandbox is used, so constructing a QualityMCP directly does not depend on
-        # whatever .env happens to hold on this machine.
+        # sandbox is still used here; that fallback is the last internal caller
+        # of the process backend and is retired with it, not before.
         self._runner: CommandRunner = runner or (
             build_runner(self.root, settings) if settings is not None
             else ProcessRunner(self.root)
@@ -277,8 +277,9 @@ class QualityMCP:
         Testcontainers suite spends the run pulling an image it will never get
         and fails on a `ContainerFetchException` that names neither cause nor
         remedy. It did that three times in one benchmark before anyone read it
-        as a boundary rather than a flake. ADR 10 settles where such a suite
-        runs; saying so before the work starts is the whole point.
+        as a boundary rather than a flake. ADR 14 settles where such a suite
+        runs -- a daemon owned by the run; saying so before the work starts is
+        the whole point.
         """
         if not isinstance(self._runner, ContainerRunner):
             return None
@@ -294,9 +295,11 @@ class QualityMCP:
                 return RuntimeError(
                     f"{self.root.name} declares {marker} in {manifest}, and a "
                     "suite that starts its own containers cannot reach the "
-                    "Docker API from inside the quality container. Run this "
-                    "component with quality_runner=process (ADR 10); mounting "
-                    "the host socket is refused."
+                    "Docker API from inside the quality container. Give this "
+                    "run its own daemon: set quality_run_daemon_image to a "
+                    "digest-pinned dind image and name the suite's images in "
+                    "quality_run_daemon_images (ADR 14). Mounting the host "
+                    "socket is refused."
                 )
         return None
 
