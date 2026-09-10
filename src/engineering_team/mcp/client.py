@@ -80,6 +80,11 @@ class _MCPStdioClient:
                 # Explicit, because the SDK gives the child almost no environment.
                 "--runner", getattr(self.settings, "quality_runner", None) or "process",
                 "--image", getattr(self.settings, "quality_container_image", None) or "",
+                "--run-daemon-image",
+                getattr(self.settings, "quality_run_daemon_image", "") or "",
+                *[argument for image in (
+                    getattr(self.settings, "quality_run_daemon_images", ()) or ()
+                ) for argument in ("--run-daemon-suite-image", image)],
                 # ADR 4 (finding 19): read only by the quality server; the
                 # repository server always sees the whole tree regardless.
                 "--stack", getattr(self.settings, "quality_stack", None) or "python",

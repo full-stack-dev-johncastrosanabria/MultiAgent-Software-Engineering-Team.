@@ -1,8 +1,9 @@
 """Externally configurable runtime settings."""
 
+import re
 from pathlib import Path
 
-from pydantic import AliasChoices, Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Anchored to the repo root, not the caller's cwd: pydantic-settings resolves a
@@ -38,6 +39,25 @@ class Settings(BaseSettings):
     # nothing would say so -- the failure finding 5 describes for telemetry.
     quality_runner: str = "process"
     quality_container_image: str = ""
+    # ADR 14: a nonempty pinned image opts into a daemon owned by this run.
+    quality_run_daemon_image: str = ""
+    quality_run_daemon_images: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_run_daemon(self):
+        image = self.quality_run_daemon_image
+        if not image:
+            if self.quality_run_daemon_images:
+                raise ValueError("suite images require quality_run_daemon_image")
+            return self
+        if self.quality_runner != "container":
+            raise ValueError("run daemon requires quality_runner=container")
+        if not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", image):
+            raise ValueError("run daemon image must be pinned by digest")
+        for suite_image in self.quality_run_daemon_images:
+            if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._/:@-]*", suite_image):
+                raise ValueError("invalid run daemon suite image")
+        return self
     # ADR 4 (profile per component). Explicit QUALITY_STACK / quality_component_path
     # still win (the Flask process sets QUALITY_STACK=python and must keep that
     # path). When neither is set, apply_run detects every component and fans out

@@ -169,11 +169,13 @@ class _ProjectInfrastructureQuality:
         self.targets = targets
         self.timeout_seconds = timeout_seconds
         self.services = None
+        self.daemon = None
         self.backends = []
         self.quality = None
         self._closed = False
 
     def __enter__(self):
+        from engineering_team.mcp.container import ContainerRunner
         from engineering_team.mcp.quality import CompositeQuality, QualityMCP
         from engineering_team.services import ServiceStack, ServiceStartupError
         from engineering_team.stacks import profile_for
@@ -181,6 +183,14 @@ class _ProjectInfrastructureQuality:
         try:
             self.services = ServiceStack(self.root, str(uuid.uuid4()))
             self.services.up(time.monotonic() + self.timeout_seconds)
+            if self.settings.quality_run_daemon_image:
+                from engineering_team.mcp.run_daemon import RunDaemon
+
+                self.daemon = RunDaemon(
+                    image=self.settings.quality_run_daemon_image,
+                    images=self.settings.quality_run_daemon_images,
+                )
+                self.daemon.up(time.monotonic() + self.timeout_seconds)
             for component in self.targets:
                 component_root = self.root / component.path
                 child_settings = self.settings.model_copy(update={
@@ -196,6 +206,13 @@ class _ProjectInfrastructureQuality:
                     services=self.services,
                 )
                 self.backends.append(backend)
+                if self.daemon is not None:
+                    if not isinstance(backend._runner, ContainerRunner):
+                        raise RuntimeError(
+                            "QUALITY_RUN_DAEMON_IMAGE requires the container runner"
+                        )
+                    backend._runner.daemon = self.daemon
+                    backend._runner.owns_daemon = False
                 backend._services_started = True
                 backend._runner.network = self.services.network
                 backend._runner.networks = getattr(
@@ -223,6 +240,8 @@ class _ProjectInfrastructureQuality:
         with ExitStack() as cleanup:
             if self.services is not None:
                 cleanup.callback(self.services.down)
+            if self.daemon is not None:
+                cleanup.callback(self.daemon.down)
             for backend in self.backends:
                 cleanup.callback(backend.close)
 

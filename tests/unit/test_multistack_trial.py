@@ -103,16 +103,10 @@ def test_report_directory_cannot_bypass_interval(trial, tmp_path, monkeypatch):
 
 
 def test_each_case_runs_on_the_backend_its_suite_needs(trial, tmp_path, monkeypatch):
-    """ADR 10: a suite that drives containers itself runs under the process sandbox.
-
-    `order-ms` reaches for PostgreSQL and Kafka through Testcontainers while the
-    suite runs, and the quality container has no route to a Docker API. Nothing
-    checked this before, which is how the benchmark came to run every case on the
-    container runner while the decision said otherwise.
-    """
+    """ADR 14: Testcontainers gets an explicit daemon and cached suite images."""
     selected = []
     monkeypatch.setattr(trial, "Settings", lambda **kwargs: (
-        selected.append(kwargs["quality_runner"]) or SimpleNamespace(gemini_api_key_2=None)
+        selected.append(kwargs) or SimpleNamespace(gemini_api_key_2=None)
     ))
     monkeypatch.setattr(trial, "run_on_project", lambda *_, **__: {"final_status": "APPROVED"})
     monkeypatch.setattr(trial.time, "time", lambda: 2_000_000_000)
@@ -130,15 +124,20 @@ def test_each_case_runs_on_the_backend_its_suite_needs(trial, tmp_path, monkeypa
         trial.main()
         chosen[case] = selected.pop()
 
-    assert chosen["ingresos"] == "process"
-    assert chosen["northgate"] == "container"
-    assert chosen["interview"] == "container"
+    assert chosen["ingresos"]["quality_runner"] == "container"
+    assert "@sha256:" in chosen["ingresos"]["quality_run_daemon_image"]
+    assert chosen["ingresos"]["quality_run_daemon_images"] == (
+        "postgres:17-alpine", "apache/kafka:4.3.1",
+    )
+    for case in ("northgate", "interview"):
+        assert chosen[case]["quality_runner"] == "container"
+        assert chosen[case]["quality_run_daemon_image"] == ""
 
 
 def test_every_case_declares_a_backend(trial):
     """A case added without a runner must fail here, not silently inherit one."""
     for case, definition in trial.CASES.items():
-        assert len(definition) == 4, f"{case} does not declare a runner"
+        assert len(definition) == 6, f"{case} does not declare runner and daemon inputs"
         assert definition[3] in {"process", "container"}, case
 
 
