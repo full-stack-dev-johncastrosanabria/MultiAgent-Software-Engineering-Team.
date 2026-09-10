@@ -6,7 +6,7 @@
 ![Stacks](https://img.shields.io/badge/stacks-python_%7C_jvm_%7C_dotnet_%7C_go_%7C_node-blue)
 ![Modelos](https://img.shields.io/badge/modelos-nube_con_fallback_local-black)
 ![RAG](https://img.shields.io/badge/RAG-Chroma-yellow)
-![Aislamiento](https://img.shields.io/badge/aislamiento-sandbox--exec_%7C_bubblewrap_%7C_Docker-informational)
+![Aislamiento](https://img.shields.io/badge/aislamiento-Docker_%28unica_frontera%29-informational)
 ![HITL](https://img.shields.io/badge/HITL-HUMAN__REVIEW__REQUIRED-red)
 ![Ruff](https://img.shields.io/badge/lint-Ruff-D7FF64?logo=ruff&logoColor=black)
 ![Langfuse](https://img.shields.io/badge/observabilidad-Langfuse_%28opcional%29-purple)
@@ -35,8 +35,8 @@ flowchart LR
 ```
 
 - **Las herramientas viven detrás de MCP.** Un servidor de repositorio y otro de
-  calidad hablan por stdio; los comandos del proyecto corren en un sandbox de
-  proceso o en un contenedor Docker, nunca sobre el intérprete del operador.
+  calidad hablan por stdio; los comandos del proyecto corren siempre dentro de un
+  contenedor Docker, nunca sobre el intérprete del operador.
 - **Cada componente trae su propio toolchain.** Los perfiles `python`, `jvm`,
   `dotnet`, `go` y `node` declaran instalación, lint, pruebas, build, integridad
   de dependencias, evidencia de seguridad y migración de esquema.
@@ -54,7 +54,7 @@ en las [decisiones](docs/architecture/decisions/README.md).
 - Python ≥ 3.10
 - Un runtime de modelos: [Ollama](https://ollama.com) en local, o claves de
   proveedor en la nube
-- Docker, solo si se usa el runner en contenedor
+- Docker: el contenedor es la única frontera de ejecución, así que sin él no hay gate de calidad
 - Node, solo para el frontend
 
 ## Instalación

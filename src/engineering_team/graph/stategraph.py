@@ -49,7 +49,6 @@ from .routers import (
     trailing_failure_repetitions,
 )
 
-
 MAX_DEVELOPER_DEPENDENCY_DEPTH = 2
 MAX_DEVELOPER_DEPENDENCY_READS = 4
 

@@ -3,6 +3,10 @@
 Date: 2026-09-09. Status: accepted.
 Lifts the constraint in: [ADR 10](0010-integration-tests-need-the-host-docker-api.md)
 Reuses the boundary from: [ADR 5](0005-services-per-run.md)
+Follow-up taken by: [ADR 15](0015-container-only.md), which deleted the process
+backend this record left in place. The per-host table and the `ingresos` runner
+below describe the code as of this record's date; both are corrected in place,
+inline, where they no longer hold.
 
 ## Context
 
@@ -26,6 +30,10 @@ until now. The process sandbox is per-platform by construction:
 | macOS | `sandbox-exec` | Docker Desktop |
 | Linux | Bubblewrap | Docker |
 | Windows | refused (`mcp/runner.py:447`) | Docker Desktop |
+
+*Correction, 2026-09-10: the `process` column no longer exists. `mcp/runner.py`
+was deleted by [ADR 15](0015-container-only.md); the table is kept because the
+asymmetry it shows is the argument this record was written on.*
 
 Crossed with ADR 10, the table says something the project has not decided out
 loud: **a target project whose tests drive containers cannot be processed on
@@ -190,6 +198,11 @@ so `ingresos` selects `process` and a test fails if it stops doing so. Should
 this record ever be implemented, that is the line to revisit: a run-scoped
 daemon is what would let `ingresos` move back to `container` on purpose rather
 than by omission.
+
+*Correction, 2026-09-10: that line was revisited, and in the direction predicted
+— `ingresos` runs under `container` with a run-scoped daemon, which the trial
+recorded in [status](../../status.md) measured at 75 tests and 0 failures. Since
+[ADR 15](0015-container-only.md) there is no other value it could take.*
 
 The mechanism is proven; the platform claim it exists to serve is not. The
 evaluation ran a real Testcontainers client — not an inspection of one — inside

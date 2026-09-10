@@ -21,15 +21,22 @@ from engineering_team.components import Component
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole
 from engineering_team.mcp.client import MCPQualityClient
+from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.quality import CompositeQuality
-from engineering_team.mcp.runner import ProcessRunner
+
+PINNED = "python@sha256:" + "0" * 64
 
 
-class _Recorder(ProcessRunner):
-    """Records argv instead of running anything."""
+class _Recorder(ContainerRunner):
+    """Records argv instead of running anything.
+
+    It subclasses the boundary the gate really uses, so what argv this asserts
+    on is what a container would have been handed. Nothing is executed, so the
+    digest never has to resolve.
+    """
 
     def __init__(self, root: Path) -> None:
-        super().__init__(root)
+        super().__init__(root, image=PINNED)
         self.commands: list[list[str]] = []
 
     def require_available(self) -> None:

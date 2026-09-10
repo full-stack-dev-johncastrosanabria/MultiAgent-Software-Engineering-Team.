@@ -871,3 +871,63 @@ def test_ruff_config_stays_inside_the_sandboxed_project(tmp_path: Path) -> None:
         combined = (result.output_summary or "") + (result.error or "")
         assert "Failed to read" not in combined, combined[:200]
         assert result.status is not ToolStatus.UNAVAILABLE
+
+
+def test_a_project_at_the_mount_root_still_imports_its_own_modules(
+    tmp_path: Path,
+) -> None:
+    """The mount point must not turn the project root into a package.
+
+    The evaluation workspace is exactly this shape -- an `__init__.py` at the
+    root next to the package under test -- and under a mount named `workspace`
+    pytest walked up past it, so `from app.service import ...` stopped
+    resolving and every scenario ran the repair loop over a green project.
+    """
+    (tmp_path / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "app" / "service.py").write_text(
+        "def balance() -> int:\n    return 1\n", encoding="utf-8"
+    )
+    (tmp_path / "test_acceptance.py").write_text(
+        "from app.service import balance\n\n"
+        "def test_balance() -> None:\n    assert balance() == 1\n",
+        encoding="utf-8",
+    )
+
+    quality = _quality(tmp_path, image=REAL, timeout_seconds=180)
+    try:
+        result = quality.run_tests(AgentRole.TESTING)
+        assert result.status is ToolStatus.SUCCESS, (
+            result.error or result.output_summary
+        )
+    finally:
+        quality.close()
+
+
+def test_ruff_reads_the_project_configuration_from_inside_the_container(
+    tmp_path: Path,
+) -> None:
+    """An absolute host path is not a path the linter can open.
+
+    `--config` used to carry the host location of pyproject.toml, which does not
+    exist inside the container: ruff refused with "invalid value for --config"
+    and every Python component came back FAIL for a reason that named neither
+    the project nor the boundary.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0"\n'
+        'requires-python = ">=3.13,<3.14"\n\n'
+        "[tool.ruff]\nline-length = 100\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    quality = _quality(tmp_path, image=REAL, timeout_seconds=180)
+    try:
+        result = quality.run_linter(AgentRole.DEVELOPER)
+        detail = f"{result.error or ''}{result.output_summary or ''}"
+        assert "--config" not in detail, detail
+        assert result.status is ToolStatus.SUCCESS, detail
+    finally:
+        quality.close()

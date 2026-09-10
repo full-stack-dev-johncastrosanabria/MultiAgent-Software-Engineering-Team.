@@ -13,9 +13,8 @@ from pathlib import Path
 import pytest
 
 from engineering_team.config import Settings
-from engineering_team.mcp.container import ContainerRunner
+from engineering_team.mcp.container import ENVIRONMENT_MOUNT, ContainerRunner
 from engineering_team.mcp.quality import QualityMCP, build_runner
-from engineering_team.mcp.runner import ProcessRunner
 
 PINNED = "python@sha256:" + "0" * 64
 
@@ -39,16 +38,29 @@ def test_an_unknown_runner_fails_closed(tmp_path: Path) -> None:
         QualityMCP(tmp_path, settings=settings)
 
 
-def test_a_container_runner_without_an_image_fails_closed(tmp_path: Path) -> None:
-    """Choosing containers without saying which image is not a runnable choice."""
+def test_a_project_that_constrains_nothing_still_gets_a_boundary(
+    tmp_path: Path,
+) -> None:
+    """A project with no pins is not a project that cannot be run.
+
+    ADR 2 refused here, and while the process sandbox existed that refusal cost
+    nothing: such a project ran on the operator's own interpreter. With the
+    container as the only boundary it means no gate at all, so the run takes the
+    newest interpreter this repository ships an image for. What finding 11
+    guarded against is untouched: a project whose pins do constrain the choice
+    is still decided by them.
+    """
+    from engineering_team.interpreter import PYTHON_IMAGES
+
     settings = Settings(quality_runner="container", quality_container_image="")
-    with pytest.raises(ValueError, match="image"):
-        QualityMCP(tmp_path, settings=settings)
+    quality = QualityMCP(tmp_path, settings=settings)
+
+    assert quality._runner.image == PYTHON_IMAGES[max(PYTHON_IMAGES)]
 
 
 def test_an_explicit_runner_argument_still_wins(tmp_path: Path) -> None:
     """Tests and callers that build their own runner are not overridden by config."""
-    injected = ProcessRunner(tmp_path)
+    injected = ContainerRunner(tmp_path, image="python@sha256:" + "b" * 64)
     settings = Settings(quality_runner="container", quality_container_image=PINNED)
     assert QualityMCP(tmp_path, runner=injected, settings=settings)._runner is injected
 
@@ -74,11 +86,11 @@ def test_the_served_backend_honours_configuration(tmp_path: Path, monkeypatch) -
 # -- ADR 4: the commands come from the component's profile -------------------
 
 
-class _Recorder(ProcessRunner):
-    """A process runner that records argv instead of running anything."""
+class _Recorder(ContainerRunner):
+    """A container runner that records argv instead of running anything."""
 
     def __init__(self, root: Path) -> None:
-        super().__init__(root)
+        super().__init__(root, image=PINNED)
         self.commands: list[list[str]] = []
 
     def require_available(self) -> None:
@@ -153,7 +165,8 @@ def test_an_explicit_profile_still_overrides_the_configured_stack(
 
 
 def test_an_unconfigured_stack_still_defaults_to_python(tmp_path: Path) -> None:
-    assert QualityMCP(tmp_path).profile.name == "python"
+    quality = QualityMCP(tmp_path, runner=ContainerRunner(tmp_path, image=PINNED))
+    assert quality.profile.name == "python"
 
 
 def test_an_unknown_quality_stack_fails_closed(tmp_path: Path) -> None:
@@ -177,7 +190,8 @@ def test_a_container_runner_for_a_non_python_stack_uses_the_profiles_own_image(
 def test_python_remains_the_default_profile(tmp_path: Path) -> None:
     from engineering_team.stacks import profile_for
 
-    assert QualityMCP(tmp_path).profile is profile_for("python")
+    quality = QualityMCP(tmp_path, runner=ContainerRunner(tmp_path, image=PINNED))
+    assert quality.profile is profile_for("python")
 
 
 # -- finding 3: nothing installs into the interpreter that is running us ------
@@ -202,24 +216,17 @@ def test_no_command_ever_runs_the_interpreter_this_process_uses(tmp_path: Path) 
         )
 
 
-def test_the_environment_is_built_from_the_base_interpreter_not_the_current_one() -> None:
-    """`sys._base_executable` is what allows HOME to be closed even when the MCP
-    process itself was started from the operator's virtual environment."""
-    import inspect
-
-    from engineering_team.mcp.runner import ProcessRunner
-
-    source = inspect.getsource(ProcessRunner._base_interpreter)
-    assert "_base_executable" in source
-
-
 def test_each_quality_instance_provisions_its_own_environment(tmp_path: Path) -> None:
-    """Two runs must not share what one of them installed."""
-    first = ProcessRunner(tmp_path / "a")
-    second = ProcessRunner(tmp_path / "b")
-    assert first.environment is None and second.environment is None
-    first.environment = tmp_path / "env-a"
-    assert second.environment is None, "environments are per runner, not global"
+    """Two runs must not share what one of them installed.
+
+    Both runners mount their environment at the same path inside their own
+    container, so what separates them is not the path but the volume behind it.
+    """
+    first = ContainerRunner(tmp_path / "a", image=PINNED)
+    second = ContainerRunner(tmp_path / "b", image=PINNED)
+
+    assert first.environment == second.environment == Path(ENVIRONMENT_MOUNT)
+    assert first._volume != second._volume, "environments are per runner, not global"
 
 
 # -- the project's services come up before its tests run ---------------------
@@ -417,12 +424,16 @@ def test_an_explicit_image_is_never_overridden(tmp_path: Path) -> None:
     assert runner.image == pinned
 
 
-def test_no_derivable_interpreter_still_needs_an_image(tmp_path: Path) -> None:
-    """Refusing beats silently choosing one the project never asked for."""
+def test_an_interpreter_no_image_carries_is_refused_by_name(tmp_path: Path) -> None:
+    """Silently running a declared 3.15 project on 3.13 is the finding 11 shape.
+
+    Nothing constraining the choice is one thing; a project that states an
+    interpreter no image carries is another, and the refusal has to name the
+    version it asked for.
+    """
     from engineering_team.config import Settings
-    from engineering_team.delivery import DeliveryRefused
     from engineering_team.mcp.quality import build_runner
 
     settings = Settings(quality_runner="container")
-    with pytest.raises((ValueError, DeliveryRefused), match="image"):
-        build_runner(tmp_path, settings, interpreter=lambda _root: None)
+    with pytest.raises(KeyError, match="3.15"):
+        build_runner(tmp_path, settings, interpreter=lambda _root: (3, 15))

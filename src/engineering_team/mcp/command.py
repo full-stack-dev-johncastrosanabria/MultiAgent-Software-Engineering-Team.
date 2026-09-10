@@ -1,9 +1,10 @@
 """What every runner agrees on, independent of the boundary it enforces.
 
-A command, the protocol that runs one, and the two small utilities both
-backends need. This module knows nothing about processes or containers: it is
-what `ProcessRunner` and `ContainerRunner` have in common, extracted so the
-contract outlives either implementation.
+A command, the protocol that runs one, and the two small utilities a backend
+needs. This module knows nothing about how a boundary is enforced. It was
+extracted while there were two backends so the contract would outlive either;
+`ContainerRunner` is the only one left (ADR 15), and the contract still does
+not name it.
 """
 
 from __future__ import annotations

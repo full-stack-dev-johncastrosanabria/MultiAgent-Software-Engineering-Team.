@@ -37,7 +37,6 @@ flowchart LR
     RMCP["RepositoryMCP"]
     QMCP["QualityMCP"]
     CMD["mcp/command.py<br/>CommandRunner"]
-    RUN["mcp/runner.py<br/>proceso · sandbox-exec · Bubblewrap"]
     CONT["mcp/container.py<br/>Docker"]
     SP["stacks.py<br/>python · jvm · dotnet · go · node"]
     SVC["services.py<br/>ServiceStack por run"]
@@ -68,10 +67,8 @@ flowchart LR
   QMCP --> SP
   QMCP --> CMD
   QMCP --> SVC
-  CMD --> RUN
   CMD --> CONT
   RMCP --> WS
-  RUN --> WS
   CONT --> WS
   AG --> CT
   G --> RS
@@ -175,11 +172,13 @@ repositorio y calidad por stdio.
 operaciones de calidad.
 [command.py](../../src/engineering_team/mcp/command.py) declara el contrato
 `CommandRunner` y lo que toda ejecución comparte —el comando, su límite de
-salida y su plazo—; [runner.py](../../src/engineering_team/mcp/runner.py) y
-[container.py](../../src/engineering_team/mcp/container.py) implementan los dos
-mecanismos de ejecución. El contrato vive aparte de sus implementaciones porque
-sobrevive a cualquiera de ellas. Esa separación es la
-[decisión 3](decisions/0003-split-quality-mcp.md), y el runner en contenedor, la
+salida y su plazo—; [container.py](../../src/engineering_team/mcp/container.py)
+es su única implementación: todo comando de calidad corre dentro de un
+contenedor Docker. El contrato vive aparte porque sobrevivió a la
+implementación que ya no está —el sandbox de proceso con `sandbox-exec` y
+Bubblewrap, retirado en la [decisión 15](decisions/0015-container-only.md)—.
+Esa separación es la [decisión 3](decisions/0003-split-quality-mcp.md), y el
+runner en contenedor, la
 [decisión 2](decisions/0002-container-runner.md).
 
 [stacks.py](../../src/engineering_team/stacks.py) declara los perfiles `python`,

@@ -53,7 +53,6 @@ def test_mcp_server_runs_the_same_source_tree_as_its_parent(
     described only the parent.
     """
     import engineering_team
-
     from engineering_team.mcp.client import _parent_aset_src
 
     expected = Path(engineering_team.__file__).resolve().parents[1]

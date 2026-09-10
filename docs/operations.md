@@ -37,7 +37,7 @@ python3 -m engineering_team.cli run-project --help
 
 ## Calidad y servicios
 
-`QUALITY_RUNNER=container` selecciona el runner de contenedor de [QualityMCP](../src/engineering_team/mcp/quality.py); el default de clase es `process`. Los campos `quality_stack`, `quality_component_path`, `quality_test_filter` y `quality_timeout_seconds` están en [Settings](../src/engineering_team/config.py). La selección efectiva pasa por [apply_run.py](../src/engineering_team/apply_run.py).
+`QUALITY_RUNNER=container` es el único valor admitido y el default de clase: [QualityMCP](../src/engineering_team/mcp/quality.py) rechaza por nombre cualquier otro desde que el sandbox de proceso se retiró ([decisión 15](architecture/decisions/0015-container-only.md)). Docker pasa a ser requisito para correr el gate. Los campos `quality_stack`, `quality_component_path`, `quality_test_filter` y `quality_timeout_seconds` están en [Settings](../src/engineering_team/config.py). La selección efectiva pasa por [apply_run.py](../src/engineering_team/apply_run.py).
 
 Consultar [perfiles](../src/engineering_team/stacks.py) para comandos e imágenes y [servicios](../src/engineering_team/services.py) para infraestructura y preparación. No asumir que iniciar un servicio equivale a tener listo su esquema o sus datos.
 

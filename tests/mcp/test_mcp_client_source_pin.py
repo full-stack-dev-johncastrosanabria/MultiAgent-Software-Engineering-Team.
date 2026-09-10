@@ -14,7 +14,6 @@ from pathlib import Path
 import engineering_team
 from engineering_team.mcp.client import (
     MCPQualityClient,
-    _mcp_server_bootstrap,
     _parent_aset_src,
 )
 
@@ -38,15 +37,15 @@ def test_parameters_keep_isolation_and_pin_parent_src(tmp_path: Path) -> None:
 
 
 def test_bootstrap_child_loads_parent_src_not_main_only() -> None:
-    """A -I child with the bootstrap must import runner from the pinned src."""
+    """A -I child with the bootstrap must import the runner from the pinned src."""
     src = _parent_aset_src()
     probe = (
-        "import runpy, sys, json;"
+        "import sys, json;"
         f"sys.path.insert(0, {json.dumps(str(src))});"
-        "import engineering_team.mcp.runner as r;"
+        "import engineering_team.mcp.container as c;"
         "print(json.dumps({"
-        "'file': r.__file__,"
-        "'has_scratch': hasattr(r.ProcessRunner, 'prepare_scratch')"
+        "'file': c.__file__,"
+        "'api': sorted(n for n in dir(c.ContainerRunner) if not n.startswith('__'))"
         "}))"
     )
     completed = subprocess.run(
@@ -57,10 +56,10 @@ def test_bootstrap_child_loads_parent_src_not_main_only() -> None:
     )
     payload = json.loads(completed.stdout.strip())
     assert Path(payload["file"]).resolve().is_relative_to(src.resolve())
-    # Worktree with D2 exposes prepare_scratch; MAIN does not. Assert the pin
-    # matched the parent tree either way via path, and scratch matches parent.
-    parent_has = hasattr(
-        __import__("engineering_team.mcp.runner", fromlist=["ProcessRunner"]).ProcessRunner,
-        "prepare_scratch",
+    # Path alone shows where the child read from; the API shows it read the same
+    # revision this process did, which is what a worktree can differ on.
+    import engineering_team.mcp.container as parent
+
+    assert payload["api"] == sorted(
+        name for name in dir(parent.ContainerRunner) if not name.startswith("__")
     )
-    assert payload["has_scratch"] is parent_has

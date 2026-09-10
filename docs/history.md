@@ -1,5 +1,38 @@
 # Historia documental
 
+## 2026-09-10 — Retirada del sandbox de proceso: el contenedor es la única frontera
+
+Se eliminaron `src/engineering_team/mcp/runner.py` (~1.025 líneas) y su suite
+`tests/mcp/test_process_sandbox.py`. `CommandRunner` queda con una sola
+implementación, `ContainerRunner`, y Docker pasa a ser dependencia dura para
+correr el gate. El razonamiento completo, incluido lo que la retirada **no**
+demuestra, está en la [decisión 15](architecture/decisions/0015-container-only.md);
+la [decisión 10](architecture/decisions/0010-integration-tests-need-the-host-docker-api.md)
+queda superseded en su elección de backend, pero su negativa a montar el socket
+del host sigue vigente.
+
+Esto es una eliminación de código funcional y revisado, no de código muerto. Se
+hace porque la [decisión 14](architecture/decisions/0014-a-docker-api-that-is-not-the-hosts.md)
+retiró la única razón que mantenía vivo el segundo backend, y porque mantener
+dos implementaciones obligaba a argumentar cada cambio del gate dos veces. El
+camino de vuelta es git, y volvería como decisión con la evidencia de plataforma
+que hoy falta, no como fallback silencioso.
+
+Lo que la retirada dejó a la vista importa más que lo que borró: al quedar el
+contenedor como único camino que las pruebas ejercitan, aparecieron cuatro
+defectos que el sandbox de proceso ocultaba —una ruta del host pasada a `ruff
+--config`, un punto de montaje que convertía el proyecto en paquete de Python,
+un proyecto sin restricciones que se quedaba sin intérprete y un piso
+`>=3.10` leído como afirmación—. Los cuatro están corregidos en el mismo cambio
+y descritos en la decisión 15.
+
+Documentación corregida en el mismo cambio, en lugar de reescrita: la tabla de
+soporte por plataforma de [estado](status.md), la fila de lint que citaba el
+archivo eliminado, la afirmación de que `QUALITY_RUNNER=process` era el default,
+`.env.example`, la insignia de aislamiento del README y dos correcciones
+fechadas dentro de la decisión 14. El texto anterior no se borró donde
+registraba algo que fue cierto; se anotó.
+
 ## 2026-09-09 — Corrección: las decisiones de arquitectura vuelven a la documentación activa
 
 La reorganización del 2026-09-08 archivó los 24 archivos de `docs/architecture/`,

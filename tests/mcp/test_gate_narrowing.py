@@ -13,6 +13,7 @@ from pathlib import Path
 
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole, ToolStatus
+from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.quality import QualityMCP
 from engineering_team.stacks import profile_for
 
@@ -39,7 +40,10 @@ def test_a_stack_without_filter_syntax_refuses_before_running_anything(
     the work, like the Testcontainers one in ADR 10.
     """
     quality = QualityMCP(
-        tmp_path, profile=profile_for("jvm"), test_filter="SomeExpression"
+        tmp_path,
+        runner=ContainerRunner(tmp_path, image=profile_for("jvm").image),
+        profile=profile_for("jvm"),
+        test_filter="SomeExpression",
     )
     try:
         result = quality.run_tests(AgentRole.TESTING)

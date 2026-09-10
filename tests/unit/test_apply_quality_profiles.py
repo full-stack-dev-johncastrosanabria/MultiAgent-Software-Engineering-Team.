@@ -14,8 +14,8 @@ from engineering_team.apply_run import (
 )
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole
+from engineering_team.mcp.command import CommandRequest
 from engineering_team.mcp.quality import CompositeQuality
-from engineering_team.mcp.runner import CommandRequest
 
 
 class FakeRunner:
