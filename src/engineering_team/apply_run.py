@@ -29,6 +29,7 @@ from engineering_team.delivery import (
     Proposal,
     build_delivery,
 )
+from engineering_team.docker_labels import project_slug, sweep
 from engineering_team.graph.stategraph import build_engineering_graph
 from engineering_team.llm.cloud import CloudModelRuntime
 from engineering_team.llm.runtime import LocalModelRuntime
@@ -87,6 +88,7 @@ def open_project_quality(
     *,
     timeout_seconds: float,
     runner: Any | None = None,
+    run_id: str = "",
 ) -> Any:
     """Quality handle for an apply run: one MCP client, or a per-component fan-out.
 
@@ -101,7 +103,9 @@ def open_project_quality(
     targets = quality_targets_for(settings, project_root)
     container_run = settings.quality_runner == "container" and runner is None
     if container_run:
-        return _ProjectInfrastructureQuality(project_root, settings, targets, timeout_seconds)
+        return _ProjectInfrastructureQuality(
+            project_root, settings, targets, timeout_seconds, run_id=run_id
+        )
     if len(targets) == 1 and runner is None:
         component = targets[0]
         adjusted = settings.model_copy(
@@ -163,8 +167,12 @@ class _ProjectInfrastructureQuality:
 
     transport = "direct-backend"
 
-    def __init__(self, root, settings, targets, timeout_seconds):
+    def __init__(self, root, settings, targets, timeout_seconds, *, run_id: str = ""):
         self.root = root
+        # Every Docker resource this opens says which run and which project it
+        # belongs to (ADR 16), so a crash leaves something the sweep can read.
+        self.run_id = run_id
+        self.project = project_slug(root)
         self.settings = settings
         self.targets = targets
         self.timeout_seconds = timeout_seconds
@@ -181,7 +189,12 @@ class _ProjectInfrastructureQuality:
         from engineering_team.stacks import profile_for
 
         try:
-            self.services = ServiceStack(self.root, str(uuid.uuid4()))
+            # The sweep runs before anything is started: what a crashed run left
+            # behind is removed now, and only what no live run owns.
+            sweep(self.run_id)
+            self.services = ServiceStack(
+                self.root, self.run_id or str(uuid.uuid4()), project=self.project
+            )
             self.services.up(time.monotonic() + self.timeout_seconds)
             if self.settings.quality_run_daemon_image:
                 from engineering_team.mcp.run_daemon import RunDaemon
@@ -189,6 +202,8 @@ class _ProjectInfrastructureQuality:
                 self.daemon = RunDaemon(
                     image=self.settings.quality_run_daemon_image,
                     images=self.settings.quality_run_daemon_images,
+                    run_id=self.run_id or None,
+                    project=self.project,
                 )
                 self.daemon.up(time.monotonic() + self.timeout_seconds)
             for component in self.targets:
@@ -204,6 +219,8 @@ class _ProjectInfrastructureQuality:
                     profile=profile_for(component.stack),
                     component=component.path or ("." if len(self.targets) > 1 else ""),
                     services=self.services,
+                    run_id=self.run_id,
+                    project=self.project,
                 )
                 self.backends.append(backend)
                 if self.daemon is not None:
@@ -310,6 +327,7 @@ def execute_on_project(
             project_root,
             settings,
             timeout_seconds=settings.quality_timeout_seconds,
+            run_id=run_id,
         ) as quality_mcp,
     ):
         graph = build_engineering_graph(

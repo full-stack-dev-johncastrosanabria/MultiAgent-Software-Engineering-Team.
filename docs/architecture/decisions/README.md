@@ -26,7 +26,7 @@ belongs to [status](../../status.md).
 | [13](0013-a-prompt-is-redacted-before-it-is-refused.md) | A prompt is redacted before it is refused | accepted |
 | [14](0014-a-docker-api-that-is-not-the-hosts.md) | The run gets a Docker API that is not the host's | accepted |
 | [15](0015-container-only.md) | The process sandbox is retired: the container is the only boundary | accepted |
-| [16](0016-every-docker-resource-carries-its-run.md) | Every Docker resource carries its run and its project, and nothing running outlives the run | accepted, not implemented |
+| [16](0016-every-docker-resource-carries-its-run.md) | Every Docker resource carries its run and its project, and nothing running outlives the run | accepted, implemented |
 | [17](0017-the-project-lives-in-the-run.md) | The project lives in the run, not on the operator's disk | accepted, not implemented |
 | [18](0018-missing-infrastructure-is-a-blocking-prerequisite.md) | Missing infrastructure is a blocking prerequisite, delivered on its own | accepted, not implemented |
 

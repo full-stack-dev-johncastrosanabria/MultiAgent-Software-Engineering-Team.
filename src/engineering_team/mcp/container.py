@@ -24,6 +24,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from engineering_team.docker_labels import label_arguments
 from engineering_team.mcp.command import (
     _OUTPUT_LIMIT,
     CommandRequest,
@@ -78,6 +79,8 @@ class ContainerRunner:
         networks: tuple[str, ...] = (),
         daemon: RunDaemon | None = None,
         owns_daemon: bool = False,
+        run_id: str = "",
+        project: str = "",
     ) -> None:
         if not allow_unpinned_image and not _DIGEST_PINNED.match(image):
             raise ValueError(
@@ -100,6 +103,13 @@ class ContainerRunner:
         # the default bridge as well -- see _run_container.
         self.networks = tuple(dict.fromkeys(networks or ((network,) if network else ())))
         self.network = network or (self.networks[0] if self.networks else None)
+        # Which run and which project every resource this runner creates says
+        # it belongs to (ADR 16). Empty is accepted so a test that only spies on
+        # argv does not have to invent a run, and the labels still carry the
+        # owner, which is what the sweep filters on first.
+        self.run_id = run_id
+        self.project = project
+        self._labels = label_arguments(run_id, project)
         self._token = uuid.uuid4().hex[:12]
         self._volume = f"aset-env-{self._token}"
         self._sequence = 0
@@ -229,6 +239,7 @@ class ContainerRunner:
             "--rm",
             "--name",
             name,
+            *self._labels,
             # The container is the boundary; nothing inside needs to raise
             # privilege, and nothing outside is reachable but the two mounts.
             "--cap-drop",
@@ -324,7 +335,8 @@ class ContainerRunner:
         if self._volume_created:
             return
         created = self._quiet(
-            [self.runtime, "volume", "create", self._volume], timeout=60
+            [self.runtime, "volume", "create", *self._labels, self._volume],
+            timeout=60,
         )
         if created is None or created.returncode != 0:
             raise RuntimeError("quality container environment volume was not created")
@@ -344,6 +356,7 @@ class ContainerRunner:
         handed = self._quiet(
             [
                 self.runtime, "run", "--rm",
+                *self._labels,
                 "--user", "0:0",
                 "--network", "none",
                 "--cap-drop", "ALL",

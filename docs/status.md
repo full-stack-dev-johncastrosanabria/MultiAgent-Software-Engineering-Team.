@@ -146,6 +146,49 @@ proyecto de entrevista, y sus credenciales coinciden con las de
 no lo arrancó el camino de la [decisión 5](architecture/decisions/0005-services-per-run.md).
 Se deja intacto por esa razón.
 
+## Comprobaciones del 2026-09-10 (implementación de la decisión 16)
+
+Corresponden a la
+[decisión 16](architecture/decisions/0016-every-docker-resource-carries-its-run.md),
+que pasa de «aceptada, no implementada» a **aceptada, implementada**. Ejecutadas
+en macOS 27.0 arm64 con Docker Desktop, en entorno limpio (`env -i`) y con el
+intérprete del venv del repositorio.
+
+| Comprobación | Resultado |
+|---|---|
+| Suite completa `tests/` | 918 tests, 902 pasan, 16 omitidos, **0 fallos**, 399.5 s |
+| Tests nuevos del etiquetado y del barrido | 16, todos pasan (`tests/unit/test_docker_labels.py`) |
+| `ruff check src/engineering_team` | sin hallazgos nuevos; los 2 restantes son previos a este cambio |
+
+Lo que hace el código ahora, y dónde:
+
+| Recurso | Dónde se etiqueta |
+|---|---|
+| Contenedor por comando | `mcp/container.py`, `_container_command` |
+| Volumen de entorno del run | `mcp/container.py`, `_ensure_volume` |
+| Contenedor demonio y su red | `mcp/run_daemon.py`, `up` |
+| Servicios, redes y volúmenes de compose | `services.py`, `override_document` |
+| Proyecto compose | `services.py`: `aset-<proyecto>`, ya no `aset-<run_id>` |
+| Barrido al arrancar un run | `apply_run.py`, `_ProjectInfrastructureQuality.__enter__` |
+| Barrido a mano | `engineering-team docker-sweep` |
+
+**Corrección fechada al hallazgo de la sección anterior.** La fila «ASET no
+etiqueta ningún recurso — `grep -rn -- '--label' src` no devuelve nada» describe
+el estado **anterior** a este cambio y se conserva como evidencia de por qué se
+tomó la decisión; hoy ese mismo `grep` sí devuelve resultados.
+
+**Dos límites que la decisión 16 no consigue, declarados en el propio récord.**
+La caché de build no se recoge por etiqueta: BuildKit no filtra su poda por
+etiquetas, así que el barrido automático no la toca y el comando de operador
+ofrece `--build-cache`, que poda la del demonio entero y lo advierte. Y ASET no
+construye imágenes hoy —ningún punto de `src/` ejecuta `docker build`—, de modo
+que la mitad del barrido dedicada a imágenes está escrita y probada pero no
+recoge nada todavía.
+
+No medido todavía: el barrido no se ha ejercitado contra un run caído real en
+este host. Lo que hay es la suite; no hay aún una corrida que deje recursos
+huérfanos a propósito y los recoja al arrancar la siguiente.
+
 ## Soporte por plataforma
 
 **Corrección del 2026-09-10 ([decisión 15](architecture/decisions/0015-container-only.md)).**

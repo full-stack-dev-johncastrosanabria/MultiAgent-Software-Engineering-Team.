@@ -49,7 +49,8 @@ _DISTRIBUTION_NAME = "autonomous-engineering-team"
 
 
 def build_runner(
-    root: Path, settings: Settings, *, interpreter: Any = None
+    root: Path, settings: Settings, *, interpreter: Any = None,
+    run_id: str = "", project: str = "",
 ) -> CommandRunner:
     """Pick the boundary named by configuration, or refuse to guess.
 
@@ -86,10 +87,14 @@ def build_runner(
 
         daemon = (
             RunDaemon(image=settings.quality_run_daemon_image,
-                      images=settings.quality_run_daemon_images)
+                      images=settings.quality_run_daemon_images,
+                      run_id=run_id or None, project=project)
             if settings.quality_run_daemon_image else None
         )
-        return ContainerRunner(root, image=image, daemon=daemon, owns_daemon=daemon is not None)
+        return ContainerRunner(
+            root, image=image, daemon=daemon, owns_daemon=daemon is not None,
+            run_id=run_id, project=project,
+        )
     raise ValueError(f"unknown quality_runner: {choice!r}")
 
 
@@ -137,6 +142,8 @@ class QualityMCP:
         component: str = "",
         services: Any = None,
         test_filter: str = "",
+        run_id: str = "",
+        project: str = "",
     ) -> None:
         self.root = Path(root).resolve()
         # Which ecosystem's commands to run. An explicit profile (how every
@@ -175,8 +182,13 @@ class QualityMCP:
         # An explicitly supplied runner always wins. Without one the boundary is
         # whatever configuration names, and configuration names a container by
         # default (ADR 15): there is no second backend left to fall back to.
+        # Which run these containers belong to (ADR 16). It reaches the runner
+        # and nothing else: a label is bookkeeping, never a boundary.
+        self.run_id = run_id
+        self.project = project
         self._runner: CommandRunner = runner or build_runner(
-            self.root, settings if settings is not None else Settings()
+            self.root, settings if settings is not None else Settings(),
+            run_id=run_id, project=project,
         )
         self._environment_lock = threading.RLock()
         self._mutation_lock = threading.Lock()

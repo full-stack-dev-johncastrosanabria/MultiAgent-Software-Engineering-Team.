@@ -28,7 +28,7 @@ def infrastructure(tmp_path, monkeypatch):
         network = "aset-test-default"
         networks = ("aset-test-default", "aset-test-admin")
 
-        def __init__(self, root, run_id):
+        def __init__(self, root, run_id, project=""):
             assert root == tmp_path
             stacks.append(self)
 
@@ -65,7 +65,10 @@ def infrastructure(tmp_path, monkeypatch):
             events.append("close")
 
     monkeypatch.setattr("engineering_team.services.ServiceStack", Stack)
-    monkeypatch.setattr("engineering_team.mcp.quality.build_runner", lambda root, _: Runner(root))
+    monkeypatch.setattr(
+        "engineering_team.mcp.quality.build_runner",
+        lambda root, _settings, **_kwargs: Runner(root),
+    )
     monkeypatch.setattr(apply_run, "quality_targets_for", lambda *_: [
         Component(path="one", stack="jvm", manifest="pom.xml"),
         Component(path="two", stack="jvm", manifest="pom.xml"),
@@ -301,10 +304,13 @@ def test_prueba_services_get_isolated_names_without_rejecting_multiple_networks(
         "networks": {"pedidos-net": {}, "admin-net": {}},
         "volumes": {"postgres-data": {}, "kafka-data": {}},
     })
-    stack = ServiceStack(tmp_path, "prueba")
+    # The compose project is the project's name, not the run's (ADR 16): the
+    # run id is what the labels carry, and is deliberately not in these names.
+    stack = ServiceStack(tmp_path, "apply-3f2a", project="prueba")
     document = override_document(
         stack.services, ("pedidos-net", "admin-net"), stack.project,
         ("postgres-data", "kafka-data"),
+        run_id=stack.run_id, slug=stack.slug,
     )
     for service in ("kafka", "kafka-init", "postgres"):
         assert f"container_name: aset-prueba-{service}" in document

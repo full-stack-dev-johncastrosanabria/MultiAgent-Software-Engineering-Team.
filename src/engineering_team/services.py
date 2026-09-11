@@ -28,6 +28,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from engineering_team.contracts.enums import ErrorCode
+from engineering_team.docker_labels import (
+    OWNER_FILTER,
+    PROJECT_LABEL,
+    RUN_LABEL,
+    compose_label_lines,
+    project_slug,
+)
 from engineering_team.topology import (
     DELIVERY,
     RUN,
@@ -146,6 +153,8 @@ def override_document(
     networks: tuple[str, ...] = ("default",),
     project: str = "",
     volumes: tuple[str, ...] = (),
+    run_id: str = "",
+    slug: str = "",
 ) -> str:
     """The override compose is given as its second `-f`.
 
@@ -164,6 +173,7 @@ def override_document(
         lines += [f"  {name}:", "    ports: !override []"]
         if project:
             lines.append(f"    container_name: {project}-{name}")
+        lines += compose_label_lines(run_id, slug, indent="    ")
     lines.append("networks:")
     for name in networks or ("default",):
         lines.append(f"  {name}:")
@@ -173,10 +183,12 @@ def override_document(
             # either one's teardown would remove it under the other.
             lines.append(f"    name: {project}-{name}")
         lines.append("    internal: true")
+        lines += compose_label_lines(run_id, slug, indent="    ")
     if volumes and project:
         lines.append("volumes:")
         for name in volumes:
             lines += [f"  {name}:", f"    name: {project}-{name}"]
+            lines += compose_label_lines(run_id, slug, indent="    ")
     lines.append("")
     return "\n".join(lines)
 
@@ -225,10 +237,21 @@ class ServiceStack:
     the network and the ports, and the decision to start infrastructure only.
     """
 
-    def __init__(self, root: str | Path, run_id: str, *, runtime: str = "docker") -> None:
+    def __init__(self, root: str | Path, run_id: str, *, runtime: str = "docker",
+                 project: str = "") -> None:
         self.root = Path(root).resolve()
         self.runtime = runtime
-        self.project = "aset-" + _PROJECT_NAME.sub("-", run_id.lower()).strip("-")
+        self.run_id = run_id
+        # The compose project is named after the project, not the run (ADR 16).
+        # `aset-apply-3f2a...` is a different group on every run and says nothing
+        # about what it serves; `aset-ingresos` collapses the project's services
+        # into one row a person recognises. The run stays on every resource as a
+        # label, which is what the sweep reads.
+        self.slug = (
+            _PROJECT_NAME.sub("-", (project or project_slug(self.root)).lower()).strip("-")
+            or "project"
+        )
+        self.project = "aset-" + self.slug
         self._compose_file = find_compose_file(self.root)
         self._services: tuple[str, ...] = ()
         self._networks: tuple[str, ...] = ("default",)
@@ -395,12 +418,14 @@ class ServiceStack:
         """Start the project's dependencies and wait for them to report healthy."""
         if self._running or not self._services or self._compose_file is None:
             return
+        self._refuse_a_concurrent_run()
         descriptor, name = tempfile.mkstemp(suffix="-aset-override.yml", text=True)
         with os.fdopen(descriptor, "w", encoding="utf-8") as writer:
             writer.write(
                 override_document(
                     self._services, self._networks, self.project,
                     tuple((self._model.get("volumes") or {}).keys()),
+                    run_id=self.run_id, slug=self.slug,
                 )
             )
         self._override = Path(name)
@@ -431,6 +456,44 @@ class ServiceStack:
             self._override = None
         if self._derived_file is not None:
             self._derived_file.unlink(missing_ok=True)
+
+    def _refuse_a_concurrent_run(self) -> None:
+        """Refuse, by name, a second run against a project another run holds.
+
+        Naming the compose project after the project costs exactly this, and
+        ADR 16 accepts the cost explicitly: sharing the group with another run
+        would let either teardown remove the other's services. Appending a
+        suffix until the collision stops would trade the grouping back silently,
+        so it is refused instead.
+        """
+        if shutil.which(self.runtime) is None:
+            return
+        try:
+            listed = subprocess.run(
+                [self.runtime, "ps", "--quiet",
+                 "--filter", f"label={OWNER_FILTER}",
+                 "--filter", f"label={PROJECT_LABEL}={self.slug}",
+                 "--filter", f"label={RUN_LABEL}={self.run_id}", "--format", "{{.ID}}"],
+                capture_output=True, text=True, timeout=60, check=False,
+            )
+            everything = subprocess.run(
+                [self.runtime, "ps", "--quiet",
+                 "--filter", f"label={OWNER_FILTER}",
+                 "--filter", f"label={PROJECT_LABEL}={self.slug}", "--format", "{{.ID}}"],
+                capture_output=True, text=True, timeout=60, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return
+        if everything.returncode != 0 or listed.returncode != 0:
+            return
+        mine = set(listed.stdout.split())
+        others = [name for name in everything.stdout.split() if name not in mine]
+        if others:
+            raise ServiceStartupError(
+                f"project {self.slug!r} is already held by another ASET run "
+                f"({len(others)} container(s)); a second concurrent run on the "
+                "same project is refused by name"
+            )
 
     def _discover_networks(self) -> tuple[str, ...]:
         """Ask every running service which isolated networks it joined."""
