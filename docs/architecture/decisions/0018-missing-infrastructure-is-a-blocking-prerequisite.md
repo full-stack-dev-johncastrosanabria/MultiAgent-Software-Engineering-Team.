@@ -1,12 +1,15 @@
 # 18. Missing infrastructure is a blocking prerequisite, delivered on its own
 
-Date: 2026-09-10. Status: accepted, not implemented.
+Date: 2026-09-10. Status: accepted, partially implemented.
 Builds on: [ADR 5](0005-services-per-run.md), [ADR 6](0006-github-origin-pull-request-delivery.md),
 [ADR 12](0012-a-started-database-is-not-a-prepared-one.md).
 
-**Nothing in this record is implemented yet.** The behaviour it describes was
-produced once, by hand-adjacent means, and then lost. This record states it as a
-decision so it stops depending on whoever remembers it.
+**Correction, 2026-09-11:** this record was accepted as "not implemented". The
+delivery half now exists: `infrastructure_prerequisite.py` detects the case,
+opens the infrastructure-only pull request first, and stacks the functional one
+on it with a body that says what its evidence is worth. Two claims below are
+*not* satisfied -- the retry, and what the bring-up actually exercises -- and
+both are corrected at the end of this record.
 
 ## Context
 
@@ -163,3 +166,56 @@ footprint roughly doubles in the worst case, on a laptop that is also the
 operator's work machine. The cap of one retry is what bounds that, and the
 teardown of [ADR 16](0016-every-docker-resource-carries-its-run.md) applies to
 the retry exactly as to the first attempt -- including when it fails.
+
+
+## Implementation note, 2026-09-11
+
+**The detecting signal is the narrow one this record predicted.** A run is
+treated as standing on a blocking prerequisite when `ServiceStack` had to
+*derive* the topology rather than read a declared compose file. That is the case
+that produced the evidence above, and it is already computed -- `services.derived`
+-- so nothing new infers anything. A failed connection would catch more cases;
+it is not needed to catch this one, and adding it now would widen the rule
+before the narrow version has been exercised against a real project.
+
+**There is no retry, because in this implementation there is no first failure.**
+This record describes a run that tries the functional work, is blocked, authors
+the infrastructure, brings it up and *retries*. What the code does is derive and
+start the infrastructure before the functional work begins, so the functional
+work has never failed for want of it, and the "one retry, not a loop" cap has
+nothing to cap. The substance the record cared about -- that the infrastructure
+is brought up and the functional work proceeds on top of it in the same run --
+holds by construction. The wording does not, and the difference matters the day
+detection moves to a failed connection, at which point the retry and its cap
+have to be written rather than assumed.
+
+**Bringing it up is not quite a test of the file that is delivered, and this
+record claimed it was.** `derive_compose` renders two things from the same
+analysis: a `run` document, which closes the network and publishes no ports, and
+a `delivery` document, which publishes on localhost and turns credentials into
+variables. The run starts the first; the pull request contains the second. So
+what is exercised is the topology -- the engines, the versions, the healthchecks,
+the database names -- and not the rendering a developer will run. A port
+collision or an unset variable in the delivered file would not be caught by the
+run that proposed it. Narrowing that gap means either bringing up the delivery
+rendering as well, at the cost of publishing ports on the operator's machine, or
+saying plainly in the pull request that the published form is untested. The body
+currently says neither, which is the honest description of where this stands.
+
+**What is implemented, precisely.** Detection from a derived topology; the
+infrastructure-only proposal, which adds `docker-compose.yml`, appends to
+`.env.example` and touches no application code; the ordering, so the
+infrastructure pull request opens before anything functional; the stacked
+functional branch, cut from the infrastructure branch and opened against it; and
+the paragraph in the stacked body stating that the suite ran green against
+infrastructure no human has reviewed, and that changing it invalidates the
+evidence. `run_on_project` records `infrastructure_prerequisite`,
+`infrastructure_branch` and `infrastructure_pr_url` in its evidence, so a router
+can tell an infrastructure-only success from a run that changed nothing -- the
+consequence this record said anything reading run outcomes would have to handle.
+
+Stacking required one change to [ADR 6](0006-github-origin-pull-request-delivery.md)'s
+delivery, whose invariant was that a proposal never chooses what it is merged
+into. That invariant is intact: the base is an argument the caller passes, not a
+field on the `Proposal`, and it is refused unless it names a branch under this
+system's own `aset/` namespace.
