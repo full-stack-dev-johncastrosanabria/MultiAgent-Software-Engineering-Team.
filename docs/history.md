@@ -1,5 +1,30 @@
 # Historia documental
 
+## 2026-09-10 — La decisión 16, implementada, y la promesa que no se pudo cumplir
+
+Todo recurso Docker que un run crea lleva ya, en el momento de crearse,
+`aset.owner`, `aset.run`, `aset.lifetime` y —cuando se conoce el proyecto—
+`aset.project`. Las etiquetas viven en un módulo nuevo,
+`src/engineering_team/docker_labels.py`, y las escriben los tres sitios que
+crean recursos: el contenedor por comando y el volumen de entorno
+(`mcp/container.py`), el demonio del run y su red (`mcp/run_daemon.py`) y el
+documento de override que ASET añade sobre el compose del proyecto
+(`services.py`). El proyecto compose pasa a llamarse `aset-<proyecto>` en lugar
+de `aset-<run_id>`, con su coste aceptado: una segunda corrida simultánea sobre
+el mismo proyecto se **rechaza por nombre**, con un mensaje que lo dice.
+
+El barrido se ejecuta al arrancar la infraestructura de un run y también a mano
+(`engineering-team docker-sweep`). Nunca consulta un recurso sin filtrar primero
+por `aset.owner=aset`, de modo que lo que nadie etiquetó no llega siquiera a ser
+candidato: `icapi-mysql` sobrevive por construcción, no por una excepción.
+
+**Dos cosas que la decisión 16 afirmaba y el código no cumple**, corregidas con
+fecha dentro del propio récord en lugar de reescribirlo: la caché de build no se
+recoge por etiqueta, porque BuildKit no filtra su poda por etiquetas —el comando
+de operador ofrece `--build-cache`, que poda la del demonio entero y lo advierte
+en su ayuda—, y ASET no construye imágenes hoy, así que la mitad del barrido que
+se ocupa de imágenes está escrita y probada pero no recoge nada todavía.
+
 ## 2026-09-10 — Política de recursos Docker, workspace efímero e infraestructura como prerrequisito
 
 Se midió el host del operador y se limpiaron ≈ 14.3 GB de recursos Docker que

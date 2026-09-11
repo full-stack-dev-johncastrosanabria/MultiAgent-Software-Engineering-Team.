@@ -8,6 +8,8 @@ import tempfile
 import time
 import uuid
 
+from engineering_team.docker_labels import label_arguments
+
 
 class RunDaemonStartupError(RuntimeError):
     """The isolated daemon could not be prepared before the run deadline."""
@@ -29,7 +31,8 @@ class RunDaemon:
     )
 
     def __init__(self, *, image: str, images: tuple[str, ...],
-                 runtime: str = "docker", run_id: str | None = None) -> None:
+                 runtime: str = "docker", run_id: str | None = None,
+                 project: str = "") -> None:
         if not re.fullmatch(r"[^\s]+@sha256:[0-9a-fA-F]{64}", image):
             raise ValueError("run daemon image must be pinned by digest")
         if any(not name or name.startswith("-") or any(c.isspace() for c in name)
@@ -38,6 +41,10 @@ class RunDaemon:
         self.image = image
         self.images = tuple(dict.fromkeys(images))
         self.runtime = runtime
+        # The daemon and its network are resources like any other, and say so
+        # (ADR 16): a crashed run leaves both behind, and the sweep removes them
+        # only because they carry the run they belonged to.
+        self.labels = label_arguments(run_id or "", project)
         label = re.sub(r"[^a-zA-Z0-9_-]", "-", run_id or "run")[:32]
         self.name = f"aset-dind-{label}-{uuid.uuid4().hex[:12]}"
         self.network = self.name + "-net"
@@ -68,10 +75,11 @@ class RunDaemon:
         self._remaining(deadline)
         try:
             self._network_attempted = True
-            self._run(["network", "create", "--internal", self.network], deadline)
+            self._run(["network", "create", "--internal", *self.labels,
+                       self.network], deadline)
             self._container_attempted = True
             self._run([
-                "run", "--detach", "--name", self.name,
+                "run", "--detach", "--name", self.name, *self.labels,
                 "--network", self.network, "--network-alias", "dind",
                 "--security-opt", "seccomp=unconfined",
                 "--security-opt", "systempaths=unconfined",

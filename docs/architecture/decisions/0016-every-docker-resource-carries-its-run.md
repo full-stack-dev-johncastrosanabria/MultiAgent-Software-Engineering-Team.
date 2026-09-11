@@ -1,13 +1,16 @@
 # 16. Every Docker resource carries its run and its project, and nothing running outlives the run
 
-Date: 2026-09-10. Status: accepted, not implemented.
+Date: 2026-09-10. Status: accepted, implemented.
 Extends: [ADR 5](0005-services-per-run.md), [ADR 14](0014-a-docker-api-that-is-not-the-hosts.md),
 [ADR 15](0015-container-only.md).
 
-**Nothing in this record is implemented yet.** It states what the system must do
-and the evidence that it does not do it today. The code that satisfies it is a
-later change; until then, [status](../../status.md) is the honest account of
-what actually happens on a host.
+**Correction, 2026-09-10:** this record was accepted as "not implemented". The
+code that satisfies it landed the same day -- `docker_labels.py` holds the
+labels and the sweep, `container.py`, `run_daemon.py` and `services.py` write
+them at creation, and `engineering-team docker-sweep` is the operator half.
+One claim below is *not* satisfied and is corrected at the end of this record:
+build cache. [Status](../../status.md) remains the account of what a host
+actually shows.
 
 ## Context
 
@@ -188,3 +191,22 @@ share a compose project with it. A solo operator loses nothing; a setup that
 genuinely needs concurrent runs on one project would have to trade the grouping
 back for per-run names, and should do that as a decision rather than by
 appending a suffix until the collision stops.
+
+## Implementation note, 2026-09-10
+
+**Build cache is not reclaimed by the sweep, and the paragraph above that says
+it is was wrong.** BuildKit's prune filters on `until`, `id`, `parents`,
+`description`, `inuse`, `private` and `type` -- not on labels. There is no query
+that reclaims the build cache *ASET* produced and leaves the operator's alone,
+so the automatic sweep does not touch it at all. The explicit operator command
+takes `--build-cache`, which runs `docker builder prune` over the whole daemon
+and says so in its help text. That is a smaller promise than this record made,
+and it is the honest one: a sweep that silently deleted an operator's build
+cache would violate the same rule that keeps `icapi-mysql` alive.
+
+A second thing this record described that the code does not do: ASET builds no
+images. No call site in `src/` runs `docker build`, and compose services that
+declare `build:` are classified as application services and never started
+([ADR 5](0005-services-per-run.md)). The image half of the sweep is therefore
+written and tested but reaps nothing today; it exists so that a build path
+added later inherits the policy instead of re-deciding it.
