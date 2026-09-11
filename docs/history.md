@@ -1,5 +1,41 @@
 # Historia documental
 
+## 2026-09-10 — Política de recursos Docker, workspace efímero e infraestructura como prerrequisito
+
+Se midió el host del operador y se limpiaron ≈ 14.3 GB de recursos Docker que
+corridas anteriores dejaron atrás: un contenedor demonio, 33 volúmenes,
+10 imágenes y 8.4 GB de caché de build. El inventario, el antes y el después y
+los hallazgos están en [estado](status.md).
+
+De ahí salen tres decisiones, **ninguna implementada todavía**:
+la [16](architecture/decisions/0016-every-docker-resource-carries-its-run.md)
+—todo recurso que un run crea lleva `aset.owner` y `aset.run`, y se recoge
+incluso tras una caída—, la
+[17](architecture/decisions/0017-the-project-lives-in-the-run.md) —el proyecto
+vive en un volumen del run y no en el disco del operador, lo que exige extraer
+un contrato `Workspace` de `RepositoryMCP`— y la
+[18](architecture/decisions/0018-missing-infrastructure-is-a-blocking-prerequisite.md)
+—la infraestructura que falta bloquea, se entrega en un PR propio y nunca se
+improvisa.
+
+Las tres se registran como decisión y no como trabajo hecho a propósito: el
+sistema hoy se comporta como describe el estado, no como describen los récords.
+
+La pregunta del operador sobre agrupar API, frontend y base de datos en un solo
+contenedor por proyecto se resolvió el mismo día, tras un consejo de cuatro
+voces: **no** un contenedor físico único —obligaría a un supervisor, un solo
+PID 1 y un runtime que no se parece a cómo el proyecto despliega—, **sí** una
+unidad de proyecto: proyecto compose nombrado `aset-<proyecto>` en lugar de
+`aset-apply-<uuid4>`, más etiqueta `aset.project`. Queda en la decisión 16, con
+su coste explícito: dos corridas simultáneas sobre el mismo proyecto se
+rechazan por nombre.
+
+Del mismo consejo salió una comprobación que corrige una premisa: el demonio por
+run de la decisión 14 es **opt-in y está apagado por defecto**
+(`quality_run_daemon_image` vacío en `config.py`), así que el camino por defecto
+usa el demonio del host — que es exactamente donde se acumularon los 19 GB. Las
+etiquetas no son redundantes con la decisión 14.
+
 ## 2026-09-10 — Retirada del sandbox de proceso: el contenedor es la única frontera
 
 Se eliminaron `src/engineering_team/mcp/runner.py` (~1.025 líneas) y su suite

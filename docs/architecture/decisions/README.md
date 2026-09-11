@@ -26,6 +26,9 @@ belongs to [status](../../status.md).
 | [13](0013-a-prompt-is-redacted-before-it-is-refused.md) | A prompt is redacted before it is refused | accepted |
 | [14](0014-a-docker-api-that-is-not-the-hosts.md) | The run gets a Docker API that is not the host's | accepted |
 | [15](0015-container-only.md) | The process sandbox is retired: the container is the only boundary | accepted |
+| [16](0016-every-docker-resource-carries-its-run.md) | Every Docker resource carries its run and its project, and nothing running outlives the run | accepted, not implemented |
+| [17](0017-the-project-lives-in-the-run.md) | The project lives in the run, not on the operator's disk | accepted, not implemented |
+| [18](0018-missing-infrastructure-is-a-blocking-prerequisite.md) | Missing infrastructure is a blocking prerequisite, delivered on its own | accepted, not implemented |
 
 A decision here outranks the same claim made anywhere untracked. When they
 disagree, this directory is right and the other file is stale.
@@ -53,11 +56,15 @@ flowchart LR
     A13["ADR 13<br/>redact before refuse"]
     A14["ADR 14<br/>run-scoped Docker API"]
     A15["ADR 15<br/>container-only"]
+    A16["ADR 16<br/>labelled, grouped, reaped"]
+    A17["ADR 17<br/>project in the run"]
+    A18["ADR 18<br/>infra is blocking"]
   end
 
   subgraph M["Modules"]
     ST["stacks.py<br/>StackProfile"]
     QU["mcp/quality.py<br/>QualityMCP"]
+    RE["mcp/repository.py<br/>RepositoryMCP"]
     RU["mcp/command.py<br/>CommandRunner"]
     SV["services.py<br/>ServiceStack"]
     DE["delivery.py<br/>GitDelivery"]
@@ -93,6 +100,12 @@ flowchart LR
   A14 --> SV
   A15 --> CN
   A15 --> RU
+  A16 --> CN
+  A16 --> SV
+  A17 --> RE
+  A17 --> CN
+  A18 --> SV
+  A18 --> DE
 ```
 
 ## About the "finding N" references
