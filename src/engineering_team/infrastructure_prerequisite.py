@@ -25,7 +25,8 @@ so.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ from engineering_team.delivery import (
     Proposal,
     infrastructure_proposal,
 )
+from engineering_team.delivery_check import DeliveryCheck, validate_delivered_compose
 
 __all__ = [
     "DeliveredInfrastructure",
@@ -127,6 +129,47 @@ def _sources_that_named_the_engines(
     return tuple(sorted(named))
 
 
+_PARTIAL = (
+    "**What this check covers.** The compose file above was rendered and "
+    "resolved by the container runtime against a synthetic `.env` built from "
+    "the keys of `.env.example`, so its schema is valid and every variable it "
+    "interpolates has somewhere to come from. That is all it establishes: the "
+    "images were not pulled, nothing was started, and no healthcheck was "
+    "exercised."
+)
+
+
+def _validation_note(check: DeliveryCheck) -> str:
+    """What the body says about a file the reviewer is about to run.
+
+    Three different things, and the difference is the point. Validation that
+    ran and passed earns the partial-coverage sentence and nothing more.
+    Validation that could not run says so, rather than letting silence read as
+    a pass. A port conflict is named because it is the failure a reviewer will
+    otherwise meet as an opaque bind error on their own machine -- and it is
+    reported, not refused, because the busy port is on the machine that built
+    this, not on theirs.
+    """
+    if not check.performed:
+        return (
+            "**This compose file was not validated.** No container runtime was "
+            "available on the machine that authored it, so it reaches you "
+            "having never been resolved. Run `docker compose config` against it "
+            "before trusting the rest of this pull request."
+        )
+    note = _PARTIAL
+    if check.occupied_ports:
+        named = ", ".join(check.occupied_ports)
+        note += (
+            f"\n\nThe published {'ports' if len(check.occupied_ports) > 1 else 'port'} "
+            f"{named} {'were' if len(check.occupied_ports) > 1 else 'was'} already "
+            "in use on the machine that authored this file. That says nothing "
+            "about your machine, but if `docker compose up` fails to bind, this "
+            "is the line to remember."
+        )
+    return note
+
+
 def deliver(
     repository: str | Path,
     prerequisite: Prerequisite,
@@ -135,16 +178,29 @@ def deliver(
     backend: Any | None,
     confirmed: bool,
     git: GitDelivery | None = None,
+    validate: Callable[[str, str], DeliveryCheck] | None = None,
 ) -> DeliveredInfrastructure:
     """Open the pull request that contains infrastructure and nothing else.
 
     Raises `DeliveryRefused` rather than degrading: ADR 18's rule is that
     infrastructure is *either delivered or refused*, and a silent failure here
-    would put the run back on the improvised path the record exists to close.
+    would put the run back on the improvised path the record exists to close. A
+    delivered compose file the runtime rejects is that same refusal: proposing
+    it would hand a reviewer a file this system knows does not work.
     """
     proposal = prerequisite.proposal(run_id)
     if proposal is None:
         raise DeliveryRefused("the derived topology produced nothing to propose")
+    check = (validate or validate_delivered_compose)(
+        prerequisite.compose, prerequisite.env_example
+    )
+    if check.performed and not check.valid:
+        raise DeliveryRefused(
+            f"the delivered compose file was rejected by the runtime: {check.error}"
+        )
+    proposal = replace(
+        proposal, body=f"{proposal.body}\n\n{_validation_note(check)}"
+    )
     branch = (git or GitDelivery()).push(
         Path(repository), proposal, confirmed=confirmed
     )

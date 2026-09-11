@@ -8,11 +8,14 @@ the stacked body says what its evidence is worth.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from engineering_team import delivery_check, infrastructure_prerequisite
 from engineering_team.delivery import DeliveryRefused, GitDelivery, Proposal
+from engineering_team.delivery_check import DeliveryCheck
 from engineering_team.infrastructure_prerequisite import (
     DeliveredInfrastructure,
     Prerequisite,
@@ -274,3 +277,207 @@ def test_a_stacked_branch_is_really_cut_from_the_infrastructure_branch(
     assert git("merge-base", "aset/apply-18", "aset/compose-postgres") == git(
         "rev-parse", "aset/compose-postgres"
     )
+
+
+# -- the delivered compose is executed before a person receives it ------------
+#
+# ADR 18 delivers the `delivery` rendering, and the run only ever starts the
+# `run` one. These cover the gap: what the reviewer receives is resolved by the
+# runtime first, and the body says exactly how much that is worth.
+#
+# No test here launches Docker. `delivery_check` talks to the runtime through
+# the seam the rest of the repository already uses -- a `runtime` argument plus
+# module-level `subprocess`/`shutil` -- and these monkeypatch it, exactly as
+# `tests/unit/test_docker_labels.py` does for the sweep.
+
+DELIVERED_COMPOSE = (
+    "services:\n"
+    "  postgres:\n"
+    "    image: postgres@sha256:aa\n"
+    "    environment:\n"
+    "      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}\n"
+    "    ports:\n"
+    '      - "5432:5432"\n'
+    "    volumes:\n"
+    "      - ./init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro\n"
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_runtime_from_a_unit_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test in this file may reach a container runtime.
+
+    `deliver` now validates before it proposes, so every existing test through
+    it would otherwise shell out to `docker compose config`. A test whose result
+    depends on what is installed on the machine running it is not a unit test;
+    the tests below that care about the answer replace this stub with their own.
+    """
+    monkeypatch.setattr(
+        infrastructure_prerequisite,
+        "validate_delivered_compose",
+        lambda compose, env_example, **_: DeliveryCheck(performed=True, valid=True),
+    )
+
+
+def _runtime(monkeypatch: pytest.MonkeyPatch, handler, *, installed: bool = True):
+    monkeypatch.setattr(
+        delivery_check.shutil, "which",
+        lambda _name: "/usr/bin/docker" if installed else None,
+    )
+    monkeypatch.setattr(delivery_check.subprocess, "run", handler)
+
+
+def _delivered_body(check: DeliveryCheck, monkeypatch: pytest.MonkeyPatch) -> str:
+    """The body of the pull request `deliver` would open, given this check."""
+    bodies: list[str] = []
+
+    class _Git(GitDelivery):
+        def push(self, repository, proposal, *, confirmed, base=""):
+            bodies.append(proposal.body)
+            return proposal.branch
+
+    monkeypatch.setattr(
+        infrastructure_prerequisite,
+        "validate_delivered_compose",
+        lambda compose, env_example, **_: check,
+    )
+    prerequisite = Prerequisite(
+        engines=("postgres",), read_from=(),
+        compose=DELIVERED_COMPOSE, env_example=ENV_EXAMPLE,
+    )
+    deliver(
+        Path("/tmp"), prerequisite, run_id="apply-1",
+        backend=None, confirmed=True, git=_Git(),
+    )
+    return bodies[0]
+
+
+def test_a_required_variable_without_a_value_is_refused_not_delivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The failure this whole check exists for, and it blocks the delivery.
+
+    A `delivery` compose that interpolates a variable the generated
+    `.env.example` never declares resolves to nothing, and `compose config`
+    exits 1. Before this check, that file reached a reviewer.
+    """
+    def _rejected(argv, **_kwargs):
+        return subprocess.CompletedProcess(
+            argv, 1, "",
+            'required variable "POSTGRES_PASSWORD" is missing a value\n',
+        )
+
+    _runtime(monkeypatch, _rejected)
+    check = delivery_check.validate_delivered_compose(
+        DELIVERED_COMPOSE, "# nothing declared\n"
+    )
+    assert check.performed is True
+    assert check.valid is False
+    assert "missing a value" in check.error
+
+    monkeypatch.setattr(
+        infrastructure_prerequisite,
+        "validate_delivered_compose",
+        lambda compose, env_example, **_: check,
+    )
+    prerequisite = Prerequisite(
+        engines=("postgres",), read_from=(),
+        compose=DELIVERED_COMPOSE, env_example=ENV_EXAMPLE,
+    )
+    with pytest.raises(DeliveryRefused, match="rejected by the runtime"):
+        deliver(
+            Path("/tmp"), prerequisite, run_id="apply-1",
+            backend=None, confirmed=True, git=GitDelivery(),
+        )
+
+
+def test_a_port_already_in_use_is_named_in_the_body_and_does_not_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The busy port is on this machine, not on the reviewer's.
+
+    Refusing would throw away a correct file because something local happens to
+    hold 5432. Saying so turns an opaque bind error on their side into a line
+    they have already read.
+    """
+    def _busy(argv, **_kwargs):
+        if "ps" in argv:
+            return subprocess.CompletedProcess(
+                argv, 0, "0.0.0.0:5432->5432/tcp\n80/tcp\n", ""
+            )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    _runtime(monkeypatch, _busy)
+    check = delivery_check.validate_delivered_compose(DELIVERED_COMPOSE, ENV_EXAMPLE)
+    assert check.performed is True
+    assert check.valid is True
+    assert check.occupied_ports == ("5432",)
+
+    body = _delivered_body(check, monkeypatch)
+    assert "5432" in body
+    assert "already" in body
+
+
+def test_without_a_runtime_nothing_is_claimed_and_the_body_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Silence must not read as a pass."""
+    def _never_called(argv, **_kwargs):  # pragma: no cover - the point is it is not
+        raise AssertionError("no runtime should have been invoked")
+
+    _runtime(monkeypatch, _never_called, installed=False)
+    check = delivery_check.validate_delivered_compose(DELIVERED_COMPOSE, ENV_EXAMPLE)
+    assert check.performed is False
+
+    body = _delivered_body(check, monkeypatch)
+    assert "was not validated" in body
+    assert "docker compose config" in body
+
+
+def test_a_clean_check_earns_the_partial_validation_sentence_and_no_more(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Schema and substitution. Not that anything starts, not that it is healthy."""
+    def _clean(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    _runtime(monkeypatch, _clean)
+    check = delivery_check.validate_delivered_compose(DELIVERED_COMPOSE, ENV_EXAMPLE)
+    assert (check.performed, check.valid, check.occupied_ports) == (True, True, ())
+
+    body = _delivered_body(check, monkeypatch)
+    assert "every variable it interpolates has somewhere to come from" in body
+    assert "no healthcheck was exercised" in body
+    assert "was not validated" not in body
+
+
+def test_the_synthetic_env_never_carries_a_value_from_the_process_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validating against the operator's real credentials would prove nothing.
+
+    It would also write them to a file this module created. The values come
+    from the template's keys and a literal marker, never from `os.environ`.
+    """
+    monkeypatch.setenv("POSTGRES_PASSWORD", "a-real-secret-from-this-shell")
+    monkeypatch.setenv("POSTGRES_USER", "a-real-user-from-this-shell")
+    seen: dict[str, str] = {}
+
+    def _capture(argv, **_kwargs):
+        if "--env-file" in argv:
+            path = Path(argv[argv.index("--env-file") + 1])
+            seen["env"] = path.read_text(encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    _runtime(monkeypatch, _capture)
+    delivery_check.validate_delivered_compose(DELIVERED_COMPOSE, ENV_EXAMPLE)
+
+    written = seen["env"]
+    assert "a-real-secret-from-this-shell" not in written
+    assert "a-real-user-from-this-shell" not in written
+    # Not the template's example values either: those are documentation.
+    assert "change-me" not in written
+    assert written.splitlines() == [
+        "POSTGRES_PASSWORD=PLACEHOLDER-FOR-VALIDATION",
+        "POSTGRES_USER=PLACEHOLDER-FOR-VALIDATION",
+    ]
