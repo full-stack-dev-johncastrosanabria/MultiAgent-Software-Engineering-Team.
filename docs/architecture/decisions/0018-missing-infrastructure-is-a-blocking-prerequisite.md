@@ -48,6 +48,8 @@ can no longer be established from anything on the machine. The infrastructure a
 run needed became permanent, unlabelled, uncollectable state on a developer's
 laptop, holding a credential in plain text.
 
+**Corrección fechada, 2026-09-11.** El contenedor `icapi-mysql` descrito arriba ya no existe en este host; fue retirado a mano y el inventario de esa fecha, en [estado](../../status.md), lo confirma. Lo que motiva esta decisión sigue en pie: el registro de haberlo dejado vivir dos días de más es lo que prueba el problema, y ese registro no depende de que siga corriendo.
+
 The difference between those two outcomes is not capability. It is whether the
 infrastructure was treated as work to deliver or as an obstacle to route around.
 

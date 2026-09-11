@@ -1,0 +1,61 @@
+{
+  "host": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "run_id": "verify-11e6ec7e-a5f1-4e6e-a811-ef81d4cb8cda",
+  "checks": [
+    {
+      "check": "the run's volume carries ADR 16's labels",
+      "passed": true,
+      "detail": {
+        "aset.lifetime": "run",
+        "aset.owner": "aset",
+        "aset.project": "verify",
+        "aset.run": "verify-11e6ec7e-a5f1-4e6e-a811-ef81d4cb8cda"
+      }
+    },
+    {
+      "check": "the project round-trips through the volume",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "a write inside the volume is what the next read returns",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "listing shows the project and hides its secrets",
+      "passed": true,
+      "detail": [
+        "api/app.py"
+      ]
+    },
+    {
+      "check": "search reads contents inside the volume",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "the workspace refuses to leave the project root",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "evidence leaves by name, and only by name",
+      "passed": true,
+      "detail": [
+        "api/app.py"
+      ]
+    },
+    {
+      "check": "the volume dies with the run",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "no resource of this run survives it",
+      "passed": true,
+      "detail": []
+    }
+  ],
+  "finished": true
+}
