@@ -12,9 +12,21 @@ having never been executed.
 
 The failure this closes is not hypothetical and is not exotic: a `DELIVERY`
 compose that interpolates `${POSTGRES_PASSWORD}` while the generated
-`.env.example` declares a different key produces `required variable
-POSTGRES_PASSWORD is missing a value` on the reviewer's machine, and the pull
-request that caused it was green here.
+`.env.example` declares a different key hands the reviewer a service with an
+empty password, and the pull request that caused it was green here.
+
+Asking the runtime is not enough to catch that, which is worth stating plainly
+because this module was first written as if it were. `${NAME}` is Compose's
+*optional* form: a variable with no value is substituted with the empty string,
+Compose prints `warning: The "NAME" variable is not set. Defaulting to a blank
+string.`, and `compose config` exits 0. Only the required form `${NAME:?message}`
+makes it exit 1, and the delivery rendering does not emit that form. A template
+that lost a key therefore passes `compose config` silently, and the reviewer
+meets the consequence later: `mysql` refuses to initialise a data directory
+without a root password, and an empty string is not one. The comparison below is
+what covers it -- every variable the compose file interpolates without a default
+has to be a key the template declares -- and `compose config` is kept alongside
+it, because the schema and the required form are what *it* catches.
 
 Two honesties are owed in return. The first is that this validates the file, not
 the system: `compose config` resolves the schema and the substitution, and says
@@ -59,6 +71,19 @@ _PUBLISHED = re.compile(
 # without the arrow and is not a conflict for anybody.
 _BOUND = re.compile(r"(?:0\.0\.0\.0|\[::\]|:::):(?P<port>\d+)->")
 
+# `${NAME}`, `${NAME:-default}`, `${NAME:?message}`, `$NAME`. The leading
+# `(?<!\$)` is what keeps `$$POSTGRES_USER` out: that is how the healthcheck
+# writes a literal `$` for the shell inside the container, and it is not a
+# reference Compose ever resolves.
+_REFERENCE = re.compile(
+    r"(?<!\$)\$(?:\{(?P<name>[A-Za-z_]\w*)(?P<modifier>[-+?:][^}]*)?\}"
+    r"|(?P<bare>[A-Za-z_]\w*))"
+)
+# `:-`, `-`, `:+` and `+` all supply a value when the variable is unset, so a
+# reference carrying one needs nothing from the template. `:?` and `?` are the
+# opposite: they demand it.
+_HAS_DEFAULT = re.compile(r"^:?[-+]")
+
 
 @dataclass(frozen=True)
 class DeliveryCheck:
@@ -89,15 +114,40 @@ def _synthetic_environment(env_example: str) -> str:
     module docstring: reading `os.environ` here would validate against
     credentials the reviewer does not have and write them to disk besides.
     """
-    lines = []
+    lines = [f"{key}={PLACEHOLDER}" for key in _declared_keys(env_example)]
+    return "\n".join(lines) + "\n" if lines else ""
+
+
+def _declared_keys(env_example: str) -> tuple[str, ...]:
+    """The variable names the template gives the reviewer somewhere to fill in."""
+    keys: list[str] = []
     for line in env_example.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         key = stripped.split("=", 1)[0].strip()
-        if key:
-            lines.append(f"{key}={PLACEHOLDER}")
-    return "\n".join(lines) + "\n" if lines else ""
+        if key and key not in keys:
+            keys.append(key)
+    return tuple(keys)
+
+
+def _undeclared_references(compose: str, env_example: str) -> tuple[str, ...]:
+    """Variables the compose file needs and the template never declares.
+
+    The half of this check the runtime does not perform. See the module
+    docstring: an unset `${NAME}` is an empty string to Compose, not an error,
+    so the only thing standing between a misaligned template and the reviewer is
+    this comparison.
+    """
+    declared = _declared_keys(env_example)
+    missing: list[str] = []
+    for match in _REFERENCE.finditer(compose):
+        if _HAS_DEFAULT.match(match.group("modifier") or ""):
+            continue
+        name = match.group("name") or match.group("bare")
+        if name not in declared and name not in missing:
+            missing.append(name)
+    return tuple(missing)
 
 
 def _published_ports(compose: str) -> tuple[str, ...]:
@@ -174,6 +224,19 @@ def validate_delivered_compose(
         message = (completed.stderr or completed.stdout).strip()
         return DeliveryCheck(
             performed=True, valid=False, error=redact_secrets(message)
+        )
+    missing = _undeclared_references(compose, env_example)
+    if missing:
+        named = ", ".join(f"${{{name}}}" for name in missing)
+        return DeliveryCheck(
+            performed=True,
+            valid=False,
+            error=(
+                f"the compose file interpolates {named}, which `.env.example` "
+                "does not declare; Compose substitutes an unset optional "
+                "variable with an empty string and exits 0, so this is not "
+                "something `compose config` reports"
+            ),
         )
     bound = _ports_already_bound(runtime)
     return DeliveryCheck(

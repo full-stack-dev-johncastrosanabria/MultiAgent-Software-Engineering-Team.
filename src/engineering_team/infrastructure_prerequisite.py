@@ -130,12 +130,15 @@ def _sources_that_named_the_engines(
 
 
 _PARTIAL = (
-    "**What this check covers.** The compose file above was rendered and "
-    "resolved by the container runtime against a synthetic `.env` built from "
-    "the keys of `.env.example`, so its schema is valid and every variable it "
-    "interpolates has somewhere to come from. That is all it establishes: the "
-    "images were not pulled, nothing was started, and no healthcheck was "
-    "exercised."
+    "**What this check covers.** Two things, and only two. The compose file "
+    "above was resolved by the container runtime against a synthetic `.env` "
+    "built from the keys of `.env.example`, so its schema is valid. Separately, "
+    "the variable names it interpolates were compared against the keys that "
+    "template declares, so every variable it interpolates has somewhere to come "
+    "from -- a comparison made here rather than by the runtime, which "
+    "substitutes an unset `${VARIABLE}` with an empty string and reports "
+    "success. That is all it establishes: the images were not pulled, nothing "
+    "was started, and no healthcheck was exercised."
 )
 
 
@@ -185,8 +188,11 @@ def deliver(
     Raises `DeliveryRefused` rather than degrading: ADR 18's rule is that
     infrastructure is *either delivered or refused*, and a silent failure here
     would put the run back on the improvised path the record exists to close. A
-    delivered compose file the runtime rejects is that same refusal: proposing
-    it would hand a reviewer a file this system knows does not work.
+    delivered compose file that fails validation is that same refusal: proposing
+    it would hand a reviewer a file this system knows does not work. "Fails
+    validation" is wider than "the runtime said no" -- the runtime accepts a
+    file that interpolates a variable nothing declares -- so the message names
+    the check's own reason rather than attributing it to Docker.
     """
     proposal = prerequisite.proposal(run_id)
     if proposal is None:
@@ -196,7 +202,7 @@ def deliver(
     )
     if check.performed and not check.valid:
         raise DeliveryRefused(
-            f"the delivered compose file was rejected by the runtime: {check.error}"
+            f"the delivered compose file did not pass validation: {check.error}"
         )
     proposal = replace(
         proposal, body=f"{proposal.body}\n\n{_validation_note(check)}"

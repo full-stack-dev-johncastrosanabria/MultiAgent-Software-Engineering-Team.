@@ -352,14 +352,15 @@ def _delivered_body(check: DeliveryCheck, monkeypatch: pytest.MonkeyPatch) -> st
     return bodies[0]
 
 
-def test_a_required_variable_without_a_value_is_refused_not_delivered(
+def test_a_file_the_runtime_rejects_is_refused_not_delivered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The failure this whole check exists for, and it blocks the delivery.
+    """Whatever `compose config` exits non-zero on blocks the delivery.
 
-    A `delivery` compose that interpolates a variable the generated
-    `.env.example` never declares resolves to nothing, and `compose config`
-    exits 1. Before this check, that file reached a reviewer.
+    A schema error, or the required form `${NAME:?message}` with nothing to
+    resolve it. Not the optional form the delivery rendering actually emits --
+    that one is the test below, and it is the reason this test is not the whole
+    of the coverage.
     """
     def _rejected(argv, **_kwargs):
         return subprocess.CompletedProcess(
@@ -384,11 +385,84 @@ def test_a_required_variable_without_a_value_is_refused_not_delivered(
         engines=("postgres",), read_from=(),
         compose=DELIVERED_COMPOSE, env_example=ENV_EXAMPLE,
     )
-    with pytest.raises(DeliveryRefused, match="rejected by the runtime"):
+    with pytest.raises(DeliveryRefused, match="did not pass validation"):
         deliver(
             Path("/tmp"), prerequisite, run_id="apply-1",
             backend=None, confirmed=True, git=GitDelivery(),
         )
+
+
+def test_a_variable_the_template_lost_is_refused_though_the_runtime_said_yes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The failure this whole check exists for, and the runtime cannot see it.
+
+    `${POSTGRES_PASSWORD}` is Compose's optional form: with nothing to resolve
+    it, Compose warns, substitutes the empty string, and exits 0. The runner in
+    `evaluation/benchmarks/adr18` caught this against the operator's real daemon
+    -- a template missing a key was delivered, with a body claiming its
+    substitution had been resolved. The comparison, not the runtime, is what
+    refuses it.
+    """
+    def _accepted_with_a_warning(argv, **_kwargs):
+        if "ps" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return subprocess.CompletedProcess(
+            argv, 0, "",
+            'warning: The "POSTGRES_PASSWORD" variable is not set. '
+            "Defaulting to a blank string.\n",
+        )
+
+    _runtime(monkeypatch, _accepted_with_a_warning)
+    check = delivery_check.validate_delivered_compose(
+        DELIVERED_COMPOSE, "# the key this template used to declare is gone\n"
+    )
+    assert check.performed is True
+    assert check.valid is False
+    assert "${POSTGRES_PASSWORD}" in check.error
+
+    monkeypatch.setattr(
+        infrastructure_prerequisite,
+        "validate_delivered_compose",
+        lambda compose, env_example, **_: check,
+    )
+    prerequisite = Prerequisite(
+        engines=("postgres",), read_from=(),
+        compose=DELIVERED_COMPOSE, env_example="# nothing declared\n",
+    )
+    with pytest.raises(DeliveryRefused, match="did not pass validation"):
+        deliver(
+            Path("/tmp"), prerequisite, run_id="apply-1",
+            backend=None, confirmed=True, git=GitDelivery(),
+        )
+
+
+def test_a_default_and_a_shell_escape_are_not_undeclared_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What the comparison must not refuse, or it would refuse correct files.
+
+    A reference carrying a default needs nothing from the template. `$$USER` is
+    how the healthcheck writes a literal `$` for the shell inside the container
+    -- the delivery rendering emits exactly that for postgres -- and Compose
+    never resolves it, so neither does this.
+    """
+    def _clean(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    _runtime(monkeypatch, _clean)
+    compose = (
+        "services:\n"
+        "  postgres:\n"
+        "    image: postgres@sha256:aa\n"
+        "    environment:\n"
+        "      POSTGRES_DB: ${POSTGRES_DB:-orders}\n"
+        "      POSTGRES_PORT: ${POSTGRES_PORT-5432}\n"
+        "    healthcheck:\n"
+        '      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]\n'
+    )
+    check = delivery_check.validate_delivered_compose(compose, "# nothing\n")
+    assert (check.performed, check.valid, check.error) == (True, True, "")
 
 
 def test_a_port_already_in_use_is_named_in_the_body_and_does_not_block(
