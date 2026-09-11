@@ -96,6 +96,22 @@ un run controlado. Sustentan las decisiones
 | Caché de build | 198 / 10.09 GB | 77 / 1.69 GB |
 | Reclamado | — | ≈ 14.3 GB |
 
+Una segunda pasada el mismo día retiró las 12 imágenes que corridas anteriores
+construyeron (`interview-*`, `northgatetollplaza-*`, `order-ms`, `payment-ms`,
+`frontend`), la caché de build restante y `testcontainers/ryuk:0.12.0`,
+superada por la 0.14.0. Estado final: **16 imágenes / 5.675 GB, 1 volumen /
+218.8 MB, caché de build 0 B**. De 24.5 GB iniciales quedan ≈ 5.9 GB.
+
+Se conservaron a propósito las imágenes base —`postgres`, `mongo`, `kafka`,
+`eclipse-temurin`, `python`, `nginx`, `dotnet/sdk`, `docker:dind-rootless`,
+`docker:cli`, `ryuk`—: son lo que la
+[decisión 16](architecture/decisions/0016-every-docker-resource-carries-its-run.md)
+declara `aset.lifetime=cache`, y borrarlas solo obliga a la siguiente corrida a
+redescargar ≈ 3.7 GB. Las dos imágenes del tooling MCP del operador no se
+tocan.
+
+Ambas limpiezas se hicieron **a mano**. Nada de esto está automatizado todavía.
+
 Lo eliminado: el contenedor demonio `aset-dind-run-f0e96bbe25cb`, 22 volúmenes
 anónimos, 10 volúmenes `aset-env-*`, un volumen de compose
 `aset-<run_id>-postgres_data`, 2 imágenes colgantes, 5 imágenes
