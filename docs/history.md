@@ -1,5 +1,58 @@
 # Historia documental
 
+## 2026-09-11 — Las decisiones 17 y 18, a medias y dicho así
+
+**Decisión 17.** Existe el contrato que el récord pedía: `workspace/contract.py`
+define `Workspace` y sus dos implementaciones, `HostWorkspace` —lo que ASET hace
+hoy— y `VolumeWorkspace` —el proyecto dentro de un volumen del run, alcanzado un
+contenedor por operación—. `RepositoryMCP` lee y escribe a través del contrato en
+lugar de contra el sistema de archivos del host, y ninguna decisión de política
+se duplicó: qué roles pueden escribir y qué es un diff siguen viviendo en él.
+
+Y está tomada **la medición que el récord exigía antes de poder llamarse
+validado**. El resultado apoya la dirección, pero el hallazgo interesante es
+otro: arrancar el contenedor cuesta ~0.15 s y ese coste es el mismo con bind
+mount que con volumen, de modo que domina cualquier diferencia entre montajes.
+Restado eso, el volumen queda en o por debajo del ruido donde el bind mount paga
+0.103 s por buscar y 0.054 s por escribir. El detalle está en
+[el estado](status.md) y los datos crudos en
+`evaluation/benchmarks/adr17/results/measurement.json`.
+
+Lo que **no** ocurrió: ningún run usa todavía el volumen. `create_run_copy` sigue
+produciendo el directorio en el que se trabaja, y los 923 MB que motivaron la
+decisión siguen ahí. El récord decía que una dirección no es una migración; el
+estado dice cuál de las dos se ha hecho. Sí se añadió lo que el propio récord
+ponía como condición para poder borrar el volumen algún día:
+`VolumeWorkspace.extract`, que saca archivos nombrados al host antes del
+teardown —por nombre y nunca implícitamente—, porque un run fallido que no deja
+nada legible sería peor que lo de hoy.
+
+**Decisión 18.** La inferencia de topología dejó de tirarse a la basura. Cuando
+un proyecto no declara su infraestructura, `ServicesMCP` ya la derivaba, la
+escribía en un archivo temporal y la borraba al terminar; ahora
+`infrastructure_prerequisite.py` la convierte en un pull request de
+infraestructura y nada más —`docker-compose.yml` añadido, `.env.example`
+extendido, ningún código de aplicación tocado—, que se abre **antes** que
+cualquier entrega funcional. El trabajo funcional se apila encima: rama cortada
+de la rama de infraestructura, pull request abierto contra ella, y un párrafo en
+el cuerpo que dice lo que vale su evidencia —la suite pasó contra infraestructura
+que nadie ha revisado, y si el revisor la cambia hay que volver a ejecutar—.
+
+Eso obligó a tocar una invariante de la [decisión 6](architecture/decisions/0006-github-origin-pull-request-delivery.md):
+una propuesta no elige contra qué se mergea. Sigue sin elegirlo. La base es un
+argumento que pasa quien llama, no un campo de `Proposal`, y se rechaza si no
+nombra una rama bajo el espacio `aset/` del propio sistema.
+
+Dos afirmaciones del récord **no** se cumplen y se corrigieron con fecha dentro
+de él en lugar de reescribirlo. No hay reintento: el código deriva y levanta la
+infraestructura antes del trabajo funcional, así que no existe el primer fallo
+que el récord describía reintentando, y el tope de «un reintento, no un bucle»
+no tiene nada que acotar. Y levantar la infraestructura no prueba el archivo que
+se entrega: el run arranca el renderizado `run` —red cerrada, sin puertos— y el
+pull request lleva el `delivery` —puertos en localhost, credenciales como
+variables—, de modo que una colisión de puertos en el archivo entregado no la
+detectaría la corrida que lo propuso.
+
 ## 2026-09-10 — La decisión 16, implementada, y la promesa que no se pudo cumplir
 
 Todo recurso Docker que un run crea lleva ya, en el momento de crearse,

@@ -76,14 +76,17 @@ def test_run_on_project_delivers_when_confirmed_approved_and_backend_gh(
     opened: list[Proposal] = []
 
     class FakeGitDelivery:
-        def push(self, repository, proposal, *, confirmed):
+        def push(self, repository, proposal, *, confirmed, base=""):
             assert confirmed is True
+            # No infrastructure prerequisite in this run, so nothing to stack on.
+            assert base == ""
             pushed.append(proposal)
             return proposal.branch
 
     class FakeBackend:
-        def open(self, repository, proposal, *, confirmed):
+        def open(self, repository, proposal, *, confirmed, base=""):
             assert confirmed is True
+            assert base == ""
             opened.append(proposal)
             return "https://example.test/pr/1"
 

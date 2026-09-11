@@ -1,13 +1,19 @@
 # 17. The project lives in the run, not on the operator's disk
 
-Date: 2026-09-10. Status: accepted, not implemented.
+Date: 2026-09-10. Status: accepted, partially implemented.
 Depends on: [ADR 3](0003-split-quality-mcp.md) for the shape of the split,
 [ADR 15](0015-container-only.md) for where commands already run,
 [ADR 16](0016-every-docker-resource-carries-its-run.md) for how what it creates is reaped.
 
-**Nothing in this record is implemented yet.** It states a direction and the
-work it requires. Today the project is copied onto the host, and
-[status](../../status.md) is the account of that.
+**Correction, 2026-09-11:** this record was accepted as "not implemented". The
+contract it asks for now exists -- `workspace/contract.py` holds `Workspace`,
+`HostWorkspace` and `VolumeWorkspace`, and `RepositoryMCP` reads and writes
+through it instead of through the host filesystem -- and the measurement this
+record demanded has been taken. What is *not* done is the migration: a run still
+works on a host copy made by `create_run_copy`, exactly as this record said it
+would until the volume path was proven. The implementation note at the end says
+where the line falls. [Status](../../status.md) remains the account of what a
+host actually shows.
 
 ## Context
 
@@ -69,7 +75,10 @@ revisited by name rather than by quietly deepening the clone.
 
 ## What this does not claim
 
-**No measurement supports this yet.** The 923 MB is evidence of the problem, not
+**No measurement supports this yet.** *(Superseded 2026-09-11 -- see the
+implementation note. The measurement has been taken and supports the direction;
+the paragraph is kept because it is the condition the record was accepted
+under.)* The 923 MB is evidence of the problem, not
 of the fix. Whether a volume-backed workspace is faster, slower or the same on
 macOS with Docker Desktop — where bind mounts are famously not free, and named
 volumes are usually better, but neither has been timed here — is unknown, and
@@ -96,3 +105,61 @@ failed run — the diff, the logs, the evidence — has to be extracted
 deliberately, before teardown, rather than found afterwards by luck. An
 implementation that removes the volume without providing that extraction is
 worse than what exists today.
+
+
+## Implementation note, 2026-09-11
+
+**The measurement this record demanded has been taken, and it supports the
+direction.** `evaluation/benchmarks/adr17/measure_workspace.py` runs the same
+file-heavy workload -- 600 small files; list, content search, 200 reads, 200
+writes -- three ways: natively on the host, inside a container over a bind mount
+of a host directory, and inside a container over a named volume. Seven repeats,
+medians, on macOS-27.0-arm64-arm-64bit-Mach-O with Docker 29.7.2. Raw results are in
+`evaluation/benchmarks/adr17/results/measurement.json`.
+
+The first finding is that the question this record worried about is not the
+expensive one. Starting the container costs about 0.15 s, and that figure is
+the same for both mounts. Once it is subtracted, the volume is at or below the
+noise floor for listing, searching and writing, where the bind mount pays
+0.103 s to search and 0.054 s to write:
+
+| operation | host | bind mount | named volume |
+|---|---|---|---|
+| list | 0.004 s | 0.012 s | 0.000 s |
+| search | 0.031 s | 0.103 s | 0.000 s |
+| 200 reads | 0.363 s | 0.022 s | 0.031 s |
+| 200 writes | 0.014 s | 0.054 s | 0.000 s |
+
+So the volume is not slower than what a container does today; on this host it is
+faster than the bind mount for every operation measured. Populating it costs
+0.25 s once.
+
+**What the table does not say.** The host column is the floor, not a candidate --
+[ADR 15](0015-container-only.md) does not allow a target-project command to run
+there. Its slowest row, 200 reads, is slow for a reason unrelated to storage:
+spawning 200 processes is expensive on macOS and cheap on Linux, so that cell
+compares operating systems rather than mounts. And a synthetic 600-file tree is
+not a Maven build; this measures the shape of work ASET's own tools do to a
+project, not the shape of the project's build.
+
+**What is implemented.** The contract, both implementations, the shallow clone
+with the token passed through the environment rather than argv, and the
+extraction this record's last paragraph required: `VolumeWorkspace.extract` copies
+named files out to the host before teardown, by name and never implicitly, so a
+failed run can still be read afterwards. `RepositoryMCP` now takes either a root
+or a workspace, and every policy decision -- which roles may write, what a diff
+is -- stayed in it rather than being duplicated per implementation.
+
+**What is not.** No run uses `VolumeWorkspace` yet. `create_run_copy` still
+produces the directory a run works in, and `MCPRepositoryClient` is still handed
+a host path. Nothing above changes that, and this record said it should not: a
+direction is not a migration. The remaining work is the switch itself, and the
+consequence this record flagged as most likely to be underestimated -- getting
+the diff back out -- turned out to be already handled, because `get_diff`
+compares remembered contents through the contract rather than shelling out to
+git.
+
+One decision taken during implementation and worth recording: a file whose bytes
+are not valid UTF-8 is now **refused** rather than returned as a lossy copy. The
+previous host-only code decoded with a replacement character, which handed an
+agent text that differed from the file it claimed to be reading.

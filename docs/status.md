@@ -189,6 +189,64 @@ No medido todavía: el barrido no se ha ejercitado contra un run caído real en
 este host. Lo que hay es la suite; no hay aún una corrida que deje recursos
 huérfanos a propósito y los recoja al arrancar la siguiente.
 
+## Comprobaciones del 2026-09-11 (decisiones 17 y 18)
+
+Corresponden a la
+[decisión 17](architecture/decisions/0017-the-project-lives-in-the-run.md) y a la
+[decisión 18](architecture/decisions/0018-missing-infrastructure-is-a-blocking-prerequisite.md),
+que pasan de «aceptada, no implementada» a **aceptada, parcialmente
+implementada**. Ejecutadas en macOS 27.0 arm64 con Docker Desktop 29.7.2, en
+entorno limpio (`env -i`) y con el intérprete del venv del repositorio.
+
+| Comprobación | Resultado |
+|---|---|
+| Suite completa `tests/` | 946 tests, 929 pasan, 17 omitidos, **0 fallos**, 282.8 s |
+| Contrato de workspace (decisión 17) | 16 pasan, 1 omitido (`tests/mcp/test_workspace_contract.py`) |
+| El mismo contrato contra Docker real | 17 pasan, 0 omitidos, con `ASET_WORKSPACE_TEST_IMAGE=python:3.13-slim`; el volumen no sobrevive al test |
+| Prerequisito de infraestructura (decisión 18) | 11 pasan (`tests/unit/test_infrastructure_prerequisite.py`) |
+| `ruff check src/engineering_team` | sin hallazgos nuevos; los 2 restantes son previos |
+
+**La medición que la decisión 17 exigía está tomada.** Es la primera vez que hay
+un número detrás de la elección de volumen sobre copia en disco.
+`evaluation/benchmarks/adr17/measure_workspace.py` ejecuta la misma carga —600
+archivos pequeños; listado, búsqueda por contenido, 200 lecturas, 200
+escrituras— de tres formas: nativa en el host, en contenedor sobre bind mount y
+en contenedor sobre volumen nombrado. Siete repeticiones, medianas, resultados
+crudos en `evaluation/benchmarks/adr17/results/measurement.json`.
+
+| Operación | host | bind mount | volumen |
+|---|---|---|---|
+| listado | 0.004 s | 0.012 s | 0.000 s |
+| búsqueda | 0.031 s | 0.103 s | 0.000 s |
+| 200 lecturas | 0.363 s | 0.022 s | 0.031 s |
+| 200 escrituras | 0.014 s | 0.054 s | 0.000 s |
+
+El hallazgo que cambia la lectura: **arrancar el contenedor cuesta ~0.15 s y ese
+coste es idéntico en los dos montajes**, de modo que domina todo lo demás. Una
+vez restado, el volumen queda en o por debajo del ruido en tres de las cuatro
+operaciones, y el bind mount es el que paga. Poblar el volumen cuesta 0.25 s una
+vez. La columna del host es el suelo, no una candidata: la
+[decisión 15](architecture/decisions/0015-container-only.md) no permite ejecutar
+ahí. Su fila lenta —200 lecturas— compara sistemas operativos, no montajes:
+lanzar 200 procesos es caro en macOS y barato en Linux.
+
+**Lo que todavía no ocurre, dicho sin rodeos.** Ningún run usa `VolumeWorkspace`.
+`create_run_copy` sigue produciendo el directorio en el que trabaja un run y
+`MCPRepositoryClient` sigue recibiendo una ruta del host, así que los 923 MB en
+96 directorios que motivaron la decisión 17 **no se han reducido por este
+cambio**. Lo que existe es el contrato, sus dos implementaciones, la medición y
+la extracción previa al teardown (`VolumeWorkspace.extract`), sin la cual borrar
+el volumen sería peor que lo de hoy. La migración es trabajo aparte.
+
+De la decisión 18, tampoco hay todavía una corrida real: lo verificado es la
+suite, no un `aset-*` contra un proyecto sin compose que haya abierto de verdad
+los dos pull requests. Y dos afirmaciones del récord no se cumplen, corregidas
+con fecha dentro de él: no hay reintento —porque en esta implementación la
+infraestructura se deriva y se levanta *antes* del trabajo funcional, así que
+nunca hay un primer fallo que reintentar— y levantar la infraestructura no
+prueba exactamente el archivo que se entrega, porque el run arranca el
+renderizado `run` y el pull request contiene el `delivery`.
+
 ## Soporte por plataforma
 
 **Corrección del 2026-09-10 ([decisión 15](architecture/decisions/0015-container-only.md)).**

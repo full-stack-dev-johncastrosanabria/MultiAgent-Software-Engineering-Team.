@@ -97,13 +97,26 @@ class GitDelivery:
     def __init__(self, *, git: str = "git") -> None:
         self.git = git
 
-    def push(self, repository: Path, proposal: Proposal, *, confirmed: bool) -> str:
-        """Write, commit and push a proposal. Returns the branch it created."""
+    def push(
+        self, repository: Path, proposal: Proposal, *, confirmed: bool, base: str = "",
+    ) -> str:
+        """Write, commit and push a proposal. Returns the branch it created.
+
+        `base` cuts the branch from another branch instead of from the current
+        checkout. [ADR 18](../../docs/architecture/decisions/0018-infrastructure-is-a-blocking-prerequisite.md)
+        needs it for exactly one case: functional work that only builds because
+        infrastructure this same run authored is in the tree. It is an argument
+        rather than a field on the proposal because the proposal must not be able
+        to choose what it is merged into, and it is restricted to this system's
+        own namespace so the case stays the one it was added for.
+        """
         if not confirmed:
             raise DeliveryRefused(
                 "delivery requires an explicit confirmation from the operator"
             )
         self._check_branch(proposal.branch)
+        if base:
+            self._check_stacking_base(base, proposal.branch)
         if not proposal.files and not proposal.extends and not proposal.updates:
             raise DeliveryRefused("a proposal with no files changes nothing")
         self._check_no_secret(proposal)
@@ -127,6 +140,8 @@ class GitDelivery:
         )
         if existing.returncode == 0:
             self._git(repository, "checkout", "-B", proposal.branch, tracking)
+        elif base:
+            self._git(repository, "checkout", "-B", proposal.branch, base)
         else:
             self._git(repository, "checkout", "-B", proposal.branch)
 
@@ -183,6 +198,17 @@ class GitDelivery:
             )
         if not _BRANCH.match(branch) or ".." in branch:
             raise DeliveryRefused(f"unusable branch name: {branch!r}")
+
+    @staticmethod
+    def _check_stacking_base(base: str, branch: str) -> None:
+        """A delivery may only be stacked on a branch this system authored."""
+        if base == branch:
+            raise DeliveryRefused("a branch cannot be stacked on itself")
+        if not base.startswith(BRANCH_NAMESPACE) or not _BRANCH.match(base):
+            raise DeliveryRefused(
+                f"refusing to stack a delivery on {base!r}: "
+                f"only a branch under {BRANCH_NAMESPACE!r} may be a stacking base"
+            )
 
     @staticmethod
     def _check_no_secret(proposal: Proposal) -> None:
@@ -282,7 +308,7 @@ class GitHubPullRequests:
         self.runtime = runtime
 
     def open(
-        self, repository: Path, proposal: Proposal, *, confirmed: bool
+        self, repository: Path, proposal: Proposal, *, confirmed: bool, base: str = "",
     ) -> str:
         if not confirmed:
             raise DeliveryRefused(
@@ -290,7 +316,12 @@ class GitHubPullRequests:
             )
         GitDelivery._check_branch(proposal.branch)
         GitDelivery._check_no_secret(proposal)
-        base = self._default_branch(repository)
+        if base:
+            # ADR 18's stacked pull request. Still not read from the proposal:
+            # the caller names it, and only this system's own branches qualify.
+            GitDelivery._check_stacking_base(base, proposal.branch)
+        else:
+            base = self._default_branch(repository)
         if proposal.branch == base:
             raise DeliveryRefused("a branch cannot be a pull request against itself")
         completed = subprocess.run(
@@ -421,11 +452,15 @@ class GitHubMCPPullRequests:
             self.image, "stdio",
         ]
 
-    def open(self, repository: Path, proposal: Proposal, *, confirmed: bool) -> str:
+    def open(
+        self, repository: Path, proposal: Proposal, *, confirmed: bool, base: str = "",
+    ) -> str:
         if not confirmed:
             raise DeliveryRefused(
                 "opening a pull request requires an explicit confirmation"
             )
+        if base:
+            GitDelivery._check_stacking_base(base, proposal.branch)
         if not self.token:
             raise DeliveryRefused("no GitHub token is configured for delivery")
         GitDelivery._check_branch(proposal.branch)

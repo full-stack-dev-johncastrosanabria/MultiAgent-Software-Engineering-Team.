@@ -1,54 +1,51 @@
+"""The repository tool, which no longer knows where the project's files live.
+
+The filesystem half moved to `engineering_team.workspace.contract` when
+[ADR 17](../../../docs/architecture/decisions/0017-the-project-lives-in-the-run.md)
+named the `Workspace` contract. What stays here is policy: which roles may read
+or write, what counts as a change, and how a diff is rendered. A workspace that
+decided policy would have to be re-audited once per implementation.
+"""
+
+from __future__ import annotations
+
 import difflib
-import subprocess
 from pathlib import Path
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.contracts.models import ToolResult
+from engineering_team.workspace.contract import (
+    EXCLUDED_DIRECTORIES,
+    HostWorkspace,
+    Workspace,
+    is_secret_path,
+    refuse_traversal,
+)
 
 _READ_ROLES = {AgentRole.ARCHITECTURE, AgentRole.DEVELOPER}
 _WRITE_ROLES = {AgentRole.DEVELOPER}
 
-
-# Nunca son evidencia arquitectonica y dominan el arbol por volumen. `.git`
-# ademas guarda credenciales: sus remotos pueden llevarlas en la URL.
-_EXCLUDED_DIRECTORIES = frozenset({
-    ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", "dist", "build",
-})
+# Kept as module names because callers and tests already import them from here.
+_EXCLUDED_DIRECTORIES = EXCLUDED_DIRECTORIES
+_is_secret_path = is_secret_path
 MAX_LISTED_PATHS = 2_000
 MAX_LISTING_BYTES = 256 * 1024
 
 
-def _git_visible_paths(root: Path) -> list[str] | None:
-    """Lo que git mostraria: trackeado mas no-trackeado, menos todo lo ignorado.
-
-    Delegar en git da la semantica exacta de .gitignore -incluidos los archivos
-    anidados y los patrones negados- sin reimplementarla, y evita recorrer los
-    arboles que el propio proyecto ya declaro desechables.
-    """
-    try:
-        completed = subprocess.run(
-            [
-                "git", "-C", str(root), "ls-files",
-                "--cached", "--others", "--exclude-standard", "-z",
-            ],
-            capture_output=True, timeout=30, check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if completed.returncode != 0:
-        return None
-    decoded = completed.stdout.decode("utf-8", "replace")
-    return [entry for entry in decoded.split("\0") if entry]
-
-
-def _is_secret_path(path: Path) -> bool:
-    return any(part == ".env" or part.startswith(".env.") for part in path.parts)
-
-
 class RepositoryMCP:
-    def __init__(self, root: str | Path) -> None:
-        self.root = Path(root).resolve()
+    def __init__(
+        self, root: str | Path | None = None, *, workspace: Workspace | None = None
+    ) -> None:
+        # A path is still accepted, and still means the host: every existing
+        # caller passes one, and ADR 17 is explicit that the host copy stays
+        # until the volume path is measured.
+        if workspace is None:
+            if root is None:
+                raise ValueError("a repository needs a root or a workspace")
+            workspace = HostWorkspace(root)
+        self.workspace = workspace
+        # Only a host-backed workspace has one. Nothing here may assume it does.
+        self.root = getattr(workspace, "root", None)
         self._originals: dict[str, str | None] = {}
 
     def _result(
@@ -69,61 +66,9 @@ class RepositoryMCP:
             error=error,
         )
 
-    def _path(self, relative: str) -> Path:
-        requested = Path(relative)
-        if ".." in requested.parts or _is_secret_path(requested):
-            raise ValueError("path traversal denied")
-        target = (self.root / relative).resolve()
-        if self.root not in target.parents and target != self.root:
-            raise ValueError("outside workspace denied")
-        return target
-
-    def _candidate_paths(self):
-        """Rutas relativas a considerar, ya sin lo que el proyecto descarta."""
-        tracked = _git_visible_paths(self.root)
-        if tracked is not None:
-            for entry in tracked:
-                yield Path(entry)
-            return
-        # Sin repo git no hay exclusiones declaradas que consultar, pero podar los
-        # directorios pesados evita recorrerlos, no solo omitirlos del resultado.
-        stack = [self.root]
-        while stack:
-            current = stack.pop()
-            try:
-                entries = list(current.iterdir())
-            except OSError:
-                continue
-            for entry in entries:
-                if entry.is_symlink():
-                    continue
-                if entry.is_dir():
-                    if entry.name not in _EXCLUDED_DIRECTORIES:
-                        stack.append(entry)
-                    continue
-                try:
-                    yield entry.relative_to(self.root)
-                except ValueError:
-                    continue
-
-    def _safe_files(self):
-        for relative in self._candidate_paths():
-            if any(part in _EXCLUDED_DIRECTORIES for part in relative.parts):
-                continue
-            if _is_secret_path(relative):
-                continue
-            path = self.root / relative
-            try:
-                resolved = path.resolve()
-                if (
-                    path.is_symlink()
-                    or not resolved.is_file()
-                    or (resolved != self.root and self.root not in resolved.parents)
-                ):
-                    continue
-                yield path, relative
-            except OSError:
-                continue
+    def _relative(self, relative: str) -> str:
+        """The path as the workspace names it, or a refusal."""
+        return str(refuse_traversal(relative))
 
     def list_files(self, role: AgentRole) -> ToolResult:
         if role not in _READ_ROLES:
@@ -140,7 +85,7 @@ class RepositoryMCP:
         listed: list[str] = []
         used = 0
         total = 0
-        for _, relative in self._safe_files():
+        for relative in self.workspace.list_paths():
             total += 1
             if len(listed) >= MAX_LISTED_PATHS:
                 continue
@@ -162,7 +107,7 @@ class RepositoryMCP:
                 role,
                 "read_file",
                 ToolStatus.SUCCESS,
-                self._path(relative).read_text(encoding="utf-8"),
+                self.workspace.read(self._relative(relative)),
             )
         except (OSError, ValueError) as exc:
             return self._result(role, "read_file", ToolStatus.DENIED, error=str(exc))
@@ -172,14 +117,7 @@ class RepositoryMCP:
     def search_code(self, role: AgentRole, query: str) -> ToolResult:
         if role not in _READ_ROLES:
             return self._result(role, "search_code", ToolStatus.DENIED, error="role denied")
-        matches = []
-        folded_query = query.casefold()
-        for path, relative in self._safe_files():
-            try:
-                if folded_query in path.read_text(encoding="utf-8", errors="ignore").casefold():
-                    matches.append(str(relative))
-            except OSError:
-                continue
+        matches = [str(relative) for relative in self.workspace.search(query)]
         return self._result(role, "search_code", ToolStatus.SUCCESS, "\n".join(matches))
 
     def create_file(self, role: AgentRole, relative: str, content: str) -> ToolResult:
@@ -194,10 +132,10 @@ class RepositoryMCP:
         if role not in _WRITE_ROLES:
             return self._result(role, tool, ToolStatus.DENIED, error="role denied")
         try:
-            path = self._path(relative)
-            if not create and not path.exists():
+            normalized = self._relative(relative)
+            existed = self.workspace.exists(normalized)
+            if not create and not existed:
                 return self._result(role, tool, ToolStatus.FAIL, error="file not found")
-            normalized = path.relative_to(self.root).as_posix()
             # Strip trailing WS per line and always end with a newline so LLM
             # omissions cannot loop Reviewer→HITL (apply-474c7045 / apply-30fc75c0).
             lines = [line.rstrip(" \t") for line in content.splitlines()]
@@ -207,8 +145,12 @@ class RepositoryMCP:
             # or identical once all whitespace is ignored → SUCCESS no-op: do not
             # write, and do not record a spurious change in `_originals` when this
             # path was not already tracked.
-            if path.exists():
-                existing = path.read_text(encoding="utf-8", errors="ignore")
+            # A file the workspace cannot decode as text is refused rather than
+            # rewritten from a lossy copy of itself: reading it with
+            # errors="ignore", as this did while it owned the filesystem, made a
+            # binary file look like a whitespace change.
+            if existed:
+                existing = self.workspace.read(normalized)
                 existing_lines = [line.rstrip(" \t") for line in existing.splitlines()]
                 normalized_existing = "\n".join(existing_lines) + "\n"
                 if (
@@ -219,12 +161,9 @@ class RepositoryMCP:
                     return self._result(role, tool, ToolStatus.SUCCESS, relative)
             if normalized not in self._originals:
                 self._originals[normalized] = (
-                    path.read_text(encoding="utf-8", errors="ignore")
-                    if path.exists()
-                    else None
+                    self.workspace.read(normalized) if existed else None
                 )
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(normalized_content, encoding="utf-8")
+            self.workspace.write(normalized, normalized_content)
             return self._result(role, tool, ToolStatus.SUCCESS, relative)
         except (OSError, ValueError) as exc:
             return self._result(role, tool, ToolStatus.DENIED, error=str(exc))
@@ -234,8 +173,11 @@ class RepositoryMCP:
             return self._result(role, "get_diff", ToolStatus.DENIED, error="role denied")
         sections: list[str] = []
         for relative, original in self._originals.items():
-            path = self._path(relative)
-            current = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else None
+            current = (
+                self.workspace.read(relative)
+                if self.workspace.exists(relative)
+                else None
+            )
             before = [] if original is None else original.splitlines(keepends=True)
             after = [] if current is None else current.splitlines(keepends=True)
             if before == after:

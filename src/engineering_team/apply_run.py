@@ -16,6 +16,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,13 @@ from engineering_team.delivery import (
 )
 from engineering_team.docker_labels import project_slug, sweep
 from engineering_team.graph.stategraph import build_engineering_graph
+from engineering_team.infrastructure_prerequisite import (
+    deliver as deliver_infrastructure,
+)
+from engineering_team.infrastructure_prerequisite import (
+    detect as detect_prerequisite,
+)
+from engineering_team.infrastructure_prerequisite import stacked_body
 from engineering_team.llm.cloud import CloudModelRuntime
 from engineering_team.llm.runtime import LocalModelRuntime
 from engineering_team.mcp.client import MCPQualityClient, MCPRepositoryClient
@@ -178,6 +186,9 @@ class _ProjectInfrastructureQuality:
         self.timeout_seconds = timeout_seconds
         self.services = None
         self.daemon = None
+        # ADR 18. Set while the stack is up, because the topology it is read
+        # from is deleted at teardown.
+        self.prerequisite = None
         self.backends = []
         self.quality = None
         self._closed = False
@@ -196,6 +207,11 @@ class _ProjectInfrastructureQuality:
                 self.root, self.run_id or str(uuid.uuid4()), project=self.project
             )
             self.services.up(time.monotonic() + self.timeout_seconds)
+            # The project declared nothing and this run inferred it. Under ADR 18
+            # that is a blocking prerequisite to deliver, not a detail: the
+            # inference used to be written to a temporary file and deleted, so
+            # the project gained nothing and the next run inferred it again.
+            self.prerequisite = detect_prerequisite(self.services, self.root)
             if self.settings.quality_run_daemon_image:
                 from engineering_team.mcp.run_daemon import RunDaemon
 
@@ -321,14 +337,15 @@ def execute_on_project(
     resolved_test_paths = test_paths
 
     started = time.perf_counter()
+    infrastructure = open_project_quality(
+        project_root,
+        settings,
+        timeout_seconds=settings.quality_timeout_seconds,
+        run_id=run_id,
+    )
     with (
         MCPRepositoryClient(project_root, timeout_seconds=120) as repository_mcp,
-        open_project_quality(
-            project_root,
-            settings,
-            timeout_seconds=settings.quality_timeout_seconds,
-            run_id=run_id,
-        ) as quality_mcp,
+        infrastructure as quality_mcp,
     ):
         graph = build_engineering_graph(
             repository_mcp=repository_mcp,
@@ -359,6 +376,11 @@ def execute_on_project(
             state = streamed_state
         if state is None:
             raise RuntimeError("workflow completed without a terminal state")
+        # Read before the stack tears down, and carried on the state so callers
+        # of this function need no new return value to see it.
+        state["infrastructure_prerequisite"] = getattr(
+            infrastructure, "prerequisite", None
+        )
     duration = time.perf_counter() - started
     return state, trace, duration, cloud_first
 
@@ -471,6 +493,44 @@ def _proposal_from_implementation(
     )
 
 
+def _deliver_infrastructure_first(
+    project_root: Path,
+    state: dict[str, Any],
+    *,
+    run_id: str,
+    backend: Any,
+    evidence: dict[str, Any],
+) -> Any:
+    """Open the infrastructure-only pull request, if this run stood on one.
+
+    Returns what the functional delivery must be stacked on, or None when the
+    project declared its own topology and there is nothing to deliver.
+
+    A refusal here does not abort the run and does not silently promote the
+    functional delivery to the default branch: the branch is simply not stacked,
+    and the reason is recorded. ADR 18's rule is that infrastructure is either
+    delivered or refused, and a recorded refusal is the second of those.
+    """
+    prerequisite = state.get("infrastructure_prerequisite")
+    if prerequisite is None:
+        return None
+    try:
+        delivered = deliver_infrastructure(
+            project_root, prerequisite, run_id=run_id, backend=backend,
+            confirmed=True,
+            # Both deliveries in this run go through the same git seam, so
+            # there is one place that decides how a branch is pushed.
+            git=GitDelivery(),
+        )
+    except DeliveryRefused as exc:
+        evidence["infrastructure_delivery_error"] = str(exc)
+        return None
+    evidence["infrastructure_branch"] = delivered.branch
+    if delivered.url:
+        evidence["infrastructure_pr_url"] = delivered.url
+    return delivered
+
+
 def run_on_project(
     settings: Settings,
     *,
@@ -539,6 +599,18 @@ def run_on_project(
             f"{item.code.value}: {item.detail}" for item in errors
         ],
         "human_review_required": bool(state.get("human_review_required")),
+        # ADR 18. A run that ends having delivered infrastructure and no
+        # functional code is a success, and anything reading these outcomes has
+        # to be able to say so: a router that read "no code changed" as a failed
+        # run would turn the correct behaviour into a repair loop.
+        "infrastructure_prerequisite": (
+            {
+                "engines": list(prerequisite.engines),
+                "read_from": list(prerequisite.read_from),
+            }
+            if (prerequisite := state.get("infrastructure_prerequisite")) is not None
+            else None
+        ),
         "destructive_authorization_blocked": any(
             item.code is ErrorCode.TOOL_ERROR and "destructive operation" in item.detail
             for item in errors
@@ -559,6 +631,14 @@ def run_on_project(
             evidence["delivery_error"] = str(exc)
             delivery = None
         if delivery is not None:
+            # ADR 18: infrastructure the project does not declare is delivered
+            # first, on its own, before anything functional is offered. The
+            # order is the decision -- a reviewer looking at the functional
+            # change must not also be asked to accept a database choice buried
+            # in the same diff.
+            delivered = _deliver_infrastructure_first(
+                project_root, state, run_id=run_id, backend=delivery, evidence=evidence
+            )
             proposal = _proposal_from_implementation(
                 project_root=project_root,
                 run_id=run_id,
@@ -567,15 +647,28 @@ def run_on_project(
                 written_paths=list(evidence.get("files_written") or []),
             )
             if proposal is None:
-                evidence["delivery_error"] = "no file contents available for delivery"
+                # Not an error when infrastructure was the whole delivery: the
+                # run produced a pull request and stopped, which ADR 18 calls a
+                # success rather than an empty one.
+                if delivered is None:
+                    evidence["delivery_error"] = (
+                        "no file contents available for delivery"
+                    )
             else:
+                if delivered is not None:
+                    proposal = replace(
+                        proposal, body=stacked_body(proposal.body, delivered)
+                    )
+                base = delivered.branch if delivered is not None else ""
                 try:
-                    GitDelivery().push(project_root, proposal, confirmed=True)
+                    GitDelivery().push(
+                        project_root, proposal, confirmed=True, base=base
+                    )
                     evidence["delivery_branch"] = proposal.branch
                     open_pr = getattr(delivery, "open", None)
                     if callable(open_pr):
                         evidence["delivery_pr_url"] = open_pr(
-                            project_root, proposal, confirmed=True
+                            project_root, proposal, confirmed=True, base=base
                         )
                 except DeliveryRefused as exc:
                     evidence["delivery_error"] = str(exc)
