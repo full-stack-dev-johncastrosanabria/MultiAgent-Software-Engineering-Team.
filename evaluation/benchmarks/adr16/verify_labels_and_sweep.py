@@ -45,7 +45,7 @@ from engineering_team.docker_labels import (
     label_arguments,
     sweep,
 )
-from engineering_team.guardrails.secrets import redact_secrets
+from engineering_team.guardrails.secrets import redacted_document
 
 EXPECTED_LABELS = (OWNER_LABEL, RUN_LABEL, PROJECT_LABEL, LIFETIME_LABEL)
 
@@ -204,7 +204,7 @@ def main() -> int:
             docker(kind, "rm", "--force", name)
         report["finished"] = True
         (arguments.output / "report.json").write_text(
-            redact_secrets(json.dumps(report, indent=2)) + "\n", encoding="utf-8"
+            json.dumps(redacted_document(report), indent=2) + "\n", encoding="utf-8"
         )
 
     failed = [item["check"] for item in report["checks"] if not item["passed"]]

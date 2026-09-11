@@ -44,7 +44,7 @@ from pathlib import Path
 from engineering_team import infrastructure_prerequisite as prerequisites
 from engineering_team.delivery import DeliveryRefused, GitDelivery, Proposal
 from engineering_team.delivery_check import validate_delivered_compose
-from engineering_team.guardrails.secrets import redact_secrets
+from engineering_team.guardrails.secrets import redacted_document
 from engineering_team.services import ServiceStack
 
 PASSWORD = "sup3rs3cret-fixture-password"
@@ -206,7 +206,7 @@ def main() -> int:
             record(
                 "a delivered compose whose template lost a variable is refused",
                 bool(refused),
-                {"removed": dropped, "refusal": redact_secrets(refused)},
+                {"removed": dropped, "refusal": refused},
             )
 
         # The functional pull request, stacked on the one above.
@@ -290,7 +290,7 @@ def main() -> int:
             )
 
     (arguments.output / "verification.json").write_text(
-        redact_secrets(json.dumps(report, indent=2)) + "\n", encoding="utf-8"
+        json.dumps(redacted_document(report), indent=2) + "\n", encoding="utf-8"
     )
     failed = [item["check"] for item in report["checks"] if not item["passed"]]
     print(f"\nwritten: {arguments.output / 'verification.json'}")

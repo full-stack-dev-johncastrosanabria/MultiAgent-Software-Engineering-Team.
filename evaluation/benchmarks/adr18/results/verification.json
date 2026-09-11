@@ -1,6 +1,6 @@
 {
   "host": "macOS-27.0-arm64-arm-64bit-Mach-O",
-  "run_id": "verify-39b3c6ec",
+  "run_id": "verify-d727fad0",
   "checks": [
     {
       "check": "a project with no compose file is detected as a prerequisite",
@@ -46,7 +46,7 @@
       "detail": {
         "env_example": [
           "# Copy to .env and fill in. Values are examples, not credentials.",
-          "MYSQL_ROOT_PASSWORD=[REDACTED]
+          "MYSQL_ROOT_PASSWORD=[REDACTED]"
         ]
       }
     },
@@ -62,20 +62,20 @@
     },
     {
       "check": "a delivered compose whose template lost a variable is refused",
-      "passed": false,
+      "passed": true,
       "detail": {
         "removed": [
-          "MYSQL_ROOT_PASSWORD=[REDACTED]
+          "MYSQL_ROOT_PASSWORD=[REDACTED]"
         ],
-        "refusal": ""
+        "refusal": "the delivered compose file did not pass validation: the compose file interpolates ${MYSQL_ROOT_PASSWORD}, which `.env.example` does not declare; Compose substitutes an unset optional variable with an empty string and exits 0, so this is not something `compose config` reports"
       }
     },
     {
       "check": "the functional branch is cut from the infrastructure branch, not from main",
       "passed": true,
       "detail": {
-        "merge_base": "67cb4e465e0897f1c8c5d00f7c350b607fb6fd4c",
-        "infrastructure_tip": "67cb4e465e0897f1c8c5d00f7c350b607fb6fd4c"
+        "merge_base": "e526c6559f9ae3989a35f976b2e9ce3c01017102",
+        "infrastructure_tip": "e526c6559f9ae3989a35f976b2e9ce3c01017102"
       }
     },
     {
@@ -94,9 +94,9 @@
       "detail": {
         "containers": [
           "aset-billing-mysql",
-          "verify-39b3c6ec"
+          "verify-d727fad0"
         ],
-        "seconds": 12.57
+        "seconds": 16.05
       }
     }
   ],

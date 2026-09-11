@@ -34,7 +34,7 @@ from engineering_team.docker_labels import (
     PROJECT_LABEL,
     RUN_LABEL,
 )
-from engineering_team.guardrails.secrets import redact_secrets
+from engineering_team.guardrails.secrets import redacted_document
 from engineering_team.workspace.contract import PROJECT_MOUNT, VolumeWorkspace
 
 
@@ -176,7 +176,7 @@ def main() -> int:
 
     report["finished"] = True
     (arguments.output / "verification.json").write_text(
-        redact_secrets(json.dumps(report, indent=2)) + "\n", encoding="utf-8"
+        json.dumps(redacted_document(report), indent=2) + "\n", encoding="utf-8"
     )
     failed = [item["check"] for item in report["checks"] if not item["passed"]]
     print(f"\nwritten: {arguments.output / 'verification.json'}")
