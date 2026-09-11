@@ -1,6 +1,6 @@
 {
   "host": "macOS-27.0-arm64-arm-64bit-Mach-O",
-  "run_id": "verify-e0796e13",
+  "run_id": "verify-39b3c6ec",
   "checks": [
     {
       "check": "a project with no compose file is detected as a prerequisite",
@@ -51,11 +51,31 @@
       }
     },
     {
+      "check": "the delivered compose resolves against the delivered .env.example",
+      "passed": true,
+      "detail": {
+        "performed": true,
+        "valid": true,
+        "error": "",
+        "occupied_ports": []
+      }
+    },
+    {
+      "check": "a delivered compose whose template lost a variable is refused",
+      "passed": false,
+      "detail": {
+        "removed": [
+          "MYSQL_ROOT_PASSWORD=[REDACTED]
+        ],
+        "refusal": ""
+      }
+    },
+    {
       "check": "the functional branch is cut from the infrastructure branch, not from main",
       "passed": true,
       "detail": {
-        "merge_base": "553c86d172614cbea3d36a7176dceadc67266c47",
-        "infrastructure_tip": "553c86d172614cbea3d36a7176dceadc67266c47"
+        "merge_base": "67cb4e465e0897f1c8c5d00f7c350b607fb6fd4c",
+        "infrastructure_tip": "67cb4e465e0897f1c8c5d00f7c350b607fb6fd4c"
       }
     },
     {
@@ -74,14 +94,15 @@
       "detail": {
         "containers": [
           "aset-billing-mysql",
-          "verify-e0796e13"
+          "verify-39b3c6ec"
         ],
-        "seconds": 6.11
+        "seconds": 12.57
       }
     }
   ],
   "notes": [
     "The topology brought up is the `run` rendering (service-name hosts, no published ports); the file delivered is the `delivery` rendering (localhost ports, ${VAR} credentials). Bringing the run one up does not prove the delivered one starts, so a port collision or an unset variable in the delivered file would reach the reviewer unexercised.",
+    "That gap is narrower than it was and has not closed. The two checks above hand the delivered file itself to the runtime, so its schema and its variable substitution are now resolved and a published port already busy here is named in the body. Nothing above pulls an image, starts a container, or waits for a healthcheck on the delivered rendering: `compose config` is the whole of the coverage.",
     "Both renderings come from the same inference, so the engine and the pinned digest are shared; what is untested is only the part that differs."
   ]
 }

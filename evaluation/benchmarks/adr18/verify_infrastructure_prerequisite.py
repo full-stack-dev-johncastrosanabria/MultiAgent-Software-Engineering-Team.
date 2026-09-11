@@ -18,7 +18,10 @@ One thing this reports rather than asserts: the compose file brought up is the
 `run` rendering, and the compose file delivered is the `delivery` rendering.
 They are two outputs of the same inference, and nothing here proves the
 delivered one starts. ADR 18 is written as if bringing infrastructure up
-validated what the pull request contains; it does not.
+validated what the pull request contains; it does not. Two checks narrow that
+gap without closing it: the delivered file and its template are handed to the
+runtime for `compose config`, and the gate that refuses a file the runtime
+rejects is exercised against a template deliberately missing a variable.
 
 Usage:
     python evaluation/benchmarks/adr18/verify_infrastructure_prerequisite.py \
@@ -35,10 +38,12 @@ import sys
 import tempfile
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from engineering_team import infrastructure_prerequisite as prerequisites
-from engineering_team.delivery import GitDelivery, Proposal
+from engineering_team.delivery import DeliveryRefused, GitDelivery, Proposal
+from engineering_team.delivery_check import validate_delivered_compose
 from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.services import ServiceStack
 
@@ -157,6 +162,53 @@ def main() -> int:
             {"env_example": env_delivered.splitlines()},
         )
 
+        if not arguments.skip_daemon:
+            # The two artefacts as a reviewer receives them -- read back out of
+            # the branch, not out of the objects that produced it -- handed to
+            # the runtime. Nothing is started: `compose config` resolves the
+            # schema and the substitution and stops there.
+            aligned = validate_delivered_compose(compose_delivered, env_delivered)
+            record(
+                "the delivered compose resolves against the delivered .env.example",
+                aligned.performed and aligned.valid,
+                {
+                    "performed": aligned.performed,
+                    "valid": aligned.valid,
+                    "error": aligned.error,
+                    "occupied_ports": list(aligned.occupied_ports),
+                },
+            )
+
+            # The negative case, which is the only thing that proves the gate is
+            # a gate: a template that no longer declares a variable the compose
+            # file interpolates is the exact failure the reviewer would meet as
+            # `variable is not set`. `deliver` is asked, not the checker, so a
+            # refusal has to travel all the way to `DeliveryRefused`.
+            dropped = [
+                line for line in env_delivered.splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ][:1]
+            starved = replace(
+                prerequisite,
+                env_example="\n".join(
+                    line for line in env_delivered.splitlines() if line not in dropped
+                ) + "\n",
+            )
+            refused = ""
+            try:
+                prerequisites.deliver(
+                    root, starved,
+                    run_id=f"{run_id}-starved", backend=None, confirmed=True,
+                    git=GitDelivery(),
+                )
+            except DeliveryRefused as refusal:
+                refused = str(refusal)
+            record(
+                "a delivered compose whose template lost a variable is refused",
+                bool(refused),
+                {"removed": dropped, "refusal": redact_secrets(refused)},
+            )
+
         # The functional pull request, stacked on the one above.
         functional = Proposal(
             branch="aset/apply-verify-18",
@@ -217,12 +269,25 @@ def main() -> int:
                 "the reviewer unexercised."
             )
             report["notes"].append(
+                "That gap is narrower than it was and has not closed. The two "
+                "checks above hand the delivered file itself to the runtime, so "
+                "its schema and its variable substitution are now resolved and a "
+                "published port already busy here is named in the body. Nothing "
+                "above pulls an image, starts a container, or waits for a "
+                "healthcheck on the delivered rendering: `compose config` is the "
+                "whole of the coverage."
+            )
+            report["notes"].append(
                 "Both renderings come from the same inference, so the engine and "
                 "the pinned digest are shared; what is untested is only the part "
                 "that differs."
             )
         else:
-            report["notes"].append("The daemon arm was skipped by --skip-daemon.")
+            report["notes"].append(
+                "The daemon arm was skipped by --skip-daemon, and with it the "
+                "two delivery-validation checks: both ask a container runtime, "
+                "and --skip-daemon is how this runner is told there is none."
+            )
 
     (arguments.output / "verification.json").write_text(
         redact_secrets(json.dumps(report, indent=2)) + "\n", encoding="utf-8"
