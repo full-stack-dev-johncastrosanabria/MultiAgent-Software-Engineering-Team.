@@ -139,16 +139,30 @@ def _score(evidence: dict, *, delivered: bool) -> dict[str, dict]:
         tool: sum(1 for item in failed if item.get("tool") == tool)
         for tool in sorted({item.get("tool") for item in failed})
     }
+    human_review_required = bool(evidence.get("human_review_required"))
+    execute_passed = (
+        bool(outcomes)
+        and not unavailable
+        and ran_tests
+        and not last_run_tests_failed
+        and not human_review_required
+    )
+    execute_detail = (
+        f"{len(outcomes)} tool outcomes, {len(unavailable)} unavailable, "
+        f"{len(failed)} failed"
+    )
+    if human_review_required and not execute_passed:
+        execute_detail += ", run exited asking for human review before TESTING closed"
     stages["execute"] = {
-        # Tools ran, none degraded, the test tool ran at least once, and its
-        # last outcome was not FAIL: a run whose containers never came up
-        # produces an empty list and reads as red, and a run that ended on a
-        # failing test suite reads as red too.
-        "passed": bool(outcomes) and not unavailable and ran_tests and not last_run_tests_failed,
-        "detail": (
-            f"{len(outcomes)} tool outcomes, {len(unavailable)} unavailable, "
-            f"{len(failed)} failed"
-        ),
+        # Tools ran, none degraded, the test tool ran at least once, its last
+        # outcome was not FAIL, and the run did not exit into human review: a
+        # run whose containers never came up produces an empty list and reads
+        # as red, a run that ended on a failing test suite reads as red too,
+        # and a run that left the graph via human_review_required can carry a
+        # stale PASS from an earlier cycle in run_tests_outcomes[-1] -- that is
+        # not a completed TESTING pass, so it must not read as green either.
+        "passed": execute_passed,
+        "detail": execute_detail,
         "unavailable": unavailable[:5],
         "failed_by_tool": failed_by_tool,
     }

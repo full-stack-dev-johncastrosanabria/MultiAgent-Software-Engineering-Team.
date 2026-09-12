@@ -155,8 +155,13 @@ _REDACTED_ASSIGNMENT = re.compile(
 # Secrets that give themselves away by shape, no key name required -- the
 # credential a `git`/`gh` failure or a raw header dump embeds free-standing.
 # Redacted before the key=value passes below, since those never fire on a
-# bare token in the first place; order between these does not matter, none
-# of them can match inside another's replacement.
+# bare token in the first place. These four *can* match inside one another's
+# replacement -- `_URL_CREDENTIAL`'s userinfo group matches the literal
+# `[REDACTED]` left by `_GITHUB_TOKEN` on `https://ghp_xxx@github.com`, giving
+# `https://[REDACTED]@github.com` -- but their relative order still does not
+# matter, because re-running any of them over an already-redacted result is a
+# no-op: the outcome is idempotent, not because the patterns stay clear of
+# each other.
 _GITHUB_TOKEN = re.compile(
     r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"
     r"|\bgithub_pat_[A-Za-z0-9_]{20,}\b"
@@ -212,9 +217,12 @@ def redact_secrets(value: str, known_values: Iterable[str] = ()) -> str:
         return match.group("prefix") + quote + "[REDACTED]" + quote
 
     # Shape-based patterns first: a bare token or an embedded URL credential
-    # carries no key name for the passes below to key off, and none of these
-    # four can appear inside another's replacement, so their relative order
-    # does not matter.
+    # carries no key name for the passes below to key off. These four *can*
+    # appear inside one another's replacement -- `_URL_CREDENTIAL` matches the
+    # literal `[REDACTED]` that `_GITHUB_TOKEN` leaves behind in a URL's
+    # userinfo -- but their relative order still does not matter, because
+    # re-applying any of them to an already-redacted string is a no-op: the
+    # result is idempotent, not because the passes stay clear of each other.
     redacted = _GITHUB_TOKEN.sub("[REDACTED]", redacted)
     redacted = _ANTHROPIC_KEY.sub("[REDACTED]", redacted)
     redacted = _AWS_ACCESS_KEY.sub("[REDACTED]", redacted)

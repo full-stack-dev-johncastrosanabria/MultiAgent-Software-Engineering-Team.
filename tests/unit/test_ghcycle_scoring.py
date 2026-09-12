@@ -32,7 +32,7 @@ _SPEC.loader.exec_module(run_cycle)
 @pytest.fixture(autouse=True)
 def _no_docker(monkeypatch: pytest.MonkeyPatch) -> None:
     """Hygiene must not depend on what the local Docker daemon happens to hold."""
-    monkeypatch.setattr(run_cycle, "_labelled_resources", list)
+    monkeypatch.setattr(run_cycle, "_labelled_resources", lambda: [])
 
 
 def test_execute_is_red_when_a_tool_went_unavailable() -> None:
@@ -77,6 +77,36 @@ def test_execute_is_green_when_the_terminal_run_tests_iteration_passed() -> None
             {"tool": "run_tests", "status": "FAIL"},
             {"tool": "run_tests", "status": "PASS"},
         ],
+    }
+    stages = run_cycle._score(evidence, delivered=False)
+
+    assert stages["execute"]["passed"] is True
+
+
+def test_execute_is_red_when_the_run_exited_into_human_review_despite_a_stale_pass() -> None:
+    """The real case seen in all three raw reports: the graph left via
+    `human_review_required` before TESTING closed, but `run_tests_outcomes[-1]`
+    still carries a PASS from an earlier cycle. That PASS is not a completed
+    TESTING pass for *this* run, so `execute` must not read green on it."""
+    evidence = {
+        "tool_outcomes": [
+            {"tool": "run_tests", "status": "PASS"},
+        ],
+        "human_review_required": True,
+        "review": {"status": "REJECTED"},
+    }
+    stages = run_cycle._score(evidence, delivered=False)
+
+    assert stages["execute"]["passed"] is False
+    assert "human review" in stages["execute"]["detail"]
+
+
+def test_execute_is_green_when_the_terminal_run_tests_passed_and_no_human_review() -> None:
+    evidence = {
+        "tool_outcomes": [
+            {"tool": "run_tests", "status": "PASS"},
+        ],
+        "human_review_required": False,
     }
     stages = run_cycle._score(evidence, delivered=False)
 
