@@ -13,7 +13,7 @@ from pathlib import Path
 
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole
-from engineering_team.guardrails.secrets import redact_secrets
+from engineering_team.guardrails.secrets import redacted_document
 from engineering_team.mcp.quality import QualityMCP
 
 
@@ -74,7 +74,7 @@ def main() -> None:
                         command, capture_output=True, timeout=30, check=False,
                     ).returncode != 0
             (args.output / "report.json").write_text(
-                redact_secrets(json.dumps(report, indent=2)) + "\n"
+                json.dumps(redacted_document(report), indent=2) + "\n"
             )
             print(json.dumps({"component": component,
                               "status": entry.get("result", {}).get("status"),
@@ -83,7 +83,7 @@ def main() -> None:
         report["finished"] = True
     finally:
         (args.output / "report.json").write_text(
-            redact_secrets(json.dumps(report, indent=2)) + "\n"
+            json.dumps(redacted_document(report), indent=2) + "\n"
         )
 
 

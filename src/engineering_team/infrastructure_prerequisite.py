@@ -25,7 +25,7 @@ so.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,7 @@ from engineering_team.delivery import (
     Proposal,
     infrastructure_proposal,
 )
+from engineering_team.delivery_check import DeliveryCheck, validate_delivered_compose
 
 __all__ = [
     "DeliveredInfrastructure",
@@ -127,6 +128,66 @@ def _sources_that_named_the_engines(
     return tuple(sorted(named))
 
 
+_PARTIAL = (
+    "**What this check covers.** Two things, and only two. The compose file "
+    "above was resolved by the container runtime against a synthetic `.env` "
+    "built from the keys of `.env.example`, so its schema is valid. Separately, "
+    "the variable names it interpolates were compared against the keys that "
+    "template declares, so every variable it interpolates has somewhere to come "
+    "from -- a comparison made here rather than by the runtime, which "
+    "substitutes an unset `${VARIABLE}` with an empty string and reports "
+    "success. That is all it establishes: the images were not pulled, nothing "
+    "was started, and no healthcheck was exercised."
+)
+
+
+def _validation_note(check: DeliveryCheck) -> str:
+    """What the body says about a file the reviewer is about to run.
+
+    Three different things, and the difference is the point. Validation that
+    ran and passed earns the partial-coverage sentence and nothing more.
+    Validation that could not run says so, rather than letting silence read as
+    a pass. A port conflict is named because it is the failure a reviewer will
+    otherwise meet as an opaque bind error on their own machine -- and it is
+    reported, not refused, because the busy port is on the machine that built
+    this, not on theirs.
+
+    "Could not run" is itself two things, and saying the wrong one is a small
+    lie the reviewer has no way to catch. A runtime that is absent from `PATH`
+    and a runtime that is present but could not be spoken to reach here
+    identically as `performed=False`; only the second fills `check.error`. The
+    branch below is on that, so the note never tells a reviewer no runtime was
+    available on a machine that had one.
+    """
+    if not check.performed:
+        if check.error:
+            return (
+                "**This compose file was not validated.** A container runtime "
+                "was installed on the machine that authored it, but could not "
+                "be spoken to: "
+                f"{check.error}. The file therefore reaches you having never "
+                "been resolved. Run `docker compose config` against it before "
+                "trusting the rest of this pull request."
+            )
+        return (
+            "**This compose file was not validated.** No container runtime was "
+            "available on the machine that authored it, so it reaches you "
+            "having never been resolved. Run `docker compose config` against it "
+            "before trusting the rest of this pull request."
+        )
+    note = _PARTIAL
+    if check.occupied_ports:
+        named = ", ".join(check.occupied_ports)
+        note += (
+            f"\n\nThe published {'ports' if len(check.occupied_ports) > 1 else 'port'} "
+            f"{named} {'were' if len(check.occupied_ports) > 1 else 'was'} already "
+            "in use on the machine that authored this file. That says nothing "
+            "about your machine, but if `docker compose up` fails to bind, this "
+            "is the line to remember."
+        )
+    return note
+
+
 def deliver(
     repository: str | Path,
     prerequisite: Prerequisite,
@@ -140,11 +201,29 @@ def deliver(
 
     Raises `DeliveryRefused` rather than degrading: ADR 18's rule is that
     infrastructure is *either delivered or refused*, and a silent failure here
-    would put the run back on the improvised path the record exists to close.
+    would put the run back on the improvised path the record exists to close. A
+    delivered compose file that fails validation is that same refusal: proposing
+    it would hand a reviewer a file this system knows does not work. "Fails
+    validation" is wider than "the runtime said no" -- the runtime accepts a
+    file that interpolates a variable nothing declares -- so the message names
+    the check's own reason rather than attributing it to Docker.
     """
     proposal = prerequisite.proposal(run_id)
     if proposal is None:
         raise DeliveryRefused("the derived topology produced nothing to propose")
+    # The module attribute, not a parameter: the seam the tests need is
+    # monkeypatching this name, and an argument nothing ever passed was a second
+    # way in that only looked like one.
+    check = validate_delivered_compose(
+        prerequisite.compose, prerequisite.env_example
+    )
+    if check.performed and not check.valid:
+        raise DeliveryRefused(
+            f"the delivered compose file did not pass validation: {check.error}"
+        )
+    proposal = replace(
+        proposal, body=f"{proposal.body}\n\n{_validation_note(check)}"
+    )
     branch = (git or GitDelivery()).push(
         Path(repository), proposal, confirmed=confirmed
     )

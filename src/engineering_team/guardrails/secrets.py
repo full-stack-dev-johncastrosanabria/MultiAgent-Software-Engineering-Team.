@@ -195,6 +195,32 @@ def redact_secrets(value: str, known_values: Iterable[str] = ()) -> str:
     return _UNQUOTED_SECRET_VALUE.sub(r"\1=[REDACTED]", redacted)
 
 
+def redacted_document(value: Any) -> Any:
+    """Redact the strings of a structure, before anyone serialises it.
+
+    `redact_secrets(json.dumps(report))` looks equivalent and is not: the
+    redaction runs on the *encoded* document, where a value's closing quote is
+    part of the line the line-oriented pattern replaces. `"KEY=change-me",`
+    became `"KEY=[REDACTED]` and the benchmark evidence files stopped parsing as
+    JSON while still being written, which is the worst of the two failures --
+    nothing said the file was broken. Redacting the leaves and encoding
+    afterwards keeps the document valid by construction.
+
+    Keys are left alone deliberately. A mapping keyed by a credential is a
+    different problem, and `require_safe_cloud_context` is where it is refused;
+    this function exists to make a report safe to write, not to police it.
+    """
+    if isinstance(value, dict):
+        return {key: redacted_document(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redacted_document(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redacted_document(item) for item in value)
+    if isinstance(value, str):
+        return redact_secrets(value)
+    return value
+
+
 def _names_a_credential_file(name: str) -> bool:
     """Imported lazily: repository_evidence depends on this module, not the other
     way round, and a top-level import would close the cycle."""

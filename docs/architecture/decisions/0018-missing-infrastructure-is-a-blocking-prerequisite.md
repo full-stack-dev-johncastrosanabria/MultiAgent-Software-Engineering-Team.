@@ -48,6 +48,8 @@ can no longer be established from anything on the machine. The infrastructure a
 run needed became permanent, unlabelled, uncollectable state on a developer's
 laptop, holding a credential in plain text.
 
+**Corrección fechada, 2026-09-11.** El contenedor `icapi-mysql` descrito arriba ya no existe en este host; fue retirado a mano y el inventario de esa fecha, en [estado](../../status.md), lo confirma. Lo que motiva esta decisión sigue en pie: el registro de haberlo dejado vivir dos días de más es lo que prueba el problema, y ese registro no depende de que siga corriendo.
+
 The difference between those two outcomes is not capability. It is whether the
 infrastructure was treated as work to deliver or as an obstacle to route around.
 
@@ -219,3 +221,37 @@ delivery, whose invariant was that a proposal never chooses what it is merged
 into. That invariant is intact: the base is an argument the caller passes, not a
 field on the `Proposal`, and it is refused unless it names a branch under this
 system's own `aset/` namespace.
+
+## Corrección fechada, 2026-09-11
+
+**El orden sigue siendo derivar y levantar antes de lo funcional; no hay
+reintento porque no hay primer fallo que reintentar.** Eso ya lo decía la nota
+de implementación anterior sobre la detección del prerequisito, y sigue
+valiendo para la puerta que se añadió después: `deliver()`, en
+`infrastructure_prerequisite.py`, invoca `validate_delivered_compose` antes de
+abrir el pull request -- no después, y no en un reintento. Cuando la
+comprobación se hizo y falló, la entrega se rehúsa con `DeliveryRefused` y ahí
+termina; no hay una entrega previa que hubiera fallado y a la que volver.
+
+**La sustancia de la regla se cumple.** La infraestructura se deriva, se
+entrega como pull request propio, se levanta de verdad contra un daemon real y
+el trabajo funcional se apila encima. Así lo confirma el runner de esta rama,
+[`adr18/verify_infrastructure_prerequisite.py`](../../../evaluation/benchmarks/adr18/verify_infrastructure_prerequisite.py):
+11 de 11, salida 0.
+
+**Lo que ese resultado no dice: la comprobación es estática.**
+`validate_delivered_compose` (en
+[`delivery_check.py`](../../../src/engineering_team/delivery_check.py))
+resuelve el archivo `delivery` con `docker compose config` contra un `.env`
+sintético y compara las variables que interpola con las claves de
+`.env.example`. Eso deriva la validez de la *forma* del archivo, no de
+haberlo levantado -- y deja fuera lo mismo que este registro ya anticipó al
+hablar de la detección del prerequisito: la señal es más estrecha que la
+regla, y falla en silencio ante infraestructura que no supo predecir. Un
+servicio que pasa `compose config` y aun así no arranca porque el motor
+rechaza esa contraseña, o dos servicios que compiten por el mismo puerto en la
+máquina de quien lo levanta, no los atrapa nada de esto. Una detección por
+conexión fallida -- levantar el `delivery` de verdad y comprobar que algo
+responde -- cubriría más de esos casos, y ese día la redacción del reintento
+de este registro volverá a importar: intentar la conexión, fallar, reintentar
+una vez, dejaría de ser una descripción vacía.

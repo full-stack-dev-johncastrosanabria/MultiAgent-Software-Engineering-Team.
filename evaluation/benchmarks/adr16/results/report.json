@@ -1,0 +1,70 @@
+{
+  "host": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "run_id": "verify-4a23bf33-2d67-442c-878e-c6c18c3f78ed",
+  "checks": [
+    {
+      "check": "a volume the current run creates carries all four labels",
+      "passed": true,
+      "detail": {
+        "aset.lifetime": "run",
+        "aset.owner": "aset",
+        "aset.project": "verify",
+        "aset.run": "verify-4a23bf33-2d67-442c-878e-c6c18c3f78ed"
+      }
+    },
+    {
+      "check": "the sweep reaps a resource left by a run that is no longer alive",
+      "passed": true,
+      "detail": {
+        "orphan": "aset-orphan-687186b0"
+      }
+    },
+    {
+      "check": "the sweep leaves the current run's own resources alone",
+      "passed": true,
+      "detail": {
+        "mine": "aset-verify-310ebc48"
+      }
+    },
+    {
+      "check": "the sweep leaves a resource that is not ASET's alone",
+      "passed": true,
+      "detail": {
+        "theirs": "not-aset-verify-7ff04f33"
+      }
+    },
+    {
+      "check": "nothing that existed before the sweep and was not ASET's disappeared",
+      "passed": true,
+      "detail": {
+        "containers": [],
+        "networks": [],
+        "volumes": []
+      }
+    }
+  ],
+  "finished": true,
+  "inventory_before": {
+    "containers": 6,
+    "networks": 7,
+    "volumes": 7
+  },
+  "swept": {
+    "containers": [],
+    "networks": [],
+    "volumes": [
+      "aset-orphan-687186b0"
+    ],
+    "images": []
+  },
+  "inventory_after": {
+    "containers": 6,
+    "networks": 7,
+    "volumes": 9
+  },
+  "collateral": {
+    "containers": [],
+    "networks": [],
+    "volumes": []
+  }
+}

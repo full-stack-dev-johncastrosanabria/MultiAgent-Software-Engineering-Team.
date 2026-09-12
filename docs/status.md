@@ -247,6 +247,98 @@ nunca hay un primer fallo que reintentar— y levantar la infraestructura no
 prueba exactamente el archivo que se entrega, porque el run arranca el
 renderizado `run` y el pull request contiene el `delivery`.
 
+## Comprobaciones del 2026-09-11 (verificación de las decisiones 16, 17 y 18 contra el daemon real)
+
+Las secciones anteriores miden la suite. Esta mide lo que la suite no puede:
+el daemon de Docker del operador y un repositorio Git de verdad. Ejecutadas en
+la rama `test/adr-16-17-18-verification`, en macOS 27.0 arm64 con Docker
+Desktop, con el intérprete del venv del repositorio. Los tres runners escriben
+su reporte crudo junto a sí mismos, redactado con `redacted_document` antes de
+serializarse -- las hojas primero y el JSON después, porque al revés la
+redacción se comía la comilla de cierre y el archivo de evidencia dejaba de
+parsear.
+
+| Runner | Resultado |
+|---|---|
+| [`adr16/verify_labels_and_sweep.py`](../evaluation/benchmarks/adr16/verify_labels_and_sweep.py) | 5 de 5, salida 0 |
+| [`adr17/verify_workspace.py`](../evaluation/benchmarks/adr17/verify_workspace.py) | 9 de 9, salida 0 |
+| [`adr18/verify_infrastructure_prerequisite.py`](../evaluation/benchmarks/adr18/verify_infrastructure_prerequisite.py) | 11 de 11, salida 0 |
+
+El «9 de 9» de la decisión 17 se queda corto en un punto que conviene decir en
+vez de esconder: el brazo de clon del runner (`--clone-url`) no se ejerció, así
+que las nueve comprobaciones son las del volumen. Las dos afirmaciones de esa
+decisión sobre el clon --que es `--depth 1` y que no deja credencial en
+`.git/config`-- siguen sin verificarse contra el daemon.
+
+**Decisión 16 — etiquetas y barrido.** Un volumen creado por el run lleva las
+cuatro etiquetas; el barrido se lleva un recurso de un run que ya no vive; deja
+intactos los del run actual; y deja intacto un volumen que no es de ASET. El
+runner aborta con salida 2 si detecta recursos `aset.lifetime=run` de otro run
+vivo, para no barrer trabajo ajeno. Daño colateral medido: **cero** —inventario
+antes 6 contenedores / 7 redes / 7 volúmenes; después 6 / 7 / 9, y los dos
+volúmenes de más son los que el propio test creó y conserva a propósito.
+
+**Decisión 17 — el proyecto vive en el run.** Contra un volumen real: el
+proyecto va y vuelve, una escritura es lo que devuelve la lectura siguiente, el
+listado esconde `.env`, la búsqueda lee contenido dentro del volumen, salir de
+la raíz del proyecto se rechaza, `extract` saca solo lo que se nombra —y nada
+más—, y al terminar **no sobrevive ningún recurso del run**. Esto es lo que
+distingue a la decisión 17 de un bind mount: no es que el volumen sea más
+rápido, es que el proyecto no queda en el disco del operador.
+
+**Decisión 18 — infraestructura como prerequisito bloqueante.** Contra Git real
+con remoto bare local, sobre un proyecto de prueba cuyo `application.yaml`
+declara MySQL **con una contraseña en claro**: se detecta el prerequisito y se
+nombra el archivo del que salió; la rama de infraestructura añade
+`docker-compose.yml` y extiende `.env.example` y **no toca código**; la
+contraseña del proyecto no aparece en el compose entregado, ni en
+`.env.example`, ni en el cuerpo del pull request, ni en el mensaje de commit; la
+rama funcional se corta de la de infraestructura —`merge-base` igual al tip— y
+su cuerpo dice que la evidencia describe infraestructura que nadie ha revisado;
+ambas ramas llegan al remoto. Levantada de verdad, la infraestructura derivada
+arranca y sus contenedores llevan el run.
+
+**El hueco que este runner confirma, ahora reducido en parte.** Lo que se
+levanta sigue siendo el renderizado `run` y lo que se entrega sigue siendo el
+`delivery`: comparten inferencia, motor y digest, y difieren en puertos
+publicados y credenciales por variable. Lo que cambió es que ese segundo
+archivo ya no llega al revisor sin haberse tocado: `deliver()` invoca
+`validate_delivered_compose`
+([`delivery_check.py`](../src/engineering_team/delivery_check.py)), que
+resuelve el `delivery` con `docker compose config` contra un `.env` sintético
+construido con las claves de `.env.example` y compara las variables que el
+compose interpola contra esas mismas claves -- así que un archivo que no
+resuelve, o que referencia una variable que la plantilla no declara, nunca
+llega a abrir el pull request: la entrega se rehúsa con `DeliveryRefused` y la
+razón queda nombrada. Cuando no hay runtime disponible para preguntar, la
+comprobación no bloquea -- `performed=False` no es `valid=False` -- y el
+cuerpo del pull request dice explícitamente que el archivo no fue validado.
+Lo que sigue sin cubrir: que el servicio *arranque* sano y que la aplicación
+conecte, porque eso solo lo probaría levantar el `delivery` de verdad, y
+levantarlo en la máquina del operador es el estado improvisado que la
+decisión 18 existe para evitar; una colisión de puertos que aparezca
+*después* de la validación, en la máquina de quien lo levante -- la
+comprobación solo avisa de los puertos que ya están ocupados en la máquina
+que lo generó; y que `run` y `delivery` sigan siendo dos renderizados
+de una sola inferencia -- la validación reduce la distancia entre ambos, no
+la elimina.
+
+**Corrección fechada, 2026-09-11: `icapi-mysql` ya no existe.** Las
+[decisión 16](architecture/decisions/0016-every-docker-resource-carries-its-run.md)
+y [decisión 18](architecture/decisions/0018-missing-infrastructure-is-a-blocking-prerequisite.md)
+citan en presente un contenedor `mysql:8.4` llamado `icapi-mysql`, creado el
+2026-09-08, con 218 MB de volumen anónimo y sin etiqueta alguna, como la
+evidencia viva que las motiva. El inventario de hoy no lo encuentra: 6
+contenedores (`cool_hugle` del servidor MCP de GitHub, `rembric`, y los cuatro
+de `taskflow-*`), 7 volúmenes (4 anónimos y tres `taskflow-microservicios_*`),
+19 imágenes / 8.395 GB (4.235 GB reclamables), 443.5 MB en volúmenes y 7.814 kB
+de caché de build. El contenedor fue retirado del host entre el 2026-09-10 y
+hoy; no lo retiró el barrido, que por diseño no toca nada sin
+`aset.owner=aset`. **Lo que los dos registros argumentan no cambia** —la
+imposibilidad de atribuir un recurso sin etiquetas es exactamente por lo que se
+dejó intacto—, pero su tiempo verbal sí: a partir de esta fecha es evidencia
+histórica, no comprobable en esta máquina.
+
 ## Soporte por plataforma
 
 **Corrección del 2026-09-10 ([decisión 15](architecture/decisions/0015-container-only.md)).**

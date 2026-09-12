@@ -1,5 +1,55 @@
 # Historia documental
 
+## 2026-09-11 — El compose entregado se valida antes de llegar al revisor
+
+`delivery_check.validate_delivered_compose` resuelve el archivo `delivery`
+con `docker compose config` contra un `.env` sintético construido con las
+claves de `.env.example`, y compara las variables que el compose interpola
+contra esas mismas claves -- lo que el runtime no hace, porque una variable
+sin definir es cadena vacía para él, no un error. `deliver()`, en
+`infrastructure_prerequisite.py`, la invoca antes de abrir el pull request y
+rehúsa la entrega -- `DeliveryRefused` -- cuando la comprobación se hizo y
+falló; sin runtime disponible no bloquea, y el cuerpo dice que el archivo no
+fue validado. El runner de la decisión 18 pasa 11 de 11 con esto ejercitado
+contra el daemon real, dos comprobaciones más que la vez anterior.
+
+La decisión 18 lleva una corrección fechada con lo que esto cierra y lo que
+sigue sin cerrar: la validación es estática, así que un servicio que resuelve
+bien y aun así no arranca, o una colisión de puertos que aparece después, en
+la máquina de quien lo levanta, siguen sin poder probarse aquí. El párrafo del
+hueco `run` contra `delivery` en [estado](status.md) queda dicho en esos
+mismos términos.
+
+## 2026-09-11 — Las decisiones 16, 17 y 18, verificadas contra el daemon real
+
+Las suites de las tres decisiones pasan con dobles. Esta rama
+—`test/adr-16-17-18-verification`, cortada de `main` tras el merge del PR #7—
+añade tres runners que las ejercen contra el Docker del operador y, en el caso
+de la decisión 18, contra un repositorio Git real con remoto bare: 5 de 5, 9 de
+9 y 9 de 9, todos con salida 0. Viven junto a las mediciones, en
+`evaluation/benchmarks/adrNN/`, porque son evidencia ejecutable, no pruebas de
+la suite: exigen un daemon y no deben correr en CI sin él.
+
+Lo que se buscaba comprobar no era que el código funciona —eso ya lo dicen los
+tests— sino las tres afirmaciones que solo un daemon puede respaldar: que el
+barrido **no toca nada ajeno** (daño colateral medido: cero), que el proyecto
+**no queda en el disco del operador** cuando vive en un volumen, y que la
+contraseña en claro de un proyecto **no llega** al compose entregado, al
+`.env.example`, al cuerpo del pull request ni al mensaje de commit.
+
+También confirma un hueco en lugar de taparlo: el compose que el run levanta es
+el renderizado `run` y el que el pull request entrega es el `delivery`. Nada de
+esto ejecuta el segundo, así que una colisión de puertos o una variable sin
+definir en el archivo entregado llegaría al revisor sin haberse ejercido nunca.
+
+**Corrección fechada: `icapi-mysql` ya no existe.** Las decisiones 16 y 18 lo
+citan en presente como su evidencia viva; el inventario de hoy no lo encuentra.
+Se retiró del host a mano, no por el barrido, que por diseño no toca nada sin
+`aset.owner=aset`. Ambos registros llevan la corrección dentro, y el argumento
+de los dos sigue en pie: lo que probaba el problema es haberlo dejado vivir dos
+días de más sin poder decir quién lo creó, y eso no depende de que siga
+corriendo.
+
 ## 2026-09-11 — Las decisiones 17 y 18, a medias y dicho así
 
 **Decisión 17.** Existe el contrato que el récord pedía: `workspace/contract.py`

@@ -95,6 +95,8 @@ no labels, the difference between "ASET leaked this" and "a person started this
 by hand" is unrecoverable, and a reaper that guessed would eventually delete
 something a person needed.
 
+**Corrección fechada, 2026-09-11.** `icapi-mysql` ya no está en este host: el inventario de ese día no lo encuentra. Fue retirado a mano entre el 2026-09-10 y esa fecha; no lo barrió ASET, que no toca nada sin `aset.owner=aset`. El argumento de este registro no cambia — la imposibilidad de atribuirlo es precisamente por lo que se dejó intacto — pero el párrafo anterior describe desde entonces evidencia histórica, no el estado de la máquina. Inventario en [estado](../../status.md).
+
 ## Decision
 
 Every Docker resource ASET creates carries, at creation, the labels
