@@ -549,16 +549,25 @@ def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
 
     Names and statuses alone proved too little: a run whose tests failed every
     iteration said so and said nothing about why, while the checkout it failed
-    in was already gone. The tail of the error travels too, redacted, because
-    the reason a tool failed is the last line of the process output far more
-    often than the first. A tool that succeeded carries no excerpt; its output
-    is bulk, not evidence.
+    in was already gone. So an excerpt travels too, redacted.
+
+    It has to come from either field. ``error`` is set only when the tool was
+    UNAVAILABLE (``mcp.quality`` fills it from the infrastructure error and
+    leaves it empty otherwise), so a FAIL -- the red test run, the scanner that
+    found something -- carries its reason in ``output_summary`` instead. Taking
+    only ``error`` would name exactly the case nobody needed explained.
+
+    The tail is what is kept: the reason a tool failed is the last line of the
+    process output far more often than the first. A tool that succeeded carries
+    no excerpt; its output is bulk, not evidence.
     """
     outcomes: list[dict[str, str]] = []
     for item in results:
         outcome = {"tool": item.tool_name, "status": item.status.value}
-        if item.status is not ToolStatus.SUCCESS and item.error:
-            outcome["error"] = redact_secrets(item.error)[-ERROR_EXCERPT_LIMIT:]
+        if item.status is not ToolStatus.SUCCESS:
+            reason = item.error or item.output_summary or ""
+            if reason:
+                outcome["error"] = redact_secrets(reason)[-ERROR_EXCERPT_LIMIT:]
         outcomes.append(outcome)
     return outcomes
 

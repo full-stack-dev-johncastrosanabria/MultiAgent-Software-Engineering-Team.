@@ -194,17 +194,39 @@ def test_a_successful_tool_carries_no_error_excerpt():
 
 
 def test_a_failing_tool_reports_why_it_failed():
-    """A red stage that cannot say why is a stage nobody can act on."""
+    """A red stage that cannot say why is a stage nobody can act on.
+
+    ``mcp.quality`` sets ``error`` only for UNAVAILABLE, so a FAIL keeps its
+    reason in ``output_summary`` -- the case this excerpt exists to explain.
+    """
     results = [
         ToolResult(
             tool_name="run_tests", allowed_role=AgentRole.TESTING,
-            status=ToolStatus.FAIL, input_summary="", output_summary="",
-            duration_ms=9, error="E   ModuleNotFoundError: No module named 'flask_cors'",
+            status=ToolStatus.FAIL,
+            input_summary="",
+            output_summary="E   ModuleNotFoundError: No module named 'flask_cors'",
+            duration_ms=9,
+            error=None,
         ),
     ]
     outcome = tool_outcomes(results)[0]
     assert outcome["status"] == "FAIL"
     assert "ModuleNotFoundError" in outcome["error"]
+
+
+def test_the_infrastructure_error_outranks_the_bulk_output():
+    """UNAVAILABLE names the infrastructure that broke; the output is noise."""
+    results = [
+        ToolResult(
+            tool_name="run_tests", allowed_role=AgentRole.TESTING,
+            status=ToolStatus.UNAVAILABLE,
+            input_summary="",
+            output_summary="hundreds of lines of pip chatter",
+            duration_ms=9,
+            error="INFRASTRUCTURE_ERROR: venv creation failed in container",
+        ),
+    ]
+    assert "venv creation failed" in tool_outcomes(results)[0]["error"]
 
 
 def test_the_error_excerpt_is_redacted_and_keeps_its_tail():
