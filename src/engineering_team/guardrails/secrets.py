@@ -163,8 +163,14 @@ _GITHUB_TOKEN = re.compile(
 )
 _ANTHROPIC_KEY = re.compile(r"\bsk-ant-[A-Za-z0-9\-_]{20,}\b")
 _AWS_ACCESS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
-# `scheme://user:pass@host/...` -- only the credential is the secret; the host
-# is the useful part of a failed-push message and stays visible.
+# `scheme://user[:pass]@host/...` -- the password half is optional on purpose,
+# because `git@github.com` and `https://user@host` carry no password yet are
+# still the shape a failed clone/push embeds a real token in
+# (`https://ghp_xxx@github.com/...`). This over-redacts plain `user@host`
+# forms that carry no secret at all (`ssh://git@github.com`, `mailto://a@b`),
+# trading a redaction that was not needed for one that is never missed; the
+# host past `@` is the useful part of a failed-push message and stays visible
+# either way.
 _URL_CREDENTIAL = re.compile(
     r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)"
     r"(?P<userinfo>[^/\s:@]+(?::[^/\s@]*)?)@"

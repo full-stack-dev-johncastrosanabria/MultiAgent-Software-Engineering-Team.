@@ -28,9 +28,13 @@ _RESOURCE_QUERIES = (
     ("volume", ["docker", "volume", "ls", "--format", "{{.Name}}"]),
     ("network", ["docker", "network", "ls", "--format", "{{.Name}}"]),
 )
-_IMAGE_QUERY = ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"]
+_IMAGE_QUERY = ["docker", "images", "--quiet"]
 _OWNER_LABEL_FILTER = f"label={OWNER_FILTER}"
 _CACHE_LABEL_FILTER = f"label={LIFETIME_LABEL}={CACHE_LIFETIME}"
+
+
+class DockerQueryFailed(RuntimeError):
+    """The daemon could not be asked, which is distinct from it answering nothing."""
 
 
 def _listed(query: list[str], *filters: str) -> set[str]:
@@ -42,8 +46,13 @@ def _listed(query: list[str], *filters: str) -> set[str]:
             arguments, capture_output=True, text=True,
             timeout=_DOCKER_TIMEOUT_SECONDS, check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return set()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise DockerQueryFailed(f"{' '.join(arguments)}: {exc}") from exc
+    if completed.returncode != 0:
+        raise DockerQueryFailed(
+            f"{' '.join(arguments)} exited {completed.returncode}: "
+            f"{completed.stderr.strip()[-200:]}"
+        )
     return {line.strip() for line in completed.stdout.splitlines() if line.strip()}
 
 
@@ -53,11 +62,27 @@ def _labelled_resources() -> list[str]:
     The filter is `aset.owner=aset` everywhere: a resource nobody labelled is
     never reported, so an unrelated container on the machine stays invisible.
 
-    Images get the same owner filter plus the exclusion `docker_labels.sweep`
-    applies before reaping: an image labelled `aset.lifetime=cache` -- a
-    pulled base image, a package cache -- is deliberately persistent so a
-    later run can reuse it, and counting it as a leftover would leave this
-    stage red forever.
+    Images get the same owner filter plus the `aset.lifetime=cache` exclusion
+    `docker_labels.sweep` applies before reaping -- a pulled base image, a
+    package cache -- deliberately persistent so a later run can reuse it, and
+    counting it as a leftover would leave this stage red forever. Unlike
+    `sweep`, this does not also exclude the current run's own `aset.run`:
+    hygiene is measured *after* the run finishes, so its own leftovers are
+    exactly what this is looking for.
+
+    Queried by id (`--quiet`), not by name: an untagged image reports as
+    `<none>:<none>` under `{{.Repository}}:{{.Tag}}`, so a single untagged
+    `cache` image would have made the set-difference below swallow any
+    untagged `run` leftover too -- a false green in the one stage whose whole
+    job is catching leftovers.
+
+    Raises `DockerQueryFailed` if any query could not be answered -- the
+    daemon is unreachable, absent, or exits non-zero. Distinguishing "asked
+    and got nothing" from "could not ask" is deliberate: `docker_labels.sweep`
+    returns `set()` on the same failure and that is correct there, because in
+    a sweep "don't know" must mean "delete nothing" -- fail closed. Here the
+    same `set()` would mean "declare clean" -- fail open, and hygiene is a
+    stage this benchmark scores, not a best-effort cleanup.
     """
     found: list[str] = []
     for kind, query in _RESOURCE_QUERIES:
@@ -139,11 +164,18 @@ def _score(evidence: dict, *, delivered: bool) -> dict[str, dict]:
         "error": evidence.get("delivery_error") or evidence.get("delivery_blocked"),
         "skipped": not delivered,
     }
-    leftovers = _labelled_resources()
-    stages["hygiene"] = {
-        "passed": not leftovers,
-        "leftover_labelled_resources": leftovers,
-    }
+    try:
+        leftovers = _labelled_resources()
+    except DockerQueryFailed as exc:
+        # The daemon could not be asked, so this stage did not measure a clean
+        # state -- it measured nothing. Same rule as `execute`: the benchmark
+        # does not hand out PASS for a question it could not answer.
+        stages["hygiene"] = {"passed": False, "detail": str(exc)}
+    else:
+        stages["hygiene"] = {
+            "passed": not leftovers,
+            "leftover_labelled_resources": leftovers,
+        }
     return stages
 
 
