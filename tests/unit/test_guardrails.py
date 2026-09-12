@@ -4,7 +4,11 @@ import pytest
 
 from engineering_team.contracts.enums import RouteTarget
 from engineering_team.guardrails.routes import validate_route
-from engineering_team.guardrails.secrets import redact_secrets, require_safe_cloud_context
+from engineering_team.guardrails.secrets import (
+    redact_secrets,
+    redacted_document,
+    require_safe_cloud_context,
+)
 from engineering_team.guardrails.validation import require_explicit_destructive_authorization
 
 
@@ -171,3 +175,68 @@ def test_a_real_credential_inside_a_docstring_is_still_blocked(docstring_value: 
     """
     with pytest.raises(ValueError, match="sensitive content"):
         require_safe_cloud_context(f'def f():\n    """Doc.\n\n    Args:\n        {docstring_value}\n    """\n')
+
+
+def test_redacting_the_leaves_keeps_the_document_valid_json() -> None:
+    """El bug concreto que `redacted_document` cierra.
+
+    `redact_secrets(json.dumps(...))` redacta el documento *codificado*, donde la
+    comilla de cierre del valor forma parte de la línea que el patrón orientado a
+    líneas reemplaza: `"KEY=change-me",` quedaba como `"KEY=[REDACTED]` y el
+    archivo de evidencia dejaba de parsear mientras se seguía escribiendo. Este
+    test fija las dos mitades: el orden equivocado rompe el JSON, el correcto no.
+    """
+    report = {"environment": ["POSTGRES_PASSWORD=change-me"]}
+
+    broken = redact_secrets(json.dumps(report, indent=2))
+    assert "change-me" not in broken
+    with pytest.raises(ValueError):
+        json.loads(broken)
+
+    encoded = json.dumps(redacted_document(report), indent=2)
+    assert "change-me" not in encoded
+    assert json.loads(encoded) == {"environment": ["POSTGRES_PASSWORD=[REDACTED]"]}
+
+
+def test_redacted_document_descends_through_dicts_lists_and_tuples() -> None:
+    """La evidencia de un benchmark es un árbol, no una cadena.
+
+    Los tres contenedores que los runners producen se recorren, y los escalares
+    que no son cadenas se devuelven tal cual: un `returncode` que llegara como
+    `"3"` haría ilegible el informe.
+    """
+    document = {
+        "components": [
+            {
+                "env": ("MYSQL_ROOT_PASSWORD=change-me", "MYSQL_DB=orders"),
+                "result": {"status": "passed", "returncode": 0, "failed": None},
+            }
+        ],
+        "finished": True,
+    }
+
+    redacted = redacted_document(document)
+
+    leaf = redacted["components"][0]
+    assert leaf["env"] == ("MYSQL_ROOT_PASSWORD=[REDACTED]", "MYSQL_DB=orders")
+    # Los contenedores conservan su tipo: la función redacta, no normaliza.
+    assert isinstance(leaf["env"], tuple)
+    assert leaf["result"] == {"status": "passed", "returncode": 0, "failed": None}
+    assert redacted["finished"] is True
+    # Y sigue siendo serializable, que es para lo único que existe.
+    assert json.loads(json.dumps(redacted))["components"][0]["env"] == [
+        "MYSQL_ROOT_PASSWORD=[REDACTED]", "MYSQL_DB=orders",
+    ]
+
+
+def test_redacted_document_leaves_the_keys_alone() -> None:
+    """Decisión deliberada, documentada en la propia función.
+
+    Un mapa indexado por una credencial es otro problema, y quien lo rechaza es
+    `require_safe_cloud_context`. Redactar claves aquí cambiaría la forma del
+    documento sin que nadie lo pidiera.
+    """
+    redacted = redacted_document({"password=hunter2": "password=hunter2"})
+
+    assert list(redacted) == ["password=hunter2"]
+    assert redacted["password=hunter2"] == "password=[REDACTED]"

@@ -8,6 +8,7 @@ the stacked body says what its evidence is worth.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -241,6 +242,43 @@ def test_a_project_with_its_own_compose_delivers_exactly_one_pull_request(
     assert order == ["push:aset/apply-18:base=", "open:aset/apply-18:base="]
     assert "infrastructure_branch" not in evidence
     assert evidence["infrastructure_prerequisite"] is None
+
+
+def test_a_refused_infrastructure_delivery_stops_the_run(
+    tmp_path, monkeypatch
+) -> None:
+    """The functional pull request must not survive the infrastructure's refusal.
+
+    This run's suite is green against a database this run brought up. If the
+    compose file that describes it is refused, there is no branch to stack on,
+    nothing for the body to point at, and no reviewer who has seen the
+    environment the evidence describes -- and the old behaviour pushed anyway,
+    to the default branch, with a body that said none of it. ADR 18 says the run
+    stops. Nothing is pushed at all.
+    """
+    monkeypatch.setattr(
+        infrastructure_prerequisite,
+        "validate_delivered_compose",
+        lambda compose, env_example, **_: DeliveryCheck(
+            performed=True, valid=False, error="the delivered compose file is empty"
+        ),
+    )
+    prerequisite = Prerequisite(
+        engines=("postgres",), read_from=("application.yaml",),
+        compose=COMPOSE, env_example=ENV_EXAMPLE,
+    )
+    evidence, order, _ = _run_with(prerequisite, tmp_path, monkeypatch)
+
+    assert order == []
+    assert "delivery_branch" not in evidence
+    assert "delivery_pr_url" not in evidence
+    assert "infrastructure_branch" not in evidence
+    # Recorded, and -- unlike before -- read by the code that decides to push.
+    assert "the delivered compose file is empty" in (
+        evidence["infrastructure_delivery_error"]
+    )
+    assert "nothing functional was pushed" in evidence["delivery_blocked"]
+    assert evidence["delivery_error"] == evidence["delivery_blocked"]
 
 
 def test_a_stacked_branch_is_really_cut_from_the_infrastructure_branch(
@@ -506,6 +544,33 @@ def test_without_a_runtime_nothing_is_claimed_and_the_body_says_so(
     body = _delivered_body(check, monkeypatch)
     assert "was not validated" in body
     assert "docker compose config" in body
+    # There was no runtime. The note may say that, and only in this case.
+    assert "No container runtime was available" in body
+
+
+def test_a_runtime_that_cannot_be_spoken_to_is_not_called_a_missing_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`performed=False` arrives by more than one road and the note must know.
+
+    A `docker` on PATH whose daemon refuses the connection is not a machine
+    without a container runtime, and telling the reviewer it was is a small lie
+    they have no way to check. The redacted reason is quoted instead.
+    """
+    def _unreachable(argv, **_kwargs):
+        raise OSError("cannot connect to the daemon at DOCKER_HOST=unix:///nope")
+
+    _runtime(monkeypatch, _unreachable)
+    check = delivery_check.validate_delivered_compose(DELIVERED_COMPOSE, ENV_EXAMPLE)
+    assert check.performed is False
+    assert check.error
+
+    body = _delivered_body(check, monkeypatch)
+    assert "was not validated" in body
+    assert "could not be spoken to" in body
+    assert check.error in body
+    # The sentence that belongs to the other road must not appear on this one.
+    assert "No container runtime was available" not in body
 
 
 def test_a_clean_check_earns_the_partial_validation_sentence_and_no_more(
@@ -555,3 +620,99 @@ def test_the_synthetic_env_never_carries_a_value_from_the_process_environment(
         "POSTGRES_PASSWORD=PLACEHOLDER-FOR-VALIDATION",
         "POSTGRES_USER=PLACEHOLDER-FOR-VALIDATION",
     ]
+
+
+def test_the_operators_shell_never_reaches_the_validation_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `.env` alone does not close this, and reading it would not show it.
+
+    Compose resolves a variable from the process environment *before* it falls
+    back to the `--env-file`, so a subprocess that inherits the operator's shell
+    validates against the operator's shell no matter what the synthetic file
+    says. Checked by hand against a real daemon:
+
+        MYSQL_ROOT_PASSWORD=real-shell-secret docker compose \
+            -f c.yml --env-file e.env config
+
+    printed `MYSQL_ROOT_PASSWORD: real-shell-secret` with `e.env` holding the
+    marker. The assertion is therefore on what the subprocess *receives*, not on
+    what was written to disk -- the test that only read the file passed for the
+    whole time the hole was open.
+    """
+    monkeypatch.setenv("POSTGRES_PASSWORD", "a-real-secret-from-this-shell")
+    monkeypatch.setenv("POSTGRES_USER", "a-real-user-from-this-shell")
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    seen: dict[str, dict[str, str] | None] = {}
+
+    def _capture(argv, **kwargs):
+        # Only the `config` call: `_ports_already_bound` shells out afterwards
+        # and would otherwise be the invocation this test inspected.
+        if "config" in argv:
+            seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    _runtime(monkeypatch, _capture)
+    delivery_check.validate_delivered_compose(DELIVERED_COMPOSE, ENV_EXAMPLE)
+
+    passed = seen["env"]
+    assert passed is not None, "the subprocess inherited os.environ"
+    # The template wins over the shell, for every key the template declares.
+    assert passed["POSTGRES_PASSWORD"] == delivery_check.PLACEHOLDER
+    assert passed["POSTGRES_USER"] == delivery_check.PLACEHOLDER
+    assert "a-real-secret-from-this-shell" not in passed.values()
+    assert "a-real-user-from-this-shell" not in passed.values()
+    # What is carried across is what the client needs to reach its daemon, and
+    # a check that cannot reach the daemon is a check that did not run.
+    assert passed["DOCKER_HOST"] == "unix:///var/run/docker.sock"
+    assert passed["PATH"] == os.environ["PATH"]
+
+
+def test_a_variable_the_shell_holds_and_the_template_does_not_is_not_smuggled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shadowing the declared keys is not enough on its own.
+
+    A compose file interpolating something the template forgot is already
+    refused by `_undeclared_references`, but only because the environment does
+    not answer for it either. An inherited shell would answer, the runtime would
+    resolve the file, and the misaligned template would reach the reviewer.
+    """
+    monkeypatch.setenv("SOMETHING_ONLY_THIS_SHELL_HAS", "a-real-secret-from-this-shell")
+    seen: dict[str, dict[str, str] | None] = {}
+
+    def _capture(argv, **kwargs):
+        # Only the `config` call: `_ports_already_bound` shells out afterwards
+        # and would otherwise be the invocation this test inspected.
+        if "config" in argv:
+            seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    _runtime(monkeypatch, _capture)
+    delivery_check.validate_delivered_compose(DELIVERED_COMPOSE, ENV_EXAMPLE)
+
+    passed = seen["env"]
+    assert passed is not None
+    assert "SOMETHING_ONLY_THIS_SHELL_HAS" not in passed
+
+
+def test_an_empty_delivered_compose_is_a_verdict_not_a_missing_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`performed=False` would dress this as "no container runtime available".
+
+    An empty file is something this check *knows* about the delivery, and the
+    body a reviewer reads has to say the file is empty rather than blame a
+    runtime that was installed all along.
+    """
+    def _never_called(argv, **_kwargs):  # pragma: no cover - the point is it is not
+        raise AssertionError("an empty file must not reach the runtime")
+
+    _runtime(monkeypatch, _never_called)
+    check = delivery_check.validate_delivered_compose("   \n", ENV_EXAMPLE)
+
+    assert (check.performed, check.valid) == (True, False)
+    assert "empty" in check.error
+
+    with pytest.raises(DeliveryRefused, match="empty"):
+        _delivered_body(check, monkeypatch)

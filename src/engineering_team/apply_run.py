@@ -504,12 +504,16 @@ def _deliver_infrastructure_first(
     """Open the infrastructure-only pull request, if this run stood on one.
 
     Returns what the functional delivery must be stacked on, or None when the
-    project declared its own topology and there is nothing to deliver.
+    project declared its own topology and there is nothing to deliver -- the one
+    case in which None means "nothing was owed".
 
-    A refusal here does not abort the run and does not silently promote the
-    functional delivery to the default branch: the branch is simply not stacked,
-    and the reason is recorded. ADR 18's rule is that infrastructure is either
-    delivered or refused, and a recorded refusal is the second of those.
+    A refusal is recorded and then re-raised, and the re-raise is load-bearing.
+    Returning None for it as well made "there was nothing to deliver" and "what
+    had to be delivered was rejected" the same answer, and the caller took the
+    only branch that answer allows: stack on nothing, push the functional work
+    to the default branch, and say nothing about it in the body. ADR 18's rule
+    is that infrastructure is *either delivered or refused*, and a refusal stops
+    the run rather than improvising around it.
     """
     prerequisite = state.get("infrastructure_prerequisite")
     if prerequisite is None:
@@ -524,7 +528,7 @@ def _deliver_infrastructure_first(
         )
     except DeliveryRefused as exc:
         evidence["infrastructure_delivery_error"] = str(exc)
-        return None
+        raise
     evidence["infrastructure_branch"] = delivered.branch
     if delivered.url:
         evidence["infrastructure_pr_url"] = delivered.url
@@ -636,42 +640,58 @@ def run_on_project(
             # order is the decision -- a reviewer looking at the functional
             # change must not also be asked to accept a database choice buried
             # in the same diff.
-            delivered = _deliver_infrastructure_first(
-                project_root, state, run_id=run_id, backend=delivery, evidence=evidence
-            )
-            proposal = _proposal_from_implementation(
-                project_root=project_root,
-                run_id=run_id,
-                implementation=implementation,
-                review=review,
-                written_paths=list(evidence.get("files_written") or []),
-            )
-            if proposal is None:
-                # Not an error when infrastructure was the whole delivery: the
-                # run produced a pull request and stopped, which ADR 18 calls a
-                # success rather than an empty one.
-                if delivered is None:
-                    evidence["delivery_error"] = (
-                        "no file contents available for delivery"
-                    )
+            try:
+                delivered = _deliver_infrastructure_first(
+                    project_root, state, run_id=run_id,
+                    backend=delivery, evidence=evidence,
+                )
+            except DeliveryRefused as exc:
+                # ADR 18: the run stops here. The functional work below is green
+                # against infrastructure *this run* brought up, which was never
+                # delivered and which nobody reviewed; pushing it anyway would
+                # open a pull request against the default branch whose evidence
+                # describes an environment that exists on no machine but this
+                # one, and whose body could not say so because there is no
+                # branch to point at. Blocked is the honest end.
+                evidence["delivery_blocked"] = (
+                    "the infrastructure this run stands on was not delivered, "
+                    "so nothing functional was pushed: " + str(exc)
+                )
+                evidence["delivery_error"] = evidence["delivery_blocked"]
             else:
-                if delivered is not None:
-                    proposal = replace(
-                        proposal, body=stacked_body(proposal.body, delivered)
-                    )
-                base = delivered.branch if delivered is not None else ""
-                try:
-                    GitDelivery().push(
-                        project_root, proposal, confirmed=True, base=base
-                    )
-                    evidence["delivery_branch"] = proposal.branch
-                    open_pr = getattr(delivery, "open", None)
-                    if callable(open_pr):
-                        evidence["delivery_pr_url"] = open_pr(
+                proposal = _proposal_from_implementation(
+                    project_root=project_root,
+                    run_id=run_id,
+                    implementation=implementation,
+                    review=review,
+                    written_paths=list(evidence.get("files_written") or []),
+                )
+                if proposal is None:
+                    # Not an error when infrastructure was the whole delivery:
+                    # the run produced a pull request and stopped, which ADR 18
+                    # calls a success rather than an empty one.
+                    if delivered is None:
+                        evidence["delivery_error"] = (
+                            "no file contents available for delivery"
+                        )
+                else:
+                    if delivered is not None:
+                        proposal = replace(
+                            proposal, body=stacked_body(proposal.body, delivered)
+                        )
+                    base = delivered.branch if delivered is not None else ""
+                    try:
+                        GitDelivery().push(
                             project_root, proposal, confirmed=True, base=base
                         )
-                except DeliveryRefused as exc:
-                    evidence["delivery_error"] = str(exc)
+                        evidence["delivery_branch"] = proposal.branch
+                        open_pr = getattr(delivery, "open", None)
+                        if callable(open_pr):
+                            evidence["delivery_pr_url"] = open_pr(
+                                project_root, proposal, confirmed=True, base=base
+                            )
+                    except DeliveryRefused as exc:
+                        evidence["delivery_error"] = str(exc)
     if report_path is not None:
         path = Path(report_path)
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -253,14 +253,22 @@ Las secciones anteriores miden la suite. Esta mide lo que la suite no puede:
 el daemon de Docker del operador y un repositorio Git de verdad. Ejecutadas en
 la rama `test/adr-16-17-18-verification`, en macOS 27.0 arm64 con Docker
 Desktop, con el intérprete del venv del repositorio. Los tres runners escriben
-su reporte crudo junto a sí mismos, redactado con `redact_secrets` antes de
-guardarse.
+su reporte crudo junto a sí mismos, redactado con `redacted_document` antes de
+serializarse -- las hojas primero y el JSON después, porque al revés la
+redacción se comía la comilla de cierre y el archivo de evidencia dejaba de
+parsear.
 
 | Runner | Resultado |
 |---|---|
 | [`adr16/verify_labels_and_sweep.py`](../evaluation/benchmarks/adr16/verify_labels_and_sweep.py) | 5 de 5, salida 0 |
 | [`adr17/verify_workspace.py`](../evaluation/benchmarks/adr17/verify_workspace.py) | 9 de 9, salida 0 |
 | [`adr18/verify_infrastructure_prerequisite.py`](../evaluation/benchmarks/adr18/verify_infrastructure_prerequisite.py) | 11 de 11, salida 0 |
+
+El «9 de 9» de la decisión 17 se queda corto en un punto que conviene decir en
+vez de esconder: el brazo de clon del runner (`--clone-url`) no se ejerció, así
+que las nueve comprobaciones son las del volumen. Las dos afirmaciones de esa
+decisión sobre el clon --que es `--depth 1` y que no deja credencial en
+`.git/config`-- siguen sin verificarse contra el daemon.
 
 **Decisión 16 — etiquetas y barrido.** Un volumen creado por el run lleva las
 cuatro etiquetas; el barrido se lleva un recurso de un run que ya no vive; deja

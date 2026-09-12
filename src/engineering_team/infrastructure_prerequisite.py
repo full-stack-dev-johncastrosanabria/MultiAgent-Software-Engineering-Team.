@@ -25,7 +25,6 @@ so.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -152,8 +151,24 @@ def _validation_note(check: DeliveryCheck) -> str:
     otherwise meet as an opaque bind error on their own machine -- and it is
     reported, not refused, because the busy port is on the machine that built
     this, not on theirs.
+
+    "Could not run" is itself two things, and saying the wrong one is a small
+    lie the reviewer has no way to catch. A runtime that is absent from `PATH`
+    and a runtime that is present but could not be spoken to reach here
+    identically as `performed=False`; only the second fills `check.error`. The
+    branch below is on that, so the note never tells a reviewer no runtime was
+    available on a machine that had one.
     """
     if not check.performed:
+        if check.error:
+            return (
+                "**This compose file was not validated.** A container runtime "
+                "was installed on the machine that authored it, but could not "
+                "be spoken to: "
+                f"{check.error}. The file therefore reaches you having never "
+                "been resolved. Run `docker compose config` against it before "
+                "trusting the rest of this pull request."
+            )
         return (
             "**This compose file was not validated.** No container runtime was "
             "available on the machine that authored it, so it reaches you "
@@ -181,7 +196,6 @@ def deliver(
     backend: Any | None,
     confirmed: bool,
     git: GitDelivery | None = None,
-    validate: Callable[[str, str], DeliveryCheck] | None = None,
 ) -> DeliveredInfrastructure:
     """Open the pull request that contains infrastructure and nothing else.
 
@@ -197,7 +211,10 @@ def deliver(
     proposal = prerequisite.proposal(run_id)
     if proposal is None:
         raise DeliveryRefused("the derived topology produced nothing to propose")
-    check = (validate or validate_delivered_compose)(
+    # The module attribute, not a parameter: the seam the tests need is
+    # monkeypatching this name, and an argument nothing ever passed was a second
+    # way in that only looked like one.
+    check = validate_delivered_compose(
         prerequisite.compose, prerequisite.env_example
     )
     if check.performed and not check.valid:

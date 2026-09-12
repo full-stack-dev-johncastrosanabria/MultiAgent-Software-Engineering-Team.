@@ -32,14 +32,29 @@ Two honesties are owed in return. The first is that this validates the file, not
 the system: `compose config` resolves the schema and the substitution, and says
 nothing about whether the images start or the healthchecks ever pass. The second
 is the synthetic `.env`. Its values are the literal marker
-`PLACEHOLDER-FOR-VALIDATION` derived from the *keys* of the template, and
-`os.environ` is never read -- an operator's real `POSTGRES_PASSWORD` leaking into
-a validation run would make the check pass for a reason the reviewer cannot
-reproduce, and would put a credential in a temporary file this module wrote.
+`PLACEHOLDER-FOR-VALIDATION` derived from the *keys* of the template -- an
+operator's real `POSTGRES_PASSWORD` leaking into a validation run would make the
+check pass for a reason the reviewer cannot reproduce, and would put a
+credential in a temporary file this module wrote.
+
+The `.env` alone does not buy that, which is the second thing this module was
+first written as if it did. Compose resolves a variable from the process
+environment *before* it falls back to the `--env-file`, so a subprocess that
+inherits the operator's shell validates against the operator's shell:
+
+    MYSQL_ROOT_PASSWORD=real-shell-secret docker compose \\
+        -f c.yml --env-file e.env config
+
+printed `MYSQL_ROOT_PASSWORD: real-shell-secret` while `e.env` said
+`PLACEHOLDER-FOR-VALIDATION`. The subprocess therefore receives an explicit
+environment: every key the template declares is shadowed with the marker, and
+only what Docker needs to reach its daemon is carried across. The template wins
+over the shell because the shell is never asked.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -111,11 +126,52 @@ def _synthetic_environment(env_example: str) -> str:
     """The keys of the template, with the marker for every value.
 
     Derived from the template rather than from the process environment. See the
-    module docstring: reading `os.environ` here would validate against
-    credentials the reviewer does not have and write them to disk besides.
+    module docstring: taking a value from `os.environ` here would validate
+    against credentials the reviewer does not have and write them to disk
+    besides.
     """
     lines = [f"{key}={PLACEHOLDER}" for key in _declared_keys(env_example)]
     return "\n".join(lines) + "\n" if lines else ""
+
+
+# What the client needs to find its daemon and nothing else. `PATH` because the
+# runtime is named, not pathed, and an explicit environment is what resolves it;
+# `HOME` because the CLI reads `~/.docker`; the `DOCKER_*` four because they are
+# how an operator points the client somewhere other than the local socket, and a
+# check that cannot reach the daemon is a check that did not run. `COMPOSE_*` is
+# deliberately absent: it changes how the file is interpreted, and this asks
+# about the file, not about the machine.
+_DAEMON_VARIABLES = (
+    "PATH",
+    "HOME",
+    "DOCKER_HOST",
+    "DOCKER_CONFIG",
+    "DOCKER_CONTEXT",
+    "DOCKER_CERT_PATH",
+    "DOCKER_TLS_VERIFY",
+    "XDG_RUNTIME_DIR",
+)
+
+
+def _validation_environment(env_example: str) -> dict[str, str]:
+    """The environment the subprocess gets, instead of the operator's shell.
+
+    The `--env-file` is not enough on its own: Compose prefers the process
+    environment over it, so an exported `POSTGRES_PASSWORD` would beat the
+    marker and the check would pass on a value the reviewer cannot reproduce.
+    Every key the template declares is written here too, so the template wins
+    whatever the shell holds -- including when the shell holds nothing, which is
+    the case this has to behave the same way in.
+    """
+    environment = {
+        name: os.environ[name] for name in _DAEMON_VARIABLES if name in os.environ
+    }
+    # Last, deliberately: a template that declares `PATH` still gets the marker
+    # for it, because the compose file's variables are the thing under test. The
+    # runtime then fails to resolve and the check reports that it did not run,
+    # which is the safe direction to fall in -- the unsafe one is passing.
+    environment.update({key: PLACEHOLDER for key in _declared_keys(env_example)})
+    return environment
 
 
 def _declared_keys(env_example: str) -> tuple[str, ...]:
@@ -138,6 +194,11 @@ def _undeclared_references(compose: str, env_example: str) -> tuple[str, ...]:
     docstring: an unset `${NAME}` is an empty string to Compose, not an error,
     so the only thing standing between a misaligned template and the reviewer is
     this comparison.
+
+    Flat by design: nesting is not traversed, so `${A:-${B}}` is read as having
+    a default and `B` is never checked. The delivery rendering does not emit a
+    nested reference, and a check that pretends to cover a form its only input
+    cannot produce is harder to trust than one that says where it stops.
     """
     declared = _declared_keys(env_example)
     missing: list[str] = []
@@ -156,6 +217,10 @@ def _published_ports(compose: str) -> tuple[str, ...]:
     Read from the text rather than from `compose config --format json`: the
     rendering is this system's own, the shape is known, and one subprocess whose
     absence is already handled is easier to reason about than two.
+
+    Only the short form `- "HOST:CONTAINER"` is understood, which is the only
+    form its single source emits: `topology.py:363` writes that line and nothing
+    writes another. The long mapping form would be read as no port at all.
     """
     found: list[str] = []
     inside = False
@@ -196,7 +261,15 @@ def validate_delivered_compose(
     check imply more than it earned.
     """
     if not compose.strip():
-        return DeliveryCheck(performed=False)
+        # Answered here, not deferred: an empty file is a verdict about the
+        # delivery, not a runtime that was missing. `performed=False` would let
+        # it reach the reviewer wearing "no container runtime was available",
+        # which is a different and untrue statement.
+        return DeliveryCheck(
+            performed=True,
+            valid=False,
+            error="the delivered compose file is empty",
+        )
     if shutil.which(runtime) is None:
         return DeliveryCheck(performed=False)
     with tempfile.TemporaryDirectory(prefix="aset-delivery-check-") as directory:
@@ -213,6 +286,11 @@ def validate_delivered_compose(
                     "--env-file", str(env_file),
                     "config", "--quiet",
                 ],
+                # Explicit, never inherited. See the module docstring: Compose
+                # reads the process environment ahead of the `--env-file`, so an
+                # inherited shell is what the delivered file would be resolved
+                # against.
+                env=_validation_environment(env_example),
                 capture_output=True, text=True,
                 timeout=_TIMEOUT_SECONDS, check=False,
             )
