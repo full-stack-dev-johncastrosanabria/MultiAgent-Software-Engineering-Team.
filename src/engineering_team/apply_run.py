@@ -22,7 +22,7 @@ from typing import Any
 
 from engineering_team.components import Component, components_in
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import ErrorCode, ReviewerStatus
+from engineering_team.contracts.enums import ErrorCode, ReviewerStatus, ToolStatus
 from engineering_team.contracts.models import ToolResult
 from engineering_team.delivery import (
     BRANCH_NAMESPACE,
@@ -33,6 +33,7 @@ from engineering_team.delivery import (
 )
 from engineering_team.docker_labels import project_slug, sweep
 from engineering_team.graph.stategraph import build_engineering_graph
+from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.infrastructure_prerequisite import (
     deliver as deliver_infrastructure,
 )
@@ -536,18 +537,30 @@ def _deliver_infrastructure_first(
     return delivered
 
 
+ERROR_EXCERPT_LIMIT = 600
+
+
 def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
-    """Name every tool the run invoked and how it ended.
+    """Name every tool the run invoked, how it ended, and why when it did not.
 
     The evidence recorded which files were written but never which tools ran,
     so a tool that degraded to UNAVAILABLE -- a container that did not come up,
-    a venv that could not be built -- left no trace a reader could find. Names
-    and statuses only: summaries and errors carry process output, and this goes
-    into a file that gets committed.
+    a venv that could not be built -- left no trace a reader could find.
+
+    Names and statuses alone proved too little: a run whose tests failed every
+    iteration said so and said nothing about why, while the checkout it failed
+    in was already gone. The tail of the error travels too, redacted, because
+    the reason a tool failed is the last line of the process output far more
+    often than the first. A tool that succeeded carries no excerpt; its output
+    is bulk, not evidence.
     """
-    return [
-        {"tool": item.tool_name, "status": item.status.value} for item in results
-    ]
+    outcomes: list[dict[str, str]] = []
+    for item in results:
+        outcome = {"tool": item.tool_name, "status": item.status.value}
+        if item.status is not ToolStatus.SUCCESS and item.error:
+            outcome["error"] = redact_secrets(item.error)[-ERROR_EXCERPT_LIMIT:]
+        outcomes.append(outcome)
+    return outcomes
 
 
 def run_on_project(

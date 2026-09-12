@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from engineering_team.apply_run import tool_outcomes
+from engineering_team.contracts.models import AgentRole, ToolResult, ToolStatus
 from engineering_team.ephemeral_checkout import ephemeral_checkout
 
 
@@ -156,10 +158,6 @@ def test_the_cli_runs_against_the_checkout_it_cloned(monkeypatch, tmp_path):
     assert seen["existed"] is True
 
 
-from engineering_team.apply_run import tool_outcomes
-from engineering_team.contracts.models import AgentRole, ToolResult, ToolStatus
-
-
 def test_tool_outcomes_names_every_tool_and_its_status():
     results = [
         ToolResult(
@@ -174,6 +172,57 @@ def test_tool_outcomes_names_every_tool_and_its_status():
         ),
     ]
     assert tool_outcomes(results) == [
-        {"tool": "run_tests", "status": "UNAVAILABLE"},
+        {
+            "tool": "run_tests",
+            "status": "UNAVAILABLE",
+            "error": "venv creation failed in container",
+        },
         {"tool": "get_diff", "status": "SUCCESS"},
     ]
+
+
+def test_a_successful_tool_carries_no_error_excerpt():
+    """Success output is bulk, not evidence, and never reaches the report."""
+    results = [
+        ToolResult(
+            tool_name="run_tests", allowed_role=AgentRole.TESTING,
+            status=ToolStatus.SUCCESS, input_summary="", output_summary="",
+            duration_ms=3, error="stale text from an earlier attempt",
+        ),
+    ]
+    assert tool_outcomes(results) == [{"tool": "run_tests", "status": "SUCCESS"}]
+
+
+def test_a_failing_tool_reports_why_it_failed():
+    """A red stage that cannot say why is a stage nobody can act on."""
+    results = [
+        ToolResult(
+            tool_name="run_tests", allowed_role=AgentRole.TESTING,
+            status=ToolStatus.FAIL, input_summary="", output_summary="",
+            duration_ms=9, error="E   ModuleNotFoundError: No module named 'flask_cors'",
+        ),
+    ]
+    outcome = tool_outcomes(results)[0]
+    assert outcome["status"] == "FAIL"
+    assert "ModuleNotFoundError" in outcome["error"]
+
+
+def test_the_error_excerpt_is_redacted_and_keeps_its_tail():
+    """Process output reaches a committed report, so a secret must not ride along.
+
+    The tail is what is kept: the reason a tool failed is far more often the
+    last line of its output than the first.
+    """
+    secret = "ghp_" + "a" * 36
+    results = [
+        ToolResult(
+            tool_name="run_security_scan", allowed_role=AgentRole.SECURITY,
+            status=ToolStatus.FAIL, input_summary="", output_summary="",
+            duration_ms=9,
+            error=f"token={secret}\n" + ("filler line\n" * 400) + "the actual reason",
+        ),
+    ]
+    excerpt = tool_outcomes(results)[0]["error"]
+    assert secret not in excerpt
+    assert excerpt.endswith("the actual reason")
+    assert len(excerpt) <= 600
