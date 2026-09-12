@@ -45,3 +45,7 @@ skills-lock.json
 # Trial workspaces keep their surefire reports as evidence, not their build output.
 evaluation/reports/runs/*/workspace/*/target/*
 !evaluation/reports/runs/*/workspace/*/target/surefire-reports/
+
+# The raw run report is not passed through redacted_document (apply_run.py:698);
+# only the redacted results/<name>.json summary that run_cycle.py writes is committed.
+evaluation/benchmarks/ghcycle/results/raw/
