@@ -260,7 +260,7 @@ guardarse.
 |---|---|
 | [`adr16/verify_labels_and_sweep.py`](../evaluation/benchmarks/adr16/verify_labels_and_sweep.py) | 5 de 5, salida 0 |
 | [`adr17/verify_workspace.py`](../evaluation/benchmarks/adr17/verify_workspace.py) | 9 de 9, salida 0 |
-| [`adr18/verify_infrastructure_prerequisite.py`](../evaluation/benchmarks/adr18/verify_infrastructure_prerequisite.py) | 9 de 9, salida 0 |
+| [`adr18/verify_infrastructure_prerequisite.py`](../evaluation/benchmarks/adr18/verify_infrastructure_prerequisite.py) | 11 de 11, salida 0 |
 
 **Decisión 16 — etiquetas y barrido.** Un volumen creado por el run lleva las
 cuatro etiquetas; el barrido se lleva un recurso de un run que ya no vive; deja
@@ -290,13 +290,30 @@ su cuerpo dice que la evidencia describe infraestructura que nadie ha revisado;
 ambas ramas llegan al remoto. Levantada de verdad, la infraestructura derivada
 arranca y sus contenedores llevan el run.
 
-**El hueco que este runner confirma en lugar de tapar.** Lo que se levanta es el
-renderizado `run` y lo que se entrega es el `delivery`. Comparten inferencia,
-motor y digest, pero difieren en puertos publicados y credenciales por variable,
-y **esa parte llega al revisor sin ejecutarse nunca**: una colisión de puertos o
-una variable sin definir en el archivo entregado no la atrapa nada de esto. La
-decisión 18 está escrita como si levantar la infraestructura validara el archivo
-del pull request; no lo hace.
+**El hueco que este runner confirma, ahora reducido en parte.** Lo que se
+levanta sigue siendo el renderizado `run` y lo que se entrega sigue siendo el
+`delivery`: comparten inferencia, motor y digest, y difieren en puertos
+publicados y credenciales por variable. Lo que cambió es que ese segundo
+archivo ya no llega al revisor sin haberse tocado: `deliver()` invoca
+`validate_delivered_compose`
+([`delivery_check.py`](../src/engineering_team/delivery_check.py)), que
+resuelve el `delivery` con `docker compose config` contra un `.env` sintético
+construido con las claves de `.env.example` y compara las variables que el
+compose interpola contra esas mismas claves -- así que un archivo que no
+resuelve, o que referencia una variable que la plantilla no declara, nunca
+llega a abrir el pull request: la entrega se rehúsa con `DeliveryRefused` y la
+razón queda nombrada. Cuando no hay runtime disponible para preguntar, la
+comprobación no bloquea -- `performed=False` no es `valid=False` -- y el
+cuerpo del pull request dice explícitamente que el archivo no fue validado.
+Lo que sigue sin cubrir: que el servicio *arranque* sano y que la aplicación
+conecte, porque eso solo lo probaría levantar el `delivery` de verdad, y
+levantarlo en la máquina del operador es el estado improvisado que la
+decisión 18 existe para evitar; una colisión de puertos que aparezca
+*después* de la validación, en la máquina de quien lo levante -- la
+comprobación solo avisa de los puertos que ya están ocupados en la máquina
+que lo generó; y que `run` y `delivery` sigan siendo dos renderizados
+de una sola inferencia -- la validación reduce la distancia entre ambos, no
+la elimina.
 
 **Corrección fechada, 2026-09-11: `icapi-mysql` ya no existe.** Las
 [decisión 16](architecture/decisions/0016-every-docker-resource-carries-its-run.md)

@@ -1,5 +1,25 @@
 # Historia documental
 
+## 2026-09-11 — El compose entregado se valida antes de llegar al revisor
+
+`delivery_check.validate_delivered_compose` resuelve el archivo `delivery`
+con `docker compose config` contra un `.env` sintético construido con las
+claves de `.env.example`, y compara las variables que el compose interpola
+contra esas mismas claves -- lo que el runtime no hace, porque una variable
+sin definir es cadena vacía para él, no un error. `deliver()`, en
+`infrastructure_prerequisite.py`, la invoca antes de abrir el pull request y
+rehúsa la entrega -- `DeliveryRefused` -- cuando la comprobación se hizo y
+falló; sin runtime disponible no bloquea, y el cuerpo dice que el archivo no
+fue validado. El runner de la decisión 18 pasa 11 de 11 con esto ejercitado
+contra el daemon real, dos comprobaciones más que la vez anterior.
+
+La decisión 18 lleva una corrección fechada con lo que esto cierra y lo que
+sigue sin cerrar: la validación es estática, así que un servicio que resuelve
+bien y aun así no arranca, o una colisión de puertos que aparece después, en
+la máquina de quien lo levanta, siguen sin poder probarse aquí. El párrafo del
+hueco `run` contra `delivery` en [estado](status.md) queda dicho en esos
+mismos términos.
+
 ## 2026-09-11 — Las decisiones 16, 17 y 18, verificadas contra el daemon real
 
 Las suites de las tres decisiones pasan con dobles. Esta rama
