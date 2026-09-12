@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
@@ -23,6 +23,7 @@ from typing import Any
 from engineering_team.components import Component, components_in
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import ErrorCode, ReviewerStatus
+from engineering_team.contracts.models import ToolResult
 from engineering_team.delivery import (
     BRANCH_NAMESPACE,
     DeliveryRefused,
@@ -535,6 +536,20 @@ def _deliver_infrastructure_first(
     return delivered
 
 
+def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
+    """Name every tool the run invoked and how it ended.
+
+    The evidence recorded which files were written but never which tools ran,
+    so a tool that degraded to UNAVAILABLE -- a container that did not come up,
+    a venv that could not be built -- left no trace a reader could find. Names
+    and statuses only: summaries and errors carry process output, and this goes
+    into a file that gets committed.
+    """
+    return [
+        {"tool": item.tool_name, "status": item.status.value} for item in results
+    ]
+
+
 def run_on_project(
     settings: Settings,
     *,
@@ -602,6 +617,7 @@ def run_on_project(
         "errors": [
             f"{item.code.value}: {item.detail}" for item in errors
         ],
+        "tool_outcomes": tool_outcomes(state.get("tool_results", [])),
         "human_review_required": bool(state.get("human_review_required")),
         # ADR 18. A run that ends having delivered infrastructure and no
         # functional code is a success, and anything reading these outcomes has

@@ -7,6 +7,7 @@ import typer
 from engineering_team.apply_run import run_on_project
 from engineering_team.config import Settings
 from engineering_team.docker_labels import sweep
+from engineering_team.ephemeral_checkout import ephemeral_checkout
 from engineering_team.observability.evaluation import run_multimodel_acceptance
 from engineering_team.reset_project import reset_project
 
@@ -34,8 +35,30 @@ def run(
 
 @app.command("run-project")
 def run_project(
-    project_path: Annotated[Path, typer.Argument(help="Real project directory to run against")],
+    # `--spec` is still required, so it goes first: a parameter without a
+    # default cannot follow one that has one. The order of the parameters
+    # changes nothing on the command line.
     specification: Annotated[str, typer.Option("--spec", help="Functional specification")],
+    project_path: Annotated[
+        Path | None, typer.Argument(help="Real project directory to run against")
+    ] = None,
+    repository_url: Annotated[
+        str | None,
+        typer.Option(
+            "--repo",
+            help=(
+                "Clone this repository into a temporary directory, run against it, "
+                "and remove it afterwards. Mutually exclusive with the path argument."
+            ),
+        ),
+    ] = None,
+    clone_depth: Annotated[
+        int,
+        typer.Option(
+            "--clone-depth",
+            help="Shallow by default; 0 clones the full history for a remote that refuses a shallow push",
+        ),
+    ] = 1,
     test_specification: Annotated[
         str | None, typer.Option("--test-spec", help="Test expectations")
     ] = None,
@@ -62,16 +85,28 @@ def run_project(
 ) -> None:
     """Run Product->Architecture->Developer->Security->Testing->Reviewer against a
     real project and, when --authorize-writes is passed, apply the changes for real."""
-    evidence = run_on_project(
-        Settings(),
-        project_path=project_path,
-        specification=specification,
-        test_specification=test_specification,
-        authorize_writes=authorize_writes,
-        confirm_delivery=confirm_delivery,
-        report_path=report_path,
-    )
-    typer.echo(json.dumps(evidence, ensure_ascii=False))
+    if project_path is not None and repository_url is not None:
+        raise typer.BadParameter("give a project path or --repo, not both")
+    if project_path is None and repository_url is None:
+        raise typer.BadParameter("give a project path or --repo")
+
+    def _go(root: Path) -> None:
+        evidence = run_on_project(
+            Settings(),
+            project_path=root,
+            specification=specification,
+            test_specification=test_specification,
+            authorize_writes=authorize_writes,
+            confirm_delivery=confirm_delivery,
+            report_path=report_path,
+        )
+        typer.echo(json.dumps(evidence, ensure_ascii=False))
+
+    if repository_url is not None:
+        with ephemeral_checkout(repository_url, depth=clone_depth) as root:
+            _go(root)
+    else:
+        _go(project_path)
 
 
 @app.command("reset-project")
