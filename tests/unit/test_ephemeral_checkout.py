@@ -69,6 +69,45 @@ def test_a_clone_that_fails_leaves_no_directory_behind(tmp_path):
     assert "clone" in str(failure.value)
 
 
+def test_a_url_carrying_a_credential_is_refused_before_the_clone(monkeypatch):
+    token = "sekrit-token-value"
+
+    def _subprocess_must_not_run(*args, **kwargs):
+        raise AssertionError("git must not run: the guard should refuse first")
+
+    monkeypatch.setattr(subprocess, "run", _subprocess_must_not_run)
+
+    with (
+        pytest.raises(RuntimeError) as failure,
+        ephemeral_checkout(f"https://{token}@no-such-host.invalid/owner/repo.git"),
+    ):
+        pass
+    assert token not in str(failure.value)
+    assert "credentialed" in str(failure.value)
+
+
+def test_scp_style_urls_are_not_mistaken_for_a_credential():
+    # `git@no-such-host.invalid:owner/repo.git` -- the `@` is the scp-style
+    # username, not a credential. It has no netloc at all (no `scheme://`), so
+    # the guard must not trip on it. It is free to fail later, at the clone
+    # itself (`.invalid` never resolves) -- just not on the credential guard.
+    with (
+        pytest.raises(RuntimeError) as failure,
+        ephemeral_checkout("git@no-such-host.invalid:owner/repo.git"),
+    ):
+        pass
+    assert "credentialed" not in str(failure.value)
+
+
+def test_a_plain_https_url_is_not_mistaken_for_a_credential():
+    with (
+        pytest.raises(RuntimeError) as failure,
+        ephemeral_checkout("https://no-such-host.invalid/owner/repo.git"),
+    ):
+        pass
+    assert "credentialed" not in str(failure.value)
+
+
 from typer.testing import CliRunner
 
 from engineering_team.cli import app
