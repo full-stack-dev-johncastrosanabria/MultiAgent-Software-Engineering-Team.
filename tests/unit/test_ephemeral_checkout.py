@@ -241,7 +241,7 @@ def test_the_error_excerpt_is_redacted_and_keeps_its_tail():
             tool_name="run_security_scan", allowed_role=AgentRole.SECURITY,
             status=ToolStatus.FAIL, input_summary="", output_summary="",
             duration_ms=9,
-            error=f"token={secret}\n" + ("filler line\n" * 400) + "the actual reason",
+            error=f"{secret}\n" + ("filler line\n" * 400) + "the actual reason",
         ),
     ]
     excerpt = tool_outcomes(results)[0]["error"]

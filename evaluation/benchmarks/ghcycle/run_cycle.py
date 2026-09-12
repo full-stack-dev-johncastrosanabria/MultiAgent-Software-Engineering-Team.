@@ -12,9 +12,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
+from engineering_team.docker_labels import CACHE_LIFETIME, LIFETIME_LABEL, OWNER_FILTER
 from engineering_team.guardrails.secrets import redacted_document
 
 RESULTS = Path(__file__).resolve().parent / "results"
+
+_DOCKER_TIMEOUT_SECONDS = 30
 
 
 # ADR 16 labels containers, named volumes and networks alike, and its own
@@ -25,6 +28,23 @@ _RESOURCE_QUERIES = (
     ("volume", ["docker", "volume", "ls", "--format", "{{.Name}}"]),
     ("network", ["docker", "network", "ls", "--format", "{{.Name}}"]),
 )
+_IMAGE_QUERY = ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"]
+_OWNER_LABEL_FILTER = f"label={OWNER_FILTER}"
+_CACHE_LABEL_FILTER = f"label={LIFETIME_LABEL}={CACHE_LIFETIME}"
+
+
+def _listed(query: list[str], *filters: str) -> set[str]:
+    arguments = list(query)
+    for expression in filters:
+        arguments += ["--filter", expression]
+    try:
+        completed = subprocess.run(
+            arguments, capture_output=True, text=True,
+            timeout=_DOCKER_TIMEOUT_SECONDS, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {line.strip() for line in completed.stdout.splitlines() if line.strip()}
 
 
 def _labelled_resources() -> list[str]:
@@ -32,18 +52,21 @@ def _labelled_resources() -> list[str]:
 
     The filter is `aset.owner=aset` everywhere: a resource nobody labelled is
     never reported, so an unrelated container on the machine stays invisible.
+
+    Images get the same owner filter plus the exclusion `docker_labels.sweep`
+    applies before reaping: an image labelled `aset.lifetime=cache` -- a
+    pulled base image, a package cache -- is deliberately persistent so a
+    later run can reuse it, and counting it as a leftover would leave this
+    stage red forever.
     """
     found: list[str] = []
     for kind, query in _RESOURCE_QUERIES:
-        completed = subprocess.run(
-            [*query, "--filter", "label=aset.owner=aset"],
-            capture_output=True, text=True, check=False,
-        )
         found.extend(
-            f"{kind}/{line.strip()}"
-            for line in completed.stdout.splitlines()
-            if line.strip()
+            f"{kind}/{name}" for name in sorted(_listed(query, _OWNER_LABEL_FILTER))
         )
+    owned_images = _listed(_IMAGE_QUERY, _OWNER_LABEL_FILTER)
+    cached_images = _listed(_IMAGE_QUERY, _OWNER_LABEL_FILTER, _CACHE_LABEL_FILTER)
+    found.extend(f"image/{name}" for name in sorted(owned_images - cached_images))
     return found
 
 
@@ -76,19 +99,27 @@ def _score(evidence: dict, *, delivered: bool) -> dict[str, dict]:
     unavailable = [
         item for item in outcomes if item.get("status") == "UNAVAILABLE"
     ]
-    ran_tests = any(item["tool"] == "run_tests" for item in outcomes)
-    # A FAIL does not turn the stage red: a TDD loop is meant to go red before it
-    # goes green, so failures are normal here. They are counted anyway, because
-    # a run whose tests failed every iteration otherwise reads as a clean PASS.
+    run_tests_outcomes = [item for item in outcomes if item.get("tool") == "run_tests"]
+    ran_tests = bool(run_tests_outcomes)
+    # An intermediate FAIL does not turn the stage red: a TDD loop is meant to
+    # go red before it goes green, so failures are normal mid-run. They are
+    # counted anyway, because a run whose tests failed every iteration but the
+    # last should still show that history. But the *last* run_tests outcome is
+    # different: if the loop never got back to green, the run shipped whatever
+    # it had -- observed once as 0 files written -- and that is not a stage
+    # this benchmark can call PASS.
+    last_run_tests_failed = ran_tests and run_tests_outcomes[-1].get("status") == "FAIL"
     failed = [item for item in outcomes if item.get("status") == "FAIL"]
     failed_by_tool = {
         tool: sum(1 for item in failed if item.get("tool") == tool)
         for tool in sorted({item.get("tool") for item in failed})
     }
     stages["execute"] = {
-        # Tools ran, none degraded, and the test tool is among them: a run whose
-        # containers never came up produces an empty list and reads as red.
-        "passed": bool(outcomes) and not unavailable and ran_tests,
+        # Tools ran, none degraded, the test tool ran at least once, and its
+        # last outcome was not FAIL: a run whose containers never came up
+        # produces an empty list and reads as red, and a run that ended on a
+        # failing test suite reads as red too.
+        "passed": bool(outcomes) and not unavailable and ran_tests and not last_run_tests_failed,
         "detail": (
             f"{len(outcomes)} tool outcomes, {len(unavailable)} unavailable, "
             f"{len(failed)} failed"
@@ -134,6 +165,9 @@ def main() -> int:
     # git-ignored; only the redacted summary below is committed.
     report_path = RESULTS / "raw" / f"{arguments.name}-run.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    # A crash before the CLI writes its report must not leave a stale report
+    # from a previous run sitting there to be scored as if it were this one.
+    report_path.unlink(missing_ok=True)
     command = [
         sys.executable, "-m", "engineering_team.cli", "run-project",
         "--repo", arguments.repo,
@@ -149,7 +183,12 @@ def main() -> int:
     completed = subprocess.run(command, capture_output=True, text=True, check=False)
     evidence: dict = {}
     if report_path.exists():
-        evidence = json.loads(report_path.read_text(encoding="utf-8"))
+        try:
+            evidence = json.loads(report_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            # A crash mid-write leaves a truncated file; treat it the same as
+            # no report at all rather than raising out of the benchmark.
+            evidence = {}
 
     summary = {
         "repository": arguments.repo,
@@ -164,7 +203,7 @@ def main() -> int:
     )
     destination = RESULTS / f"{arguments.name}.json"
     destination.write_text(
-        json.dumps(redacted_document(summary), indent=2), encoding="utf-8"
+        json.dumps(redacted_document(summary), indent=2) + "\n", encoding="utf-8"
     )
     for name, stage in summary["stages"].items():
         print(f"{'PASS' if stage['passed'] else 'FAIL'}  {name}")

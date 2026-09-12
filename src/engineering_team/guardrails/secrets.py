@@ -152,6 +152,24 @@ _REDACTED_ASSIGNMENT = re.compile(
     r'''|(?:"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}]))'''
 )
 
+# Secrets that give themselves away by shape, no key name required -- the
+# credential a `git`/`gh` failure or a raw header dump embeds free-standing.
+# Redacted before the key=value passes below, since those never fire on a
+# bare token in the first place; order between these does not matter, none
+# of them can match inside another's replacement.
+_GITHUB_TOKEN = re.compile(
+    r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"
+    r"|\bgithub_pat_[A-Za-z0-9_]{20,}\b"
+)
+_ANTHROPIC_KEY = re.compile(r"\bsk-ant-[A-Za-z0-9\-_]{20,}\b")
+_AWS_ACCESS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+# `scheme://user:pass@host/...` -- only the credential is the secret; the host
+# is the useful part of a failed-push message and stays visible.
+_URL_CREDENTIAL = re.compile(
+    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)"
+    r"(?P<userinfo>[^/\s:@]+(?::[^/\s@]*)?)@"
+)
+
 
 def _mask_non_secret_syntax(text: str) -> str:
     # Repository evidence is redacted before prompt construction. Only a complete
@@ -186,6 +204,15 @@ def redact_secrets(value: str, known_values: Iterable[str] = ()) -> str:
     def redact_quoted(match: re.Match[str]) -> str:
         quote = '"' if match.group("double") else "'"
         return match.group("prefix") + quote + "[REDACTED]" + quote
+
+    # Shape-based patterns first: a bare token or an embedded URL credential
+    # carries no key name for the passes below to key off, and none of these
+    # four can appear inside another's replacement, so their relative order
+    # does not matter.
+    redacted = _GITHUB_TOKEN.sub("[REDACTED]", redacted)
+    redacted = _ANTHROPIC_KEY.sub("[REDACTED]", redacted)
+    redacted = _AWS_ACCESS_KEY.sub("[REDACTED]", redacted)
+    redacted = _URL_CREDENTIAL.sub(r"\g<scheme>[REDACTED]@", redacted)
 
     # Properties and YAML plain scalars may contain spaces and punctuation.
     # Redact the complete line value before the generic inline-assignment pass;

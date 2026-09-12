@@ -240,3 +240,67 @@ def test_redacted_document_leaves_the_keys_alone() -> None:
 
     assert list(redacted) == ["password=hunter2"]
     assert redacted["password=hunter2"] == "password=[REDACTED]"
+
+
+# Tasks 4-6 run with --deliver: a real token sits in the environment and its
+# process output -- including `git`'s own failure messages -- passes through
+# redact_secrets before it can land in a committed report. Each of these is a
+# form that carried no `key=value` shape for the old implementation to catch.
+
+
+def test_a_bare_github_token_is_redacted() -> None:
+    secret = "ghp_" + "a" * 36
+    redacted = redact_secrets(f"cloning with token {secret} from remote")
+
+    assert secret not in redacted
+    assert "cloning with token" in redacted
+    assert "from remote" in redacted
+
+
+def test_a_bare_github_fine_grained_pat_is_redacted() -> None:
+    secret = "github_pat_" + "B" * 22 + "_" + "c" * 59
+    redacted = redact_secrets(f"cloning with token {secret} from remote")
+
+    assert secret not in redacted
+    assert "cloning with token" in redacted
+    assert "from remote" in redacted
+
+
+def test_a_bearer_anthropic_key_is_redacted() -> None:
+    secret = "sk-ant-api03-" + "d" * 80
+    redacted = redact_secrets(f"Authorization: Bearer {secret}")
+
+    assert secret not in redacted
+    assert "Authorization: Bearer" in redacted
+
+
+def test_a_bare_aws_access_key_is_redacted() -> None:
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    redacted = redact_secrets(f"found leaked key {secret} in log output")
+
+    assert secret not in redacted
+    assert "found leaked key" in redacted
+    assert "in log output" in redacted
+
+
+def test_a_url_embedded_credential_is_redacted_but_the_host_survives() -> None:
+    secret = "s3cr3tpass"
+    redacted = redact_secrets(f"remote: https://user:{secret}@github.com/o/r.git")
+
+    assert secret not in redacted
+    assert "github.com/o/r.git" in redacted
+    assert "remote:" in redacted
+
+
+def test_a_failed_push_message_with_an_embedded_token_is_redacted() -> None:
+    secret = "ghp_" + "e" * 36
+    message = (
+        f"fatal: could not read Password for 'https://{secret}@github.com': "
+        "terminal prompts disabled"
+    )
+    redacted = redact_secrets(message)
+
+    assert secret not in redacted
+    assert "could not read Password" in redacted
+    assert "github.com" in redacted
+    assert "terminal prompts disabled" in redacted

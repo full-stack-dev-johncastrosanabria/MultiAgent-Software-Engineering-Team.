@@ -551,11 +551,13 @@ def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
     iteration said so and said nothing about why, while the checkout it failed
     in was already gone. So an excerpt travels too, redacted.
 
-    It has to come from either field. ``error`` is set only when the tool was
-    UNAVAILABLE (``mcp.quality`` fills it from the infrastructure error and
-    leaves it empty otherwise), so a FAIL -- the red test run, the scanner that
-    found something -- carries its reason in ``output_summary`` instead. Taking
-    only ``error`` would name exactly the case nobody needed explained.
+    It has to come from either field. ``error`` is set when the tool was
+    UNAVAILABLE (``mcp.quality`` fills it from the infrastructure error), and
+    also when a composite tool aggregates sub-results that carried their own
+    errors (``mcp/quality.py``'s ``CompositeQuality._aggregate``). A plain FAIL
+    -- the red test run, the scanner that found something -- instead carries
+    its reason in ``output_summary``. Taking only ``error`` would miss that
+    case entirely.
 
     The tail is what is kept: the reason a tool failed is the last line of the
     process output far more often than the first. A tool that succeeded carries
