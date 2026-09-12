@@ -277,6 +277,9 @@ def validate_delivered_compose(
         compose_file = root / "docker-compose.yml"
         env_file = root / ".env"
         compose_file.write_text(compose, encoding="utf-8")
+        # The same markers the process environment carries, written where an
+        # operator reproducing this by hand would put them. The two must stay
+        # in agreement: they answer the same question at different layers.
         env_file.write_text(_synthetic_environment(env_example), encoding="utf-8")
         try:
             completed = subprocess.run(
