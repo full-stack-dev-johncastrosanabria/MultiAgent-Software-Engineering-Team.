@@ -101,6 +101,33 @@ def test_the_marker_is_recognised_where_it_lands_not_only_at_a_line_end() -> Non
     require_safe_cloud_context(redacted)
 
 
+def test_the_marker_survives_an_escaped_payload() -> None:
+    """The prompt a role is sent is JSON, so repository text arrives with its
+    newlines escaped. `[REDACTED]\\nurl` puts a backslash where the marker's
+    exemption expected a line end, so the checker refused the redactor's own
+    output -- and every project with a `password:` line in its config died at
+    its first Architecture call, before one tool ran."""
+    payload = '{"file": "application.yaml", "text": "password: hunter2\\nurl: local"}'
+
+    redacted = redacted_for_cloud(payload)
+
+    assert "hunter2" not in redacted
+    require_safe_cloud_context(redacted)
+
+
+def test_the_marker_is_accepted_when_prose_follows_it() -> None:
+    """Redact the whole unquoted value, including prose, before checking it.
+
+    This does not exempt a marker followed by an unredacted credential.
+    """
+    line = "password: hunter2 as documented in the deployment guide"
+
+    redacted = redacted_for_cloud(line)
+
+    assert "hunter2" not in redacted
+    require_safe_cloud_context(redacted)
+
+
 def test_documentation_loses_the_value_not_the_emphasis() -> None:
     """`**Password:** `123456`` put markdown where the pattern expected the
     secret, so the asterisks were redacted and the credential survived."""

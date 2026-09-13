@@ -126,6 +126,15 @@ _TYPE_NAME_PATTERN = (
     r"string|str|number|int|float|bool|boolean|any|unknown|object"
     r"|null|undefined|none|char|varchar|text|uuid|date"
 )
+# `[REDACTED]` is what this module's own redactor emits, so a value that *is*
+# the marker carries nothing. It may be followed by a JSON escape: prompts ship
+# repository text encoded, so `password: x` came back as `[REDACTED]\nurl: ...`
+# with a backslash exactly where a line end was expected. The checker then
+# refused its own redactor's output, and every project with a `password:` line
+# in its config died at its first cloud call, before one tool ran.
+# A space is deliberately not a terminator here -- `password=[REDACTED] secret`
+# stays refused, or the marker becomes a prefix for smuggling one past.
+_REDACTED_VALUE_PATTERN = r"\[REDACTED\](?:$|[\\\r\n;,\"'}\)\]])"
 _SECRET_KEY_PATTERN = (
     r"api[_-]?key(?:[_-]?\d+)?|access[_-]?token|token|password|secret(?:[_-]?key)?"
 )
@@ -270,6 +279,37 @@ def _names_a_credential_file(name: str) -> bool:
     return is_credential_path(name)
 
 
+def _redacted_across_json_literals(text: str) -> str:
+    """Redact inside JSON string literals on their own decoded text.
+
+    Prompts ship repository files JSON-encoded, so a line break arrives as the
+    two characters `\\n`. An unquoted secret value is matched with `[^\\r\\n]*`,
+    which sees no line end there: the value swallowed the escape and the next
+    line with it, and `password: <value>` came back as `password=[REDACTED]`
+    followed by the comment that belonged on the following line. The checker
+    then had to choose between accepting that and accepting
+    `password=[REDACTED] a-real-credential`, which are the same shape.
+
+    `_scan_text` already decodes complete literals before looking; doing the
+    same before redacting removes the choice instead of widening the check.
+    """
+    def literal(match: re.Match[str]) -> str:
+        try:
+            decoded = json.loads(match.group())
+        except ValueError:
+            return match.group()
+        return json.dumps(redact_secrets(decoded), ensure_ascii=False)
+
+    pieces: list[str] = []
+    last = 0
+    for match in re.finditer(r'"(?:\\.|[^"\\])*"', text):
+        pieces.append(redact_secrets(text[last : match.start()]))
+        pieces.append(literal(match))
+        last = match.end()
+    pieces.append(redact_secrets(text[last:]))
+    return "".join(pieces)
+
+
 def redacted_for_cloud(value: Any) -> Any:
     """The same content with detected secret values replaced, or a refusal.
 
@@ -310,7 +350,7 @@ def redacted_for_cloud(value: Any) -> Any:
     if isinstance(value, set):
         return {redacted_for_cloud(item) for item in value}
     if isinstance(value, str):
-        return redact_secrets(value)
+        return _redacted_across_json_literals(value)
     return value
 
 
@@ -350,7 +390,7 @@ def require_safe_cloud_context(value: Any) -> None:
     # mention as well bought nothing and cost every project that has one.
     if re.search(
         r"(?i)(api[_-]?key(?:[_-]?\d+)?|access[_-]?token|password|secret)"
-        rf"\s*[=:]\s*(?!(?:{_TYPE_NAME_PATTERN})\b)[^\s,]+",
+        rf"\s*[=:]\s*(?!(?:{_TYPE_NAME_PATTERN})\b|{_REDACTED_VALUE_PATTERN})[^\s,]+",
         _scan_text(text),
     ):
         raise ValueError("sensitive content is not allowed in cloud context")
