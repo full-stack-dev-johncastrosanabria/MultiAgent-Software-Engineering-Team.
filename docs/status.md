@@ -1,5 +1,123 @@
 # Estado y límites de evidencia
 
+## Campaña GitHub del 2026-09-13 — aceptación no cumplida
+
+La campaña `gh-run-testing` mide FlaskApiProduct, spring-demo, PropFlow y
+Banking con el CLI real y checkout temporal del host. **No demuestra las seis
+etapas verdes en los cuatro repositorios.** Los resultados conservados están en
+[`ghcycle/results`](../evaluation/benchmarks/ghcycle/results/); los reportes
+crudos permanecen locales e ignorados por Git. `delivered` expresa que se pidió
+entrega, no que se haya abierto un PR.
+
+Corrección fechada del cierre del ledger: `delivery.passed=true` junto con
+`skipped=true` significa entrega **omitida**. No prueba delivery. Asimismo,
+`infrastructure` verde en seco no prueba un PR de infraestructura ni su apilado.
+El marcador de [`run_cycle.py`](../evaluation/benchmarks/ghcycle/run_cycle.py)
+permanece intacto; esta tabla distingue esas condiciones al interpretar sus JSON.
+
+| Evidencia | Clone | Infraestructura | Execute | Spec | Delivery | Higiene Docker |
+|---|---|---|---|---|---|---|
+| [FlaskApiProduct, entrega](../evaluation/benchmarks/ghcycle/results/flaskapiproduct.json) | PASS | PASS, sin motor externo | FAIL | FAIL | FAIL, sin PR | PASS |
+| [spring-demo, seco](../evaluation/benchmarks/ghcycle/results/spring-demo-dry.json) | PASS | PASS, detecta mysql | FAIL | FAIL | OMITIDA | PASS |
+| [spring-demo, entrega](../evaluation/benchmarks/ghcycle/results/spring-demo.json) | PASS | FAIL, sin rama de infraestructura | FAIL | FAIL | FAIL, sin PR | PASS |
+| [PropFlow, seco](../evaluation/benchmarks/ghcycle/results/propflow-dry.json) | PASS | PASS, sin motor externo | FAIL | FAIL | OMITIDA | PASS |
+| [PropFlow, entrega](../evaluation/benchmarks/ghcycle/results/propflow.json) | PASS | PASS, sin motor externo | FAIL | FAIL | FAIL, sin PR | PASS |
+| [Banking, seco](../evaluation/benchmarks/ghcycle/results/banking-dry.json) | PASS | PASS, detecta postgres | FAIL | FAIL | OMITIDA | PASS |
+| [Banking, entrega](../evaluation/benchmarks/ghcycle/results/banking.json) | PASS | FAIL, sin rama de infraestructura | FAIL | FAIL | FAIL, sin PR | PASS |
+
+Estos siete resultados terminan en `HUMAN_REVIEW_REQUIRED`, con revisor
+`REJECTED`, cero archivos aplicados y cero herramientas `UNAVAILABLE`. Los
+conteos de herramientas son respectivamente 97, 31, 36, 102, 103, 95 y 67. Que las
+herramientas hayan corrido no implica que los tests hayan pasado.
+
+MySQL fue observado `healthy` durante el trabajo Maven en spring-demo según la
+captura del ledger. Banking detectó postgres desde
+`src/Banking.Api/appsettings.json`; durante la nueva corrida
+`apply-614f9bca-0b9a-42d0-850a-bd40e11fb83a`, `docker ps` mostró postgres
+`healthy` junto al contenedor Node, ambos etiquetados con ese run y
+`aset.project=project`. PropFlow declara SQLite, por lo que la expectativa
+inicial de MySQL era incorrecta. La ausencia actual de los
+cuatro checkouts indicados por los reportes crudos fue comprobada de nuevo; esa
+comprobación usa las rutas reales, no solamente `/tmp`.
+
+### Adjudicación de hallazgos de ghcycle
+
+Los identificadores F-7, F-8 y F-9 se reutilizaron en el ledger. Aquí designan
+los tres hallazgos de su último cierre; las variantes anteriores se conservan
+con un sufijo descriptivo. Las referencias de línea corresponden a la base
+`8baf9af` más el arreglo de redacción que ya estaba preparado al reanudar.
+
+| Hallazgo | Etapa y repos afectados | Adjudicación |
+|---|---|---|
+| F-7, aislamiento entre componentes; absorbe F-6 | Execute, PropFlow y Banking | Defecto de producto; trabajo aparte. `ProjectReference` sale del montaje: PropFlow omite `PropFlow.Application`; Banking informa `CS0246` para `ICurrentUser`, `FavoriteService` y `AccountStatus`. El camino de contenedor usa `apply_run.py:226-233`; `:134-136` es el brazo alternativo. `mcp/container.py:258` monta la raíz recibida. El riesgo para JVM/Node es inferido, no una reproducción adicional. |
+| F-8 y F-1, vulnerabilidades previas; F-1', perfil Python | Security/review, cuatro repos | Los escáneres reportan dependencias vulnerables; decisión pendiente sobre baseline frente al cambio. No se desactiva el gate. La asimetría del perfil Python se adjudica con esa política. No está demostrado que un scan rojo aislado impida siempre cualquier entrega: en estas corridas también fallan tests. |
+| F-9, fallback sin clave | Diagnóstico, spring-demo | Deuda de producto aparte: `llm/cloud.py:469` conserva el tipo de excepción, no la clave del `KeyError`. Un futuro detalle debe pasar por redacción. |
+| F-2, testing puntuado pese a fallos | Review, FlaskApiProduct | Defecto de coherencia de evidencia/revisión; trabajo aparte. No convierte los tests fallidos en aprobados. |
+| F-3, caché no escribible y `ENOTDIR` | Execute, FlaskApiProduct | Defecto de entorno/contenedor; trabajo aparte. La atribución inicial de `ENOTDIR` a una ruta equivocada fue retirada; no queda demostrado que F-7 explique ese error. |
+| F-4, archivos ajenos a la spec | Spec, FlaskApiProduct | Trabajo aparte: separar propuestas del agente y modificaciones de herramientas, como `client/package-lock.json`. No hay PR de esta campaña sobre el que afirmar contaminación efectiva. |
+| F-5, motivos ausentes en `tool_outcomes` | Diagnóstico, FlaskApiProduct | Arreglado en la campaña por `ca7d57d` y `056cb75`; persisten las limitaciones siguientes. |
+| F-7-diagnóstico y F-11, salida vacía o cola insuficiente | Diagnóstico, FlaskApiProduct y spring-demo | Trabajo aparte: un componente puede no aportar motivo; el extracto de 600 caracteres de Maven conserva autoconfiguración y pierde la causa. No atribuir el test Spring fallido a MySQL sin evidencia. |
+| F-8-variabilidad, propuestas distintas con igual spec | Spec, FlaskApiProduct | Variabilidad observada, no defecto determinista demostrado. Trabajo de evaluación aparte; no se exige identidad textual al modelo. |
+| F-9-higiene, verificación sobre `/tmp` | Higiene, cuatro repos | Corregida la verificación manual para usar las rutas reales. El JSON mide recursos Docker etiquetados; checkout y secretos requieren controles adicionales. |
+| F-12, `aset.project=project` | Infraestructura/etiquetas, spring-demo | Defecto de identidad de proyecto; trabajo aparte. La colisión entre repos simultáneos es una consecuencia estática, no provocada en esta campaña serial. |
+| F-13, redactor rechazado por el propio guardrail | Cloud/Architecture, spring-demo | Arreglado en `3bca34a`: redactar literales JSON decodificados y reconocer el marcador completo. La corrida real posterior alcanzó 36 resultados de herramientas. |
+| Recursos antiguos sin etiqueta y checkout tras `SIGKILL` | Higiene | No justifican una ADR nueva: el barrido protege recursos sin `aset.owner=aset`; el checkout temporal no garantiza limpieza ante `SIGKILL`. Se retira el candidato a ADR del ledger. |
+
+No hay una entrada F-10 definida en este ledger; no se inventa para completar
+la numeración. Los defectos ya corregidos del arnés —puntuación falsa de execute,
+reporte crudo obsoleto, consulta Docker fallida tratada como vacío y redacción
+insuficiente— conservan sus commits y tests; no se reabren ni se altera el
+marcador para obtener verde.
+
+### Límites de aceptación
+
+La [sonda superficial](../evaluation/benchmarks/ghcycle/results/shallow-push.json)
+cerró la Task 2: GitHub aceptó el push desde `--depth 1`; se verificaron el
+borrado de la rama temporal y la desaparición del checkout. El único archivo
+del commit estaba bajo `.aset-probe/`. Esto prueba transporte Git, no la
+entrega gobernada ni la aceptación de una spec. El
+[script](../evaluation/benchmarks/ghcycle/probe_shallow_push.py) usa una condición
+sobre el commit remoto tanto al crear como al borrar la rama; cuatro tests
+cubren éxito, rechazo, timeout y una rama movida por otro actor.
+
+No hay PR funcional de esta campaña verificado ni apilado funcional sobre
+infraestructura, y tampoco una verificación por diff de PR que demuestre la
+conservación de los tests originales. Los PR anteriores de FlaskApiProduct no
+son evidencia de estas corridas. F-7, F-8 y F-9 quedan fuera del alcance de
+arreglos, conforme al ruling del operador.
+
+Este trabajo no cambia la situación de `VolumeWorkspace` descrita abajo:
+el CLI clona a un temporal del host; no valida el clon dentro de volumen ni
+`extract` previo al teardown en un run real. Tampoco regenera
+`evaluation/benchmarks/adr14/results/report.json`. Las comprobaciones anteriores
+de otras ramas conservan su fecha y alcance, y no sustituyen la aceptación de
+esta campaña.
+
+### Verificación del cierre
+
+La suite indicada por la Task 7 se ejecutó con Python 3.14.7, quitando las
+variables exportadas cuyos nombres derivan de `Settings.model_fields` y fijando
+después `DELIVERY_BACKEND=none`, sin modificar `.env`. Primera pasada en sandbox:
+952 PASS, 26 FAIL y 20 SKIP. Los 26 fallos dependían del daemon Docker no
+accesible desde ese sandbox; repetidos con acceso al daemon, **26 PASS** en
+549.35 segundos. Resultado por lotes: **978 PASS, 20 SKIP, ningún fallo
+pendiente** de esa selección; los omitidos no cuentan como integración validada.
+
+Los cuatro tests nuevos de la sonda pasan aparte. Las comprobaciones
+documentales y el contrato de calidad pasan (8); junto con redacción y
+guardrails suman 71 PASS. Ruff sobre los archivos de código cambiados no
+reporta hallazgos; sobre `src/engineering_team` conserva los dos preexistentes:
+`agents/security.py:68` SIM103 y `mcp/quality.py:1357` PYI034.
+
+La comprobación final, después de Banking, devuelve cero recursos Docker
+etiquetados no pertenecientes a caché (contenedores, volúmenes, redes e imágenes,
+con el mismo filtro del corredor). Los checkouts y sus directorios padres de
+las cuatro corridas con entrega fueron eliminados, y no hay directorios
+`aset-checkout-*` en el temporal real ni en `/private/tmp`. Los ocho JSON de
+resultados pasan la comprobación de redacción idempotente; esos JSON y los dos
+documentos de cierre no contienen coincidencias con las credenciales
+configuradas. Los reportes crudos permanecen ignorados por Git.
+
 Base inspeccionada: `4294b9ef5904bed3b239a06c95e77491437b9aed`, rama `grok-multistack-validation`. Reorganización aprobada el 2026-09-08; los cambios posteriores a esa base se verifican en el worktree.
 
 La aplicación bancaria de evaluación está ubicada en `demo-projects/sample_app/`. Es un objetivo de prueba y demo, no parte del paquete principal; el runtime y sus scripts apuntan explícitamente a esa ruta. La ruta anterior `sample_app/` ya no existe.

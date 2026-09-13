@@ -1,5 +1,14 @@
 # Historia documental
 
+## 2026-09-13 — Campaña GitHub: resultados y aceptación incumplida
+
+La campaña `gh-run-testing` conserva los resultados del CLI real sobre
+FlaskApiProduct, spring-demo, PropFlow y Banking. El [estado de la campaña](status.md#campaña-github-del-2026-09-13--aceptación-no-cumplida)
+es el propietario de la matriz por etapa, la adjudicación de hallazgos y los
+límites de evidencia. Se corrige expresamente la lectura de un PASS de delivery
+en seco como entrega real: con `skipped=true` no hubo PR. La medición terminada
+no equivale a las seis etapas verdes exigidas por el plan.
+
 ## 2026-09-11 — El compose entregado se valida antes de llegar al revisor
 
 `delivery_check.validate_delivered_compose` resuelve el archivo `delivery`
