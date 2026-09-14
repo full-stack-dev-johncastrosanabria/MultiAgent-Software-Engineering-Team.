@@ -110,6 +110,15 @@ class _IneffectiveRemediation(ValueError):
     pass
 
 
+def _missing_response_field_detail(exc: KeyError) -> str:
+    # Only protocol field names are safe to disclose. KeyError may originate
+    # inside a client/transport and carry arbitrary data rather than a field.
+    key = exc.args[0] if len(exc.args) == 1 else None
+    known_fields = {"candidates", "choices", "content", "message", "parts", "text"}
+    field = repr(key) if type(key) is str and key in known_fields else "[REDACTED]"
+    return f"KeyError: missing response field {field}"
+
+
 @dataclass
 class AttemptBudget:
     settings: Settings
@@ -466,7 +475,9 @@ class CloudModelRuntime:
                 "unchanged developer remediation"
                 if ineffective else
                 "schema validation: " + ", ".join(sorted({e["type"] for e in exc.errors(include_input=False)}))
-                if isinstance(exc, ValidationError) else type(exc).__name__
+                if isinstance(exc, ValidationError) else
+                _missing_response_field_detail(exc)
+                if isinstance(exc, KeyError) else type(exc).__name__
             )
             error = (
                 "LLM_QUALITY_ERROR: unchanged developer remediation"
@@ -497,12 +508,20 @@ class CloudModelRuntime:
                     status_message=error,
                 )
             if _attempt + 1 < len(chain):
-                return self.invoke_artifact(
-                    role, envelope, candidate, fallback_reason=fallback_reason,
-                    _attempt=_attempt + 1,
-                    _deadline=deadline,
-                )
-            raise RuntimeError(error) from exc
+                try:
+                    return self.invoke_artifact(
+                        role, envelope, candidate, fallback_reason=fallback_reason,
+                        _attempt=_attempt + 1,
+                        _deadline=deadline,
+                    )
+                except RuntimeError as fallback_error:
+                    # A later failure otherwise chains this unsanitized KeyError.
+                    if isinstance(exc, KeyError):
+                        raise fallback_error from None
+                    raise
+            # Keep arbitrary KeyError arguments out of rendered tracebacks too.
+            cause = None if isinstance(exc, KeyError) else exc
+            raise RuntimeError(error) from cause
         finally:
             if owns_client:
                 client.close()
