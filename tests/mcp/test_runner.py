@@ -142,7 +142,7 @@ def test_profile_scan_network_policy_reaches_command_request(
         if stack == "python"
         else NoPythonRecordingRunner(
             stdout=(
-                json.dumps({"projects": []})
+                json.dumps({"version": 1, "projects": []})
                 if stack == "dotnet" and operation_name == "run_security_scan"
                 else ""
             )
@@ -247,6 +247,7 @@ def test_dotnet_json_vulnerability_output_changes_success_to_failure(
         stdout=(
             "warning {not-json}\n"
             + json.dumps({
+                "version": 1,
                 "projects": [{
                     "frameworks": [{
                         "topLevelPackages": [{

@@ -171,6 +171,11 @@ class ToolResult(StrictModel):
     # None preserves legacy stdout evidence. [] means report-aware execution
     # produced no passing cases; a zero exit code alone cannot fill coverage.
     test_cases: list[ExecutedTestCase] | None = None
+    confirmed_dependency_findings: bool = False
+    """A completed advisory scan produced findings, verified by its producer.
+
+    False for legacy results, installation failures, and incomplete scans.
+    """
     scans_dependencies: bool = False
     """Whether this result is about third-party dependencies, not our own code.
 

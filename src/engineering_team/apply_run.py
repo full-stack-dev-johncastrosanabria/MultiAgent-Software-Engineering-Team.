@@ -111,6 +111,11 @@ def open_project_quality(
     from engineering_team.stacks import profile_for
 
     targets = quality_targets_for(settings, project_root)
+    workspace_root = project_root.resolve()
+    for component in targets:
+        component_root = (project_root / component.path).resolve()
+        if not component_root.is_relative_to(workspace_root):
+            raise ValueError(f"component is outside the mounted workspace: {component_root}")
     container_run = settings.quality_runner == "container" and runner is None
     if container_run:
         return _ProjectInfrastructureQuality(
@@ -144,6 +149,7 @@ def open_project_quality(
         backends.append(
             QualityMCP(
                 component_root,
+                workspace_root=workspace_root,
                 timeout_seconds=timeout_seconds,
                 runner=runner,
                 settings=child_settings,
@@ -232,6 +238,7 @@ class _ProjectInfrastructureQuality:
                 })
                 backend = QualityMCP(
                     component_root,
+                    workspace_root=self.root,
                     timeout_seconds=self.timeout_seconds,
                     settings=child_settings,
                     profile=profile_for(component.stack),

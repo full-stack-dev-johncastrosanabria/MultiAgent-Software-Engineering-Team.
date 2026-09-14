@@ -309,6 +309,42 @@ def test_real_container_runs_a_command_and_sees_the_workspace(tmp_path: Path) ->
 
 
 @integration
+def test_real_component_can_read_a_sibling_but_not_outside_repository(tmp_path: Path) -> None:
+    from engineering_team.config import Settings
+    from engineering_team.mcp.quality import QualityMCP
+
+    # This test exercises the production runner factory, which requires a
+    # pinned image even when the locally selected integration image is a tag.
+    inspected = subprocess.run(
+        ["docker", "image", "inspect", INTEGRATION_IMAGE,
+         "--format", "{{range .RepoDigests}}{{println .}}{{end}}"],
+        capture_output=True, text=True, check=True,
+    )
+    digests = inspected.stdout.split()
+    if not digests:
+        pytest.skip("selected local integration image has no RepoDigest for production pinning")
+
+    repository = tmp_path / "repo"
+    component = repository / "app"
+    sibling = repository / "shared"
+    component.mkdir(parents=True)
+    sibling.mkdir()
+    (sibling / "api.txt").write_text("sibling contract\n", encoding="utf-8")
+    (tmp_path / "outside.txt").write_text("host only", encoding="utf-8")
+    quality = QualityMCP(component, workspace_root=repository, settings=Settings(
+        _env_file=None, quality_container_image=digests[0],
+    ))
+    try:
+        found = quality._runner.execute(_request(component, "cat", "../shared/api.txt"))
+        assert found.returncode == 0
+        assert found.stdout == "sibling contract\n"
+        hidden = quality._runner.execute(_request(component, "cat", "../../outside.txt"))
+        assert hidden.returncode != 0
+    finally:
+        quality.close()
+
+
+@integration
 def test_real_container_has_no_route_out_unless_asked(tmp_path: Path) -> None:
     """Routing, not interface listing.
 

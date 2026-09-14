@@ -106,9 +106,10 @@ def test_main_resolves_the_quality_root_beneath_the_component_path(
     component.mkdir()
     captured: dict[str, object] = {}
 
-    def spy(root, timeout, *, settings):
+    def spy(root, timeout, *, settings, workspace_root):
         captured["root"] = root
         captured["settings"] = settings
+        captured["workspace_root"] = workspace_root
         return _StubServer()
 
     monkeypatch.setattr(server_module, "build_quality_server", spy)
@@ -122,4 +123,5 @@ def test_main_resolves_the_quality_root_beneath_the_component_path(
     server_module.main()
 
     assert captured["root"] == component
+    assert captured["workspace_root"] == tmp_path
     assert captured["settings"].quality_stack == "jvm"

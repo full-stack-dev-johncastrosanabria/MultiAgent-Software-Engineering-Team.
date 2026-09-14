@@ -9,6 +9,57 @@ etapas verdes en los cuatro repositorios.** Los resultados conservados están en
 crudos permanecen locales e ignorados por Git. `delivered` expresa que se pidió
 entrega, no que se haya abierto un PR.
 
+La ampliación del 2026-09-13 incluye corregir los defectos y repetir los cuatro
+ciclos hasta verificar las seis etapas y los PR. Sustituye el alcance anterior
+que excluía F-7, F-8 y F-9. La tabla conserva la medición de `eaeee71`; las
+correcciones posteriores no convierten esos resultados en aprobados.
+
+### Correcciones posteriores a la medición
+
+F-7 conserva el directorio de comandos y el intérprete de cada componente,
+pero monta la raíz del repositorio para resolver referencias a módulos hermanos.
+Rechaza componentes externos, incluidos escapes por enlaces simbólicos, antes
+de crear infraestructura. F-9 informa únicamente claves de protocolo conocidas
+de un `KeyError`; los argumentos arbitrarios quedan redactados también en la
+cadena de excepciones.
+
+Verificación del 2026-09-13: 156 pruebas focales pasan con las variables de
+`Settings` y la carga de `.env` desactivadas solo dentro del proceso de prueba.
+Las 19 regresiones nuevas fallan cargando los módulos de `eaeee71` en memoria.
+Una prueba adicional con Docker y la imagen local de Python 3.13 confirma
+lectura de un módulo hermano y rechazo de lectura fuera del repositorio.
+La revisión de código y seguridad de F-7/F-9 no encontró problemas materiales.
+Esto verifica las correcciones acotadas; todavía no verifica los cuatro ciclos.
+
+El 2026-09-14, el runner corregido ejecutó los 71 tests originales de Banking
+en Docker: 71 pasan, sin fallos ni omisiones y sin modificar el repositorio
+objetivo. La restauración y compilación resolvieron sus proyectos hermanos.
+Una prueba separada del frontend original de FlaskApiProduct completó seis
+builds consecutivos con el montaje del repositorio; no reprodujo el fallo
+intermitente de Node. Ese muestreo no demuestra que el problema haya desaparecido.
+
+F-8 tiene una causa comprobada por separado: la agregación de resultados pierde
+`scans_dependencies`, que usa Security para clasificar vulnerabilidades de
+manifiestos sin cambios como riesgo previo visible. Esa política ya existe;
+no requiere desactivar el gate. Los fallos de tests de las corridas anteriores
+son independientes: `build_context` filtra esas herramientas del contexto de
+Security. La auditoría de vulnerabilidades Python sigue sin equivalencia con
+`npm audit`: su perfil ejecuta `pip check` y Ruff.
+
+La corrección conserva la procedencia en la agregación y en los reportes
+cacheados. La excepción para dependencias previas exige además evidencia
+estructurada de advisories confirmados; un fallo del instalador o un reporte
+incompleto no basta. Los hallazgos siguen visibles y el escáner conserva su
+resultado de fallo. La revisión independiente detectó y se corrigió un caso
+adicional de .NET que aceptaba errores internos con salida cero. Ocho regresiones
+reprodujeron el fallo antes del arreglo; después pasan las 73 pruebas focales.
+La suite integrada del 2026-09-14 terminó con 1038 pruebas aprobadas y 17 omitidas;
+esa ejecución comenzó antes del último ajuste de .NET, cubierto por las focales.
+La revisión independiente aprobó ese ajuste y verificó 48 pruebas adicionales.
+Los cuatro ciclos nuevos con entrega todavía están pendientes.
+
+### Medición conservada
+
 Corrección fechada del cierre del ledger: `delivery.passed=true` junto con
 `skipped=true` significa entrega **omitida**. No prueba delivery. Asimismo,
 `infrastructure` verde en seco no prueba un PR de infraestructura ni su apilado.
@@ -44,7 +95,8 @@ comprobación usa las rutas reales, no solamente `/tmp`.
 
 Los identificadores F-7, F-8 y F-9 se reutilizaron en el ledger. Aquí designan
 los tres hallazgos de su último cierre; las variantes anteriores se conservan
-con un sufijo descriptivo. Las referencias de línea corresponden a la base
+con un sufijo descriptivo. La tabla describe la medición original; los avances
+vigentes están en la sección de correcciones anterior. Las referencias de línea corresponden a la base
 `8baf9af` más el arreglo de redacción que ya estaba preparado al reanudar.
 
 | Hallazgo | Etapa y repos afectados | Adjudicación |
@@ -83,8 +135,8 @@ cubren éxito, rechazo, timeout y una rama movida por otro actor.
 No hay PR funcional de esta campaña verificado ni apilado funcional sobre
 infraestructura, y tampoco una verificación por diff de PR que demuestre la
 conservación de los tests originales. Los PR anteriores de FlaskApiProduct no
-son evidencia de estas corridas. F-7, F-8 y F-9 quedan fuera del alcance de
-arreglos, conforme al ruling del operador.
+son evidencia de estas corridas. La corrección de F-7, F-8 y F-9 está incluida
+en la ampliación posterior; la aceptación sigue pendiente de nuevas corridas.
 
 Este trabajo no cambia la situación de `VolumeWorkspace` descrita abajo:
 el CLI clona a un temporal del host; no valida el clon dentro de volumen ni
