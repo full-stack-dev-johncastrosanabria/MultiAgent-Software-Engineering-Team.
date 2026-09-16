@@ -31,6 +31,7 @@ from engineering_team.interpreter import (
 from engineering_team.mcp.command import CommandRequest, CommandRunner
 from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.test_evidence import collect_test_cases, snapshot_reports
+from engineering_team.mcp.test_scope import normalized_changes, undeclared_unchanged_suite
 from engineering_team.stacks import INTERPRETER, StackProfile, profile_for
 
 _DISTRIBUTION_NAME = "autonomous-engineering-team"
@@ -1519,11 +1520,22 @@ class CompositeQuality:
 
     transport = "composite"
 
-    def __init__(self, backends: list[Any]) -> None:
+    def __init__(self, backends: list[Any], *, refresh: Callable[[], list[Any]] | None = None) -> None:
         if not backends:
             raise ValueError("CompositeQuality requires at least one backend")
         self._backends = list(backends)
+        self._refresh = refresh
         self.last_component_results: list[ToolResult] = []
+        self._changed_paths: tuple[str, ...] | None = None
+        self._last_tests: ToolResult | None = None
+
+    def set_changed_paths(self, paths: list[str]) -> None:
+        """Require validation for every component touched by the implementation."""
+        self._changed_paths = normalized_changes(paths)
+
+    def refresh_components(self) -> None:
+        if self._refresh is not None:
+            self._backends = list(self._refresh())
 
     def __enter__(self) -> CompositeQuality:
         return self
@@ -1587,16 +1599,40 @@ class CompositeQuality:
         )
 
     def run_tests(self, role: AgentRole, paths: list[str] | None = None) -> ToolResult:
+        self.refresh_components()
         results: list[ToolResult] = []
+        omissions: list[str] = []
         for backend in self._backends:
+            reason = (
+                undeclared_unchanged_suite(backend, self._changed_paths)
+                if role is AgentRole.TESTING and (not paths or paths == ["-v"]) else None
+            )
+            if reason:
+                omissions.append(reason)
+                continue
             # Pytest path args (`-v`, node ids) belong to the python profile.
             # Forwarding them would turn `mvn test` into `mvn test -v`.
             extra = paths if getattr(backend, "profile", None) is not None and backend.profile.name == "python" else None
             results.append(backend.run_tests(role, extra))
         self.last_component_results = results
-        return self._aggregate("run_tests", role, results)
+        if results:
+            result = self._aggregate("run_tests", role, results)
+        else:
+            result = ToolResult(
+                tool_name="run_tests", allowed_role=role, status=ToolStatus.UNAVAILABLE,
+                input_summary="components=0", output_summary="no test suite executed",
+                duration_ms=0, error="no declared test suite is available",
+            )
+        if omissions:
+            result = result.model_copy(update={
+                "output_summary": (result.output_summary + "\nNot executed: " + "; ".join(omissions))[-4000:],
+            })
+        self._last_tests = result
+        return result
 
     def get_test_results(self, role: AgentRole) -> ToolResult:
+        if role is AgentRole.TESTING and self._last_tests is not None:
+            return self._last_tests.model_copy(update={"tool_name": "get_test_results"})
         return self._aggregate(
             "get_test_results",
             role,
@@ -1604,6 +1640,7 @@ class CompositeQuality:
         )
 
     def run_build(self, role: AgentRole) -> ToolResult:
+        self.refresh_components()
         return self._aggregate(
             "run_build",
             role,
@@ -1618,6 +1655,7 @@ class CompositeQuality:
         )
 
     def run_linter(self, role: AgentRole) -> ToolResult:
+        self.refresh_components()
         return self._aggregate(
             "run_linter",
             role,
@@ -1625,6 +1663,7 @@ class CompositeQuality:
         )
 
     def scan_dependencies(self, role: AgentRole) -> ToolResult:
+        self.refresh_components()
         return self._aggregate(
             "scan_dependencies",
             role,
@@ -1632,6 +1671,7 @@ class CompositeQuality:
         )
 
     def run_security_scan(self, role: AgentRole) -> ToolResult:
+        self.refresh_components()
         return self._aggregate(
             "run_security_scan",
             role,

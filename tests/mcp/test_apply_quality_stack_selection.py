@@ -126,7 +126,9 @@ def test_multi_maven_and_node_never_invokes_pytest(tmp_path: Path) -> None:
     (tmp_path / "payment-ms").mkdir()
     (tmp_path / "payment-ms" / "pom.xml").write_text("<project/>", encoding="utf-8")
     (tmp_path / "frontend").mkdir()
-    (tmp_path / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "frontend" / "package.json").write_text(
+        '{"scripts":{"test":"vitest run"}}', encoding="utf-8"
+    )
     settings = _settings_without_quality_override()
     recorder = _Recorder(tmp_path)
     handle = open_project_quality(

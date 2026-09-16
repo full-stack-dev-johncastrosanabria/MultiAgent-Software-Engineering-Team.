@@ -202,10 +202,8 @@ class _ProjectInfrastructureQuality:
         self._closed = False
 
     def __enter__(self):
-        from engineering_team.mcp.container import ContainerRunner
-        from engineering_team.mcp.quality import CompositeQuality, QualityMCP
+        from engineering_team.mcp.quality import CompositeQuality
         from engineering_team.services import ServiceStack, ServiceStartupError
-        from engineering_team.stacks import profile_for
 
         try:
             # The sweep runs before anything is started: what a crashed run left
@@ -231,49 +229,61 @@ class _ProjectInfrastructureQuality:
                 )
                 self.daemon.up(time.monotonic() + self.timeout_seconds)
             for component in self.targets:
-                component_root = self.root / component.path
-                child_settings = self.settings.model_copy(update={
-                    "quality_stack": component.stack,
-                    "quality_component_path": component.path,
-                })
-                backend = QualityMCP(
-                    component_root,
-                    workspace_root=self.root,
-                    timeout_seconds=self.timeout_seconds,
-                    settings=child_settings,
-                    profile=profile_for(component.stack),
-                    component=component.path or ("." if len(self.targets) > 1 else ""),
-                    services=self.services,
-                    run_id=self.run_id,
-                    project=self.project,
-                )
-                self.backends.append(backend)
-                if self.daemon is not None:
-                    if not isinstance(backend._runner, ContainerRunner):
-                        raise RuntimeError(
-                            "QUALITY_RUN_DAEMON_IMAGE requires the container runner"
-                        )
-                    backend._runner.daemon = self.daemon
-                    backend._runner.owns_daemon = False
-                backend._services_started = True
-                backend._runner.network = self.services.network
-                backend._runner.networks = getattr(
-                    self.services,
-                    "networks",
-                    (self.services.network,) if self.services.network else (),
-                )
-                backend.service_environment = self.services.environment_for_component(
-                    component.stack, component_root
-                )
-            self.quality = (
-                self.backends[0] if len(self.backends) == 1 else CompositeQuality(self.backends)
-            )
+                self._add_component(component)
+            # Keep a stable handle even when a new test project is authored.
+            self.quality = CompositeQuality(self.backends, refresh=self.refresh_components)
             return self.quality
         except BaseException as exc:
             self.close()
             if not isinstance(exc, Exception):
                 raise
             raise ServiceStartupError(f"INFRASTRUCTURE_ERROR: {exc}") from exc
+
+    def _add_component(self, component):
+        from engineering_team.mcp.container import ContainerRunner
+        from engineering_team.mcp.quality import QualityMCP
+        from engineering_team.stacks import profile_for
+
+        component_root = (self.root / component.path).resolve()
+        if not component_root.is_relative_to(self.root.resolve()):
+            raise ValueError(f"component is outside the mounted workspace: {component_root}")
+        child_settings = self.settings.model_copy(update={
+            "quality_stack": component.stack,
+            "quality_component_path": component.path,
+        })
+        backend = QualityMCP(
+            component_root, workspace_root=self.root,
+            timeout_seconds=self.timeout_seconds, settings=child_settings,
+            profile=profile_for(component.stack), component=component.path or ".",
+            services=self.services, run_id=self.run_id, project=self.project,
+        )
+        self.backends.append(backend)
+        if self.daemon is not None:
+            if not isinstance(backend._runner, ContainerRunner):
+                raise RuntimeError("QUALITY_RUN_DAEMON_IMAGE requires the container runner")
+            backend._runner.daemon = self.daemon
+            backend._runner.owns_daemon = False
+        backend._services_started = True
+        backend._runner.network = self.services.network
+        backend._runner.networks = getattr(
+            self.services, "networks",
+            (self.services.network,) if self.services.network else (),
+        )
+        backend.service_environment = self.services.environment_for_component(
+            component.stack, component_root
+        )
+
+    def refresh_components(self):
+        """Include newly authored components without removing any original suite."""
+        if self._closed:
+            raise RuntimeError("quality infrastructure is closed")
+        known = {(backend.root, backend.profile.name) for backend in self.backends}
+        for component in quality_targets_for(self.settings, self.root):
+            key = ((self.root / component.path).resolve(), component.stack)
+            if key not in known:
+                self._add_component(component)
+                known.add(key)
+        return self.backends
 
     def close(self):
         if self._closed:
@@ -420,6 +430,9 @@ def baseline_tests(quality_mcp: Any) -> tuple[str, ...]:
     from engineering_team.contracts.enums import AgentRole
 
     try:
+        set_changed_paths = getattr(quality_mcp, "set_changed_paths", None)
+        if callable(set_changed_paths):
+            set_changed_paths([])
         result = quality_mcp.run_tests(AgentRole.TESTING, _baseline_extra(quality_mcp))
     except (OSError, RuntimeError, TimeoutError, ValueError):
         # A baseline is a convenience, never a precondition: a project whose
