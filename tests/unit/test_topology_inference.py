@@ -426,3 +426,35 @@ def test_mysql_override_uses_the_credentials_the_derived_service_starts_with() -
     (name, connection), = environment_overrides((dependency,), "dotnet")
     assert name == "ConnectionStrings__DefaultConnection"
     assert "user=root;" in connection and "password=aset;" in connection
+
+
+def test_spring_gets_the_password_the_derived_mysql_starts_with() -> None:
+    """spring-demo declares `username: ${DB_USERNAME:root}` and an empty
+    `password: ${DB_PASSWORD:}`. The derived service starts with
+    MYSQL_ROOT_PASSWORD=aset, the override passed no password, and the original
+    context test failed with "Access denied for user 'root' (using password: NO)"."""
+    dependency = Dependency("mysql", 3306, "InterviewCleanApiDb", "root", "")
+    assert "MYSQL_ROOT_PASSWORD: aset" in derive_compose((dependency,), mode="run")
+    overrides = dict(environment_overrides((dependency,), "jvm"))
+    assert overrides["SPRING_DATASOURCE_USERNAME"] == "root"
+    assert overrides["SPRING_DATASOURCE_PASSWORD"] == "aset"
+
+
+def test_a_non_root_mysql_user_connects_as_the_only_account_the_service_creates() -> None:
+    dependency = Dependency("mysql", 3306, "shop", "app", "secret")
+    compose = derive_compose((dependency,), mode="run")
+    assert "MYSQL_ROOT_PASSWORD: secret" in compose and "MYSQL_USER" not in compose
+    jvm = dict(environment_overrides((dependency,), "jvm"))
+    assert (jvm["SPRING_DATASOURCE_USERNAME"], jvm["SPRING_DATASOURCE_PASSWORD"]) == ("root", "secret")
+    (_, connection), = environment_overrides((dependency,), "dotnet")
+    assert "user=root;" in connection and "password=secret;" in connection
+
+
+def test_postgres_without_declared_credentials_uses_the_derived_defaults() -> None:
+    dependency = Dependency("postgres", 5432, "orders", "", "")
+    compose = derive_compose((dependency,), mode="run")
+    assert "POSTGRES_USER: aset" in compose and "POSTGRES_PASSWORD: aset" in compose
+    jvm = dict(environment_overrides((dependency,), "jvm"))
+    assert (jvm["SPRING_DATASOURCE_USERNAME"], jvm["SPRING_DATASOURCE_PASSWORD"]) == ("aset", "aset")
+    (_, connection), = environment_overrides((dependency,), "dotnet")
+    assert "Username=aset;" in connection and "Password=aset" in connection
