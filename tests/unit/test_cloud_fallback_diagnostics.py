@@ -116,3 +116,32 @@ def test_sensitive_keyerror_does_not_leak_when_later_provider_fails() -> None:
     rendered = "".join(traceback.format_exception(raised.value))
     assert "KeyError: 'private-provider-value'" not in rendered
     assert [attempt.provider for attempt in runtime.attempts] == ["groq", "google"]
+
+
+@pytest.mark.parametrize(("code", "category"), [
+    (502, "provider_unavailable"), (429, "rate_limit"), (400, "request_rejected"),
+])
+def test_provider_error_in_a_success_body_is_reported_by_its_code_only(code, category) -> None:
+    """OpenRouter relays upstream failures as HTTP 200 with an error object.
+
+    Observed 2026-09-16: 'Upstream error from Nvidia: Service temporarily
+    overloaded', code 502, reported as a missing 'choices' field.
+    """
+    body = {"id": "gen-1", "error": {
+        "message": "private-provider-value overloaded", "code": code,
+        "metadata": {"raw": "private-provider-value"},
+    }}
+    with httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json=body)
+    )) as client:
+        settings = Settings(
+            cloud_enabled=True, local_first=False, gemini_api_key=None, gemini_api_key_2=None,
+            mistral_api_key=None, groq_api_key=None, open_router_api_key="fixture-key",
+            cloud_chain_product="openrouter:nvidia/nemotron-3-super-120b-a12b:free",
+        )
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        with pytest.raises(RuntimeError, match=rf"{category} \(provider error {code}\)") as raised:
+            runtime.invoke_artifact(AgentRole.PRODUCT, _envelope(), _candidate())
+    assert runtime.attempts[-1].error_category == category
+    assert "private-provider-value" not in str(raised.value)
+    assert "choices" not in str(raised.value)

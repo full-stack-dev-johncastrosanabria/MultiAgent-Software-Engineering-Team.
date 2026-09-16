@@ -110,6 +110,17 @@ class _IneffectiveRemediation(ValueError):
     pass
 
 
+class _ProviderReportedError(ValueError):
+    """An upstream failure relayed inside a success response.
+
+    Only the numeric code is kept: the message and metadata are provider text.
+    """
+
+    def __init__(self, code: int) -> None:
+        super().__init__(code)
+        self.code = code
+
+
 def _missing_response_field_detail(exc: KeyError) -> str:
     # Only protocol field names are safe to disclose. KeyError may originate
     # inside a client/transport and carry arbitrary data rather than a field.
@@ -407,6 +418,9 @@ class CloudModelRuntime:
                 )
                 response.raise_for_status()
                 payload = response.json()
+                relayed = payload.get("error") if isinstance(payload, dict) else None
+                if "choices" not in payload and isinstance(relayed, dict) and type(relayed.get("code")) is int:
+                    raise _ProviderReportedError(relayed["code"])
                 if payload["choices"][0].get("finish_reason") == "length":
                     raise _IncompleteOutput("model output reached its token limit")
                 raw = payload["choices"][0]["message"]["content"]
@@ -469,7 +483,12 @@ class CloudModelRuntime:
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
             contradiction = isinstance(exc, _GovernedContradiction)
             ineffective = isinstance(exc, _IneffectiveRemediation)
+            relayed_category = (
+                _http_category(exc.code)[0] if isinstance(exc, _ProviderReportedError) else None
+            )
             detail = (
+                f"{relayed_category} (provider error {exc.code})"
+                if relayed_category else
                 f"governed fields differ: {', '.join(exc.fields)}"
                 if contradiction else
                 "unchanged developer remediation"
@@ -492,11 +511,13 @@ class CloudModelRuntime:
                 degraded=True,
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 structured_output_success=False, error=error,
-                error_category=("governed_contradiction" if contradiction else
-                                "ineffective_remediation" if ineffective else
-                                "incomplete_output" if isinstance(exc, _IncompleteOutput) else
-                                "timeout" if isinstance(exc, httpx.TimeoutException) else
-                                "schema_validation" if isinstance(exc, ValidationError) else "invalid_response"),
+                error_category=relayed_category or (
+                    "governed_contradiction" if contradiction else
+                    "ineffective_remediation" if ineffective else
+                    "incomplete_output" if isinstance(exc, _IncompleteOutput) else
+                    "timeout" if isinstance(exc, httpx.TimeoutException) else
+                    "schema_validation" if isinstance(exc, ValidationError) else "invalid_response"
+                ),
                 retryable=True,
             )
             self.attempts.append(info)
