@@ -160,6 +160,28 @@ def test_only_the_workspace_and_the_environment_are_mounted(tmp_path: Path) -> N
     assert not any("docker.sock" in m for m in mounts)
 
 
+def test_repository_metadata_is_mounted_read_only(tmp_path: Path) -> None:
+    """Delivery runs git on the host; code in the container must not plant hooks
+    or configuration (core.sshCommand, credential helpers) in the checkout."""
+    (tmp_path / ".git" / "hooks").mkdir(parents=True)
+    command = _runner(tmp_path)._container_command("c1", _request(tmp_path, "true"))
+    mounts = [command[i + 1] for i, a in enumerate(command) if a == "--mount"]
+    assert (
+        f"type=bind,source={tmp_path / '.git'},target={WORKSPACE_MOUNT / '.git'},readonly"
+        in mounts
+    )
+
+
+def test_a_symlinked_repository_metadata_path_is_not_mounted(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".git").symlink_to(outside, target_is_directory=True)
+    command = _runner(workspace)._container_command("c1", _request(workspace, "true"))
+    assert not any(str(outside) in arg for arg in command)
+
+
 def test_the_container_writes_as_the_host_user(tmp_path: Path) -> None:
     """Otherwise the run workspace ends up owned by root."""
     command = _runner(tmp_path)._container_command("c1", _request(tmp_path, "true"))
@@ -342,6 +364,26 @@ def test_real_component_can_read_a_sibling_but_not_outside_repository(tmp_path: 
         assert hidden.returncode != 0
     finally:
         quality.close()
+
+
+@integration
+def test_real_container_cannot_plant_git_hooks_in_the_checkout(tmp_path: Path) -> None:
+    (tmp_path / ".git" / "hooks").mkdir(parents=True)
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    runner = ContainerRunner(tmp_path, image=INTEGRATION_IMAGE, allow_unpinned_image=True)
+    try:
+        head = runner.execute(_request(tmp_path, "cat", ".git/HEAD"))
+        assert head.returncode == 0 and "refs/heads/main" in head.stdout
+        planted = runner.execute(_request(
+            tmp_path, "sh", "-c", "echo 'touch /tmp/owned' > .git/hooks/pre-push",
+        ))
+        assert planted.returncode != 0
+        source = runner.execute(_request(tmp_path, "sh", "-c", "echo ok > source.txt"))
+        assert source.returncode == 0
+    finally:
+        runner.close()
+    assert not (tmp_path / ".git" / "hooks" / "pre-push").exists()
+    assert (tmp_path / "source.txt").read_text(encoding="utf-8") == "ok\n"
 
 
 @integration

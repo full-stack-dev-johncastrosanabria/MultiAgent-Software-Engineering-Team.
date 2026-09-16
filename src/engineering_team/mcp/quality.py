@@ -32,6 +32,7 @@ from engineering_team.mcp.command import CommandRequest, CommandRunner
 from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.test_evidence import collect_test_cases, snapshot_reports
 from engineering_team.mcp.test_scope import normalized_changes, undeclared_unchanged_suite
+from engineering_team.mcp.workspace_runner import NativeWorkspaceRunner
 from engineering_team.stacks import INTERPRETER, StackProfile, profile_for
 
 _DISTRIBUTION_NAME = "autonomous-engineering-team"
@@ -100,7 +101,11 @@ def build_runner(
                       run_id=run_id or None, project=project)
             if settings.quality_run_daemon_image else None
         )
-        return ContainerRunner(
+        # npm's concurrent extraction fails intermittently on a Docker Desktop
+        # bind mount (ENOTDIR/ENOENT on mkdir); node toolchains get a native
+        # volume with checked deltas instead. Other stacks keep the bind mount.
+        runner_type = NativeWorkspaceRunner if settings.quality_stack == "node" else ContainerRunner
+        return runner_type(
             workspace, image=image, daemon=daemon, owns_daemon=daemon is not None,
             run_id=run_id, project=project,
         )

@@ -260,6 +260,7 @@ class ContainerRunner:
             f"type=bind,source={self.workspace},target={WORKSPACE_MOUNT}",
             "--mount",
             f"type=volume,source={self._volume},target={ENVIRONMENT_MOUNT}",
+            *self._metadata_mount(),
             "--workdir",
             str(self._container_path(request.cwd)),
         ]
@@ -282,6 +283,22 @@ class ContainerRunner:
         args.append(self.image)
         args.extend(request.args)
         return args
+
+    def _metadata_mount(self) -> list[str]:
+        """Repository metadata, visible but never writable from inside.
+
+        Delivery runs git on the host in this same checkout. A hook or a
+        `core.sshCommand` written by a dependency's install script would run
+        there, outside the container boundary. A symlinked `.git` is not
+        followed to wherever it points.
+        """
+        metadata = Path(self.workspace) / ".git"
+        if metadata.is_symlink() or not (metadata.is_dir() or metadata.is_file()):
+            return []
+        return [
+            "--mount",
+            f"type=bind,source={metadata},target={WORKSPACE_MOUNT / '.git'},readonly",
+        ]
 
     def _primary_network(self, request: CommandRequest) -> str:
         """The network the container starts on.
