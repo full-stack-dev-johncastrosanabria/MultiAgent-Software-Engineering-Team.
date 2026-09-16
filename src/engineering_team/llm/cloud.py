@@ -28,7 +28,15 @@ _OPENAI_COMPATIBLE = {
     "groq": ("https://api.groq.com/openai/v1/chat/completions", "groq_api_key"),
     "mistral": ("https://api.mistral.ai/v1/chat/completions", "mistral_api_key"),
     "openrouter": ("https://openrouter.ai/api/v1/chat/completions", "open_router_api_key"),
+    # Gateways probed 2026-09-16 with this runtime's JSON request shape and a
+    # 22k-token prompt; endpoints taken from each provider's own documentation.
+    "xkiro": ("https://api.xkiro.com/v1/chat/completions", "x_kiro_api_key"),
+    "vyce": ("https://vyceai.com/v1/chat/completions", "vyce_ai_api_key"),
+    "tokenforge": ("https://tokenforge.ai.studio/v1/chat/completions", "token_forge_api_key"),
 }
+# Gateway defaults for output length are provider-specific and can truncate a
+# Developer's full-file content; state the budget explicitly, as for OpenRouter.
+_EXPLICIT_OUTPUT_BUDGET = frozenset({"xkiro", "vyce", "tokenforge"})
 
 # Both logical providers use Google's official API. Keeping the second route
 # distinct gives its credential and cooldown independent state while ensuring
@@ -43,16 +51,26 @@ _GOOGLE_CREDENTIALS = {
 # fallback always crosses providers. Google quotas can be model scoped: a 3.6 quota
 # failure must not disable a working 3.5 fallback. Testing/Reviewer are deterministic.
 _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
+    # xKiro and Vyce entries were probed on 2026-09-16 with this runtime's JSON
+    # request shape and a 22-29k-token prompt, the day Mistral answered 429/503,
+    # OpenRouter's Nemotron relayed "overloaded" and Gemini 3.5 answered 503 on
+    # both keys. xKiro routes each model across its own upstreams at no cost;
+    # Vyce draws on prepaid credit, so it comes after every free option.
     AgentRole.PRODUCT: (
         ("groq", "openai/gpt-oss-120b"),
         ("mistral", "mistral-small-latest"),
+        ("xkiro", "qwen/qwen3.8-max:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("vyce", "deepseek-v4-flash"),
         ("google", "gemini-3.5-flash"),
     ),
     AgentRole.ARCHITECTURE: (
         ("mistral", "mistral-medium-latest"),
         ("groq", "openai/gpt-oss-120b"),
+        ("xkiro", "mistralai/mistral-medium-3.5"),
+        ("xkiro", "deepseek/deepseek-v4-pro"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("vyce", "deepseek-v4.1"),
         ("google", "gemini-3.5-flash"),
     ),
     # Codestral and Small passed the isolated recovery acceptance test. Medium was
@@ -62,13 +80,19 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
     AgentRole.DEVELOPER: (
         ("mistral", "codestral-latest"),
         ("groq", "openai/gpt-oss-120b"),
+        ("xkiro", "mistralai/codestral-2508"),
+        ("xkiro", "qwen/qwen3-coder-plus:free"),
         ("mistral", "mistral-small-latest"),
+        ("vyce", "deepseek-v4.1"),
         ("google", "gemini-3.5-flash"),
     ),
     AgentRole.SECURITY: (
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
         ("groq", "openai/gpt-oss-120b"),
+        ("xkiro", "deepseek/deepseek-v4-pro"),
         ("mistral", "mistral-small-latest"),
+        ("xkiro", "qwen/qwen3.8-max:free"),
+        ("vyce", "deepseek-v4-flash"),
         ("google", "gemini-3.5-flash"),
     ),
 }
@@ -416,7 +440,9 @@ class CloudModelRuntime:
                     "require_parameters": True, "max_price": {"prompt": 0, "completion": 0},
                 }, "max_tokens": 16000 if role is AgentRole.DEVELOPER else 4096,
                     "reasoning": {"effort": "low", "exclude": True},
-                } if selection.provider == "openrouter" else {})
+                } if selection.provider == "openrouter" else {
+                    "max_tokens": 16000 if role is AgentRole.DEVELOPER else 4096,
+                } if selection.provider in _EXPLICIT_OUTPUT_BUDGET else {})
                 response = client.post(
                     endpoint,
                     headers={

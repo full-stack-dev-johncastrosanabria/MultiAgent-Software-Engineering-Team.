@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     mistral_api_key: str | None = None
     open_router_api_key: str | None = None
+    # OpenAI-compatible gateways, each bound to its own endpoint in llm/cloud.py.
+    x_kiro_api_key: str | None = None
+    vyce_ai_api_key: str | None = None
+    token_forge_api_key: str | None = None
     # Per-role chain override: "provider:model,provider:model". Empty keeps the
     # defaults in llm/cloud.py, which spread primaries over three providers.
     cloud_chain_product: str = ""

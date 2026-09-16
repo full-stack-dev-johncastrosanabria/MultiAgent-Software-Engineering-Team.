@@ -261,3 +261,18 @@ def test_cloud_provider_outage_is_normalized_without_secret_exposure() -> None:
 
     assert "never-print-this" not in str(error.value)
     assert runtime.budget.run_count == 1
+
+
+def test_gateway_fallbacks_are_probed_models_with_free_before_paid() -> None:
+    """Probed 2026-09-16 with this runtime's JSON request shape and a 22-29k-token
+    prompt: every xKiro and Vyce model below answered valid JSON; TokenForge
+    answered 503 platform_maintenance for every model, so it is in no chain."""
+    router = CloudRouter(Settings(_env_file=None))
+    for role in (AgentRole.PRODUCT, AgentRole.ARCHITECTURE, AgentRole.DEVELOPER, AgentRole.SECURITY):
+        providers = [item.provider for item in router.selection_chain(role)]
+        assert "xkiro" in providers and "vyce" in providers, role
+        # xKiro's models here cost nothing; Vyce draws on prepaid credit.
+        assert providers.index("xkiro") < providers.index("vyce"), role
+        assert "tokenforge" not in providers, role
+    developer = [(i.provider, i.model) for i in router.selection_chain(AgentRole.DEVELOPER)]
+    assert developer.index(("xkiro", "mistralai/codestral-2508")) == 2

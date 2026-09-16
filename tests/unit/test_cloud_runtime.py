@@ -491,3 +491,45 @@ def test_a_cooldown_beyond_the_role_deadline_still_fails_at_once(status, retry_a
         with pytest.raises(RuntimeError, match="disabled, missing credential, or budget"):
             runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
     assert time.monotonic() - started < 1
+
+
+@pytest.mark.parametrize("provider, model, key, host", [
+    ("xkiro", "mistralai/codestral-2508", "x_kiro_api_key", "api.xkiro.com"),
+    ("vyce", "deepseek-v4-flash", "vyce_ai_api_key", "vyceai.com"),
+    ("tokenforge", "deepseek-v4-pro", "token_forge_api_key", "tokenforge.ai.studio"),
+])
+def test_gateway_providers_use_their_own_endpoint_and_credential(provider, model, key, host):
+    """Probed 2026-09-16 with the runtime's JSON request shape and a 22k-token prompt."""
+    import json
+
+    settings = Settings(_env_file=None, cloud_enabled=True, cloud_chain_product=f"{provider}:{model}",
+                        **{key: f"{provider}-fixture-key"})
+    seen = []
+
+    def respond(request):
+        seen.append((request.url.host, request.url.path, request.headers["Authorization"]))
+        body = json.loads(request.content)
+        assert body["model"] == model
+        assert body["response_format"] == {"type": "json_object"}
+        return httpx.Response(200, json={"choices": [{"message": {
+            "content": product_candidate().model_dump_json()}, "finish_reason": "stop"}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        artifact, info = runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+    assert artifact == product_candidate()
+    assert info.provider == provider
+    assert seen == [(host, "/v1/chat/completions", f"Bearer {provider}-fixture-key")]
+
+
+def test_a_gateway_without_its_credential_is_skipped():
+    settings = Settings(_env_file=None, cloud_enabled=True, mistral_api_key="fixture",
+                        x_kiro_api_key=None,
+                        cloud_chain_product="xkiro:mistralai/codestral-2508,mistral:mistral-small-latest")
+    hosts = []
+    with httpx.Client(transport=httpx.MockTransport(lambda request: hosts.append(request.url.host) or
+            httpx.Response(200, json={"choices": [{"message": {
+                "content": product_candidate().model_dump_json()}}]}))) as client:
+        CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
+            AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+    assert hosts == ["api.mistral.ai"]

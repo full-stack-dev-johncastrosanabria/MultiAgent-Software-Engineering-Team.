@@ -10,6 +10,7 @@ _SENSITIVE_KEYS = {
     "api_key", "apikey", "secret", "secret_key", "access_token", "password",
     "gemini_api_key", "gemini_api_key_2", "groq_api_key", "langfuse_secret_key",
     "mistral_api_key", "open_router_api_key", "openrouter_api_key",
+    "x_kiro_api_key", "vyce_ai_api_key", "token_forge_api_key",
 }
 
 
@@ -176,6 +177,9 @@ _GITHUB_TOKEN = re.compile(
     r"|\bgithub_pat_[A-Za-z0-9_]{20,}\b"
 )
 _ANTHROPIC_KEY = re.compile(r"\bsk-ant-[A-Za-z0-9\-_]{20,}\b")
+# OpenAI-style gateway keys (`sk-...`, xKiro's `sk-xt-...`) and TokenForge's
+# `tf_live_...`: a rejected-key message may echo them back verbatim.
+_GATEWAY_KEY = re.compile(r"\bsk-(?:xt-)?[A-Za-z0-9]{32,}\b|\btf_(?:live|test)_[A-Za-z0-9]{32,}\b")
 _AWS_ACCESS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
 # `scheme://user[:pass]@host/...` -- the password half is optional on purpose,
 # because `git@github.com` and `https://user@host` carry no password yet are
@@ -234,6 +238,7 @@ def redact_secrets(value: str, known_values: Iterable[str] = ()) -> str:
     # result is idempotent, not because the passes stay clear of each other.
     redacted = _GITHUB_TOKEN.sub("[REDACTED]", redacted)
     redacted = _ANTHROPIC_KEY.sub("[REDACTED]", redacted)
+    redacted = _GATEWAY_KEY.sub("[REDACTED]", redacted)
     redacted = _AWS_ACCESS_KEY.sub("[REDACTED]", redacted)
     redacted = _URL_CREDENTIAL.sub(r"\g<scheme>[REDACTED]@", redacted)
 

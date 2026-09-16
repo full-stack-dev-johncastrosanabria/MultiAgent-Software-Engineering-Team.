@@ -98,7 +98,10 @@ def test_cloud_context_rejects_env_content() -> None:
         require_safe_cloud_context({"file": ".env", "content": "KEY=value"})
 
 
-@pytest.mark.parametrize("key", ["mistral_api_key", "open_router_api_key", "openrouter_api_key"])
+@pytest.mark.parametrize("key", [
+    "mistral_api_key", "open_router_api_key", "openrouter_api_key",
+    "vyce_ai_api_key", "token_forge_api_key", "x_kiro_api_key",
+])
 def test_cloud_context_rejects_new_provider_credentials(key):
     with pytest.raises(ValueError, match="sensitive"):
         require_safe_cloud_context({key: "credential-value"})
@@ -304,3 +307,12 @@ def test_a_failed_push_message_with_an_embedded_token_is_redacted() -> None:
     assert "could not read Password" in redacted
     assert "github.com" in redacted
     assert "terminal prompts disabled" in redacted
+
+
+@pytest.mark.parametrize("token", [
+    "sk-" + "a1B2" * 12,
+    "sk-xt-" + "Zz09" * 12,
+    "tf_live_" + "q7W3" * 11,
+])
+def test_gateway_keys_are_redacted_by_shape(token):
+    assert token not in redact_secrets(f"provider said: invalid key {token} rejected")
