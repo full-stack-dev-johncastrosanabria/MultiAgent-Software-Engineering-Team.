@@ -1,5 +1,7 @@
 """Bounded cloud contingency routing; not normal model selection."""
 
+import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -59,8 +61,9 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
     # Gemini 3.5 answered 503 on both keys. xKiro's deepseek-v4.1-flash passed all
     # four tasks; deepseek-v4-pro passed Security 3/3 and Architecture 2/2. xKiro's
     # free tier is 500k tokens a day per account, so it follows the existing
-    # primary and first fallback. Vyce's deepseek-v4-flash passed Product and
-    # Security only, and draws on credit, so it follows every free option there.
+    # primary and first fallback. Vyce ignores response_format and fences its
+    # JSON; once one fenced block was accepted, deepseek-v4-flash passed Product
+    # and Security and agnes-3.0-flash passed Developer authoring (not planning).
     AgentRole.PRODUCT: (
         ("groq", "openai/gpt-oss-120b"),
         ("mistral", "mistral-small-latest"),
@@ -87,6 +90,7 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
         ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         ("xkiro", "qwen/qwen3-coder-plus:free"),
         ("mistral", "mistral-small-latest"),
+        ("vyce", "agnes-3.0-flash"),
         ("google", "gemini-3.5-flash"),
     ),
     AgentRole.SECURITY: (
@@ -120,6 +124,25 @@ _CLOUD_MAP = {
 }
 _CLOUD_MAP[AgentRole.TESTING] = ("groq", "openai/gpt-oss-20b")
 _CLOUD_MAP[AgentRole.REVIEWER] = ("groq", "openai/gpt-oss-120b")
+
+
+_FENCED_JSON = re.compile(r"```(?:json)?[ \t]*\n(.*?)\n[ \t]*```", re.DOTALL)
+
+
+def _json_payload(raw: str) -> str:
+    """The answer itself, or its one fenced JSON block.
+
+    Some gateways ignore response_format and wrap the object in a fence, with or
+    without prose around it. Exactly one block is unambiguous; anything else is
+    returned unchanged and fails validation as before. Schema and governed facts
+    are validated after this either way.
+    """
+    try:
+        json.loads(raw)
+        return raw
+    except ValueError:
+        blocks = _FENCED_JSON.findall(raw)
+        return blocks[0] if len(blocks) == 1 else raw
 
 
 class _GovernedContradiction(ValueError):
@@ -489,7 +512,7 @@ class CloudModelRuntime:
                     raise _IncompleteOutput("model output reached its token limit")
                 raw = payload["choices"][0]["message"]["content"]
                 usage = payload.get("usage")
-            artifact = type(candidate).model_validate_json(raw)
+            artifact = type(candidate).model_validate_json(_json_payload(raw))
             if not _preserves_governed_facts(candidate.model_dump(mode="json"), artifact):
                 raise _GovernedContradiction(candidate_dict, artifact)
             remediation_error = _ineffective_remediation_error(

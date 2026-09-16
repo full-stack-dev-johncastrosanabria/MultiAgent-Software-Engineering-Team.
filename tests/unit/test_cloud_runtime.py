@@ -559,3 +559,38 @@ def test_developer_role_deadline_is_separate_from_other_roles():
     assert settings.developer_llm_timeout_seconds == 120
     assert settings.developer_role_timeout_seconds == 360
     assert settings.cloud_role_timeout_seconds == 120
+
+
+def _vyce_runtime(content):
+    settings = Settings(_env_file=None, cloud_enabled=True, vyce_ai_api_key="fixture",
+                        cloud_chain_product="vyce:deepseek-v4-flash")
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={
+        "choices": [{"message": {"content": content}, "finish_reason": "stop"}]})))
+    return CloudModelRuntime(settings, client=client, primary=True)
+
+
+@pytest.mark.parametrize("wrap", [
+    lambda body: "I'll analyze the requirement.\n\n```json\n" + body + "\n```",
+    lambda body: "```json\n" + body + "\n```",
+    lambda body: "```\n" + body + "\n```\n",
+])
+def test_a_single_fenced_json_answer_is_validated_like_a_bare_one(wrap):
+    """Vyce ignores response_format: on 2026-09-16 deepseek-v4-flash answered prose
+    and one ```json block, and agnes-3.0-flash a fenced object."""
+    runtime = _vyce_runtime(wrap(product_candidate().model_dump_json()))
+    artifact, _ = runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+    assert artifact == product_candidate()
+
+
+def test_an_ambiguous_answer_with_two_json_blocks_is_still_rejected():
+    body = product_candidate().model_dump_json()
+    runtime = _vyce_runtime(f"```json\n{body}\n```\nor\n```json\n{body}\n```")
+    with pytest.raises(RuntimeError, match="schema validation"):
+        runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+
+
+def test_a_fenced_answer_that_rewrites_governed_facts_is_still_rejected():
+    changed = product_candidate().model_copy(update={"source_requirement": "something else"})
+    runtime = _vyce_runtime("```json\n" + changed.model_dump_json() + "\n```")
+    with pytest.raises(RuntimeError, match="governed fields differ"):
+        runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
