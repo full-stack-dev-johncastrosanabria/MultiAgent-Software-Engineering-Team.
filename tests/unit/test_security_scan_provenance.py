@@ -39,7 +39,11 @@ def run_scan(tmp_path, monkeypatch, stack, output, code, report=None, report_mod
 
     def execute(args, **kwargs):
         if stack == "jvm" and report is not None:
-            directories = [part.split("=", 1)[1] for part in args if part.startswith("-DoutputDirectory=")]
+            # dependency-check-maven reads its report directory from the user
+            # property odc.outputDirectory. Measured 2026-09-16 on spring-demo:
+            # given -DoutputDirectory it ignored it and wrote target/, so real
+            # advisories were never confirmed.
+            directories = [part.split("=", 1)[1] for part in args if part.startswith("-Dodc.outputDirectory=")]
             if directories:
                 path = tmp_path / directories[0] / "dependency-check-report.json"
                 if report_mode == "fifo":

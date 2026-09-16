@@ -652,7 +652,7 @@ class QualityMCP:
                 with tempfile.TemporaryDirectory(prefix=".aset-advisories-", dir=cwd or self.root) as directory:
                     report_dir = Path(directory)
                     return self._run(
-                        role, tool, [*command, *extra, f"-DoutputDirectory={report_dir.name}"],
+                        role, tool, [*command, *extra, f"-Dodc.outputDirectory={report_dir.name}"],
                         allowed, deadline, cwd=cwd or self.root, started=started,
                         allow_network=needs_network, env=self.profile.env(environment),
                         unavailable_on_output=unavailable_on_output, scans_dependencies=True,
