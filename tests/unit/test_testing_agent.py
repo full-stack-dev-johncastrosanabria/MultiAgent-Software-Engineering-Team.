@@ -161,3 +161,23 @@ def test_report_aware_zero_passes_never_uses_stdout_or_old_component_coverage() 
     assert result.status is ToolStatus.SUCCESS
     assert all(not evidence for evidence in result.coverage_mapping.values())
     assert result.executed_tests == ["quality://orders/run_tests"]
+
+
+def test_attempting_an_ordinary_action_does_not_require_security_coverage() -> None:
+    """spring-demo, 2026-09-16: "validate the 'name' field ... before attempting to
+    store the resource" made security a required dimension no test of that change
+    could ever evidence, and the run looped on it."""
+    result = _run(_specification(
+        business_rules=[("The API must validate the 'name' field for non-empty and "
+                         "non-whitespace content before attempting to store the resource.")],
+        constraints=[], acceptance_criteria=["an empty name returns 400"],
+    ), [])
+    assert "security" not in result.proposed_tests
+
+
+def test_failed_or_consecutive_attempts_still_require_security_coverage() -> None:
+    for sentence in ("lock after five failed login attempts", "bloquear tras 5 intentos fallidos",
+                     "maximum consecutive attempts"):
+        result = _run(_specification(business_rules=[sentence], constraints=[],
+                                     acceptance_criteria=[]), [])
+        assert "security" in result.proposed_tests, sentence
