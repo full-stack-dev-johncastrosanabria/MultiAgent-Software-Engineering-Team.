@@ -421,9 +421,11 @@ def environment_overrides(
             )
             overrides.append(("ConnectionStrings__Default", connection))
         elif stack == "dotnet" and dependency.engine == "mysql":
+            # The derived service creates only root, with the same default
+            # password derive_compose renders when the project states none.
             connection = (
                 f"server={host};port={engine.port};database={dependency.database};"
-                f"user={dependency.user};password={dependency.password};"
+                f"user={dependency.user or 'root'};password={dependency.password or 'aset'};"
             )
             overrides.append(("ConnectionStrings__DefaultConnection", connection))
     return tuple(overrides)

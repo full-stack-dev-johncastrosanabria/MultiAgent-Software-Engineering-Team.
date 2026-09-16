@@ -363,3 +363,66 @@ def test_the_provider_overrides_a_contradicting_connection_string() -> None:
     )
     assert [item.engine for item in found] == ["postgres"]
     assert found[0].database == "d", "the string still supplies the details"
+
+
+# -- the provider is read from the project on disk, not only from fixtures ----
+
+
+def _write(root, relative: str, text: str) -> None:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_propflow_on_disk_is_detected_as_mysql_from_its_project_file(tmp_path) -> None:
+    """PropFlow declares MySQL in a package reference, never in appsettings.json.
+
+    The 2026-09-13 campaign read only configuration files, found the
+    SQLite-shaped string, and concluded that no service was needed.
+    """
+    from engineering_team.services import configuration_sources
+
+    _write(tmp_path, "PropFlow.Api/appsettings.json", PROPFLOW_SETTINGS)
+    _write(tmp_path, "PropFlow.Api/PropFlow.Api.csproj",
+           '<PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.0" />')
+    _write(tmp_path, "PropFlow.Infrastructure/PropFlow.Infrastructure.csproj",
+           '<PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />')
+    found = extract_dependencies(configuration_sources(tmp_path))
+    assert [(item.engine, item.database) for item in found] == [("mysql", "propflow")]
+
+
+def test_a_test_project_provider_does_not_decide_the_service(tmp_path) -> None:
+    """Test doubles (SQLite, Testcontainers) say nothing about what the app runs on."""
+    from engineering_team.services import configuration_sources
+
+    _write(tmp_path, "Api/appsettings.json",
+           '{"ConnectionStrings":{"Default":"Host=localhost;Port=5432;Database=bankdb;'
+           'Username=bank;Password=bank"}}')
+    _write(tmp_path, "Api.Tests/Api.Tests.csproj",
+           '<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0" />')
+    _write(tmp_path, "tests/Bank.Tests/Bank.Tests.csproj",
+           '<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0" />')
+    _write(tmp_path, "Infrastructure/Infrastructure.csproj",
+           '<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.0" />')
+    sources = configuration_sources(tmp_path)
+    assert not any("Tests" in name for name in sources)
+    assert [item.engine for item in extract_dependencies(sources)] == ["postgres"]
+
+
+def test_build_output_project_files_are_not_read(tmp_path) -> None:
+    from engineering_team.services import configuration_sources
+
+    _write(tmp_path, "App/obj/App.csproj.nuget.g.csproj",
+           '<PackageReference Include="Pomelo.EntityFrameworkCore.MySql" />')
+    assert configuration_sources(tmp_path) == {}
+
+
+def test_mysql_override_uses_the_credentials_the_derived_service_starts_with() -> None:
+    """The derived service sets only MYSQL_ROOT_PASSWORD; an empty user or password
+    in the override would point the application at an account that does not exist."""
+    dependency = Dependency("mysql", 3306, "propflow", "", "")
+    compose = derive_compose((dependency,), mode="run")
+    assert "MYSQL_ROOT_PASSWORD: aset" in compose
+    (name, connection), = environment_overrides((dependency,), "dotnet")
+    assert name == "ConnectionStrings__DefaultConnection"
+    assert "user=root;" in connection and "password=aset;" in connection
