@@ -443,3 +443,27 @@ def test_reviewer_pass_with_baseline_findings_does_not_exempt_security_coverage(
     joined = "\n".join(decision.problems)
     assert baseline_text in joined
     assert "required coverage dimension has no evidence: security" in joined
+
+
+def test_a_business_rule_gap_names_the_terms_a_test_must_speak_to() -> None:
+    """spring-demo, 2026-09-16: every test passed, Reviewer reported only
+    "required coverage dimension has no evidence: business_rule", and the
+    Developer's remediation came back unchanged because nothing said what the
+    gate looks for."""
+    from engineering_team.contracts.models import ProductSpecification
+
+    specification = ProductSpecification(
+        objective="Reject blank names", actors=["client"],
+        business_rules=["The API must validate the name before storing the resource."],
+        constraints=[], acceptance_criteria=["a blank name returns 400"], nfrs=[],
+        ambiguities=[], assumptions=[], source_requirement="Reject blank names",
+    )
+    state = EngineeringState(
+        run_id="review-business-terms", requirement="Reject blank names",
+        specification=specification,
+        test_results=[_test_result(coverage={"happy_path": [_TEST_REFERENCE], "business_rule": []})],
+        tool_results=[_run_tests_tool()],
+    )
+    decision = ReviewerAgent().execute(build_context(AgentRole.REVIEWER, state, "review"))
+    problem = next(p for p in decision.problems if "business_rule" in p)
+    assert "validate" in problem and "resource" in problem and "storing" in problem
