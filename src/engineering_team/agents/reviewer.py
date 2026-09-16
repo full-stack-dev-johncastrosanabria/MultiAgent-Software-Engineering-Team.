@@ -376,7 +376,8 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                 f"required coverage dimension has no evidence: {dimension}"
                 + (
                     # The gate matches words; saying which makes it actionable.
-                    " (a passing test's name or body must mention one of: "
+                    " (a passing test's name, body or display-name annotation such as "
+                    "@DisplayName or [Fact(DisplayName=...)] must mention one of: "
                     + ", ".join(rule_terms[:12]) + ")"
                     if dimension == "business_rule" and rule_terms else ""
                 )

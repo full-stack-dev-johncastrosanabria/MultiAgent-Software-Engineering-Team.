@@ -167,3 +167,39 @@ def test_oversized_source_is_ignored_and_excerpt_is_bounded(tmp_path):
     assert len(excerpt.split(":\n", 1)[1]) == _MAX_EXCERPT
     path.write_text(path.read_text() + " " * _MAX_SOURCE_BYTES)
     assert collect_test_cases(tmp_path, "jvm", {})[0].source_excerpt == ""
+
+
+def test_a_test_declaration_annotation_is_part_of_its_excerpt(tmp_path):
+    """spring-demo, 2026-09-16: the rule was written in Spanish and the tests in
+    English, so no passing test could speak to the business rule. A display name
+    is the idiomatic place for that language, and it belongs to the test."""
+    before = snapshot_reports(tmp_path, "jvm")
+    _report(tmp_path, '<testsuite><testcase classname="orders.OrderTest" name="blank"/></testsuite>')
+    _source(tmp_path, '''package orders;
+      class OrderTest {
+        @Test
+        @DisplayName("vecino rechaza otra cosa")
+        void other() { assertTrue(true); }
+
+        @Test
+        @DisplayName("rechaza un nombre en blanco")
+        void blank() { assertEquals(400, status()); }
+      }''')
+    (case,) = collect_test_cases(tmp_path, "jvm", before)
+    assert "rechaza un nombre en blanco" in case.source_excerpt
+    assert "vecino" not in case.source_excerpt
+
+
+def test_an_xunit_display_name_attribute_is_part_of_its_excerpt(tmp_path):
+    _source(tmp_path, '''namespace Orders;
+      public class OrderTest {
+        [Fact(DisplayName = "rechaza un monto negativo")]
+        public void Negative() { Assert.Equal(400, Status()); }
+      }''', "OrderTest.cs")
+    before = snapshot_reports(tmp_path, "dotnet")
+    _report(tmp_path, '''<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+      <Results><UnitTestResult testId="1" testName="Negative" outcome="Passed"/></Results>
+      <TestDefinitions><UnitTest id="1"><TestMethod className="Orders.OrderTest" name="Negative"/></UnitTest></TestDefinitions>
+    </TestRun>''', "dotnet")
+    (case,) = collect_test_cases(tmp_path, "dotnet", before)
+    assert "rechaza un monto negativo" in case.source_excerpt
