@@ -533,3 +533,29 @@ def test_a_gateway_without_its_credential_is_skipped():
         CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
             AgentRole.PRODUCT, cloud_envelope(), product_candidate())
     assert hosts == ["api.mistral.ai"]
+
+
+@pytest.mark.parametrize("role, expected", [(AgentRole.DEVELOPER, 120), (AgentRole.PRODUCT, 45)])
+def test_developer_authoring_gets_its_own_request_timeout(role, expected):
+    """Authoring complete files took 33-45 s on the models that succeeded on
+    2026-09-16; a 45 s request timeout cut Codestral at 45.1, 45.2 and 45.2 s."""
+    settings = Settings(_env_file=None, cloud_enabled=True, mistral_api_key="fixture",
+        llm_timeout_seconds=45, **{f"cloud_chain_{role.value.lower()}": "mistral:mistral-small-latest"})
+    timeouts = []
+
+    def respond(request):
+        timeouts.append(request.extensions["timeout"]["read"])
+        return httpx.Response(429, json={})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        with pytest.raises(RuntimeError):
+            runtime.invoke_artifact(role, cloud_envelope(), product_candidate())
+    assert timeouts and expected - 1 < timeouts[0] <= expected
+
+
+def test_developer_role_deadline_is_separate_from_other_roles():
+    settings = Settings(_env_file=None)
+    assert settings.developer_llm_timeout_seconds == 120
+    assert settings.developer_role_timeout_seconds == 360
+    assert settings.cloud_role_timeout_seconds == 120

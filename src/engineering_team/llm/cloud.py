@@ -51,15 +51,19 @@ _GOOGLE_CREDENTIALS = {
 # fallback always crosses providers. Google quotas can be model scoped: a 3.6 quota
 # failure must not disable a working 3.5 fallback. Testing/Reviewer are deterministic.
 _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
-    # xKiro and Vyce entries were probed on 2026-09-16 with this runtime's JSON
-    # request shape and a 22-29k-token prompt, the day Mistral answered 429/503,
-    # OpenRouter's Nemotron relayed "overloaded" and Gemini 3.5 answered 503 on
-    # both keys. xKiro routes each model across its own upstreams at no cost;
-    # Vyce draws on prepaid credit, so it comes after every free option.
+    # Gateway entries were evaluated on 2026-09-16 through this runtime on ASET's
+    # own tasks (Product spec, Developer target plan, Developer authoring of real
+    # FlaskApiProduct sources, Security review) and in run apply-523385f8, the day
+    # Mistral answered 429/503, OpenRouter's Nemotron relayed "overloaded" and
+    # Gemini 3.5 answered 503 on both keys. xKiro's deepseek-v4.1-flash passed all
+    # four tasks; deepseek-v4-pro passed Security 3/3 and Architecture 2/2. xKiro's
+    # free tier is 500k tokens a day per account, so it follows the existing
+    # primary and first fallback. Vyce's deepseek-v4-flash passed Product and
+    # Security only, and draws on credit, so it follows every free option there.
     AgentRole.PRODUCT: (
         ("groq", "openai/gpt-oss-120b"),
         ("mistral", "mistral-small-latest"),
-        ("xkiro", "qwen/qwen3.8-max:free"),
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
         ("vyce", "deepseek-v4-flash"),
         ("google", "gemini-3.5-flash"),
@@ -67,10 +71,9 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
     AgentRole.ARCHITECTURE: (
         ("mistral", "mistral-medium-latest"),
         ("groq", "openai/gpt-oss-120b"),
-        ("xkiro", "mistralai/mistral-medium-3.5"),
         ("xkiro", "deepseek/deepseek-v4-pro"),
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
-        ("vyce", "deepseek-v4.1"),
         ("google", "gemini-3.5-flash"),
     ),
     # Codestral and Small passed the isolated recovery acceptance test. Medium was
@@ -80,10 +83,9 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
     AgentRole.DEVELOPER: (
         ("mistral", "codestral-latest"),
         ("groq", "openai/gpt-oss-120b"),
-        ("xkiro", "mistralai/codestral-2508"),
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         ("xkiro", "qwen/qwen3-coder-plus:free"),
         ("mistral", "mistral-small-latest"),
-        ("vyce", "deepseek-v4.1"),
         ("google", "gemini-3.5-flash"),
     ),
     AgentRole.SECURITY: (
@@ -91,7 +93,7 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
         ("groq", "openai/gpt-oss-120b"),
         ("xkiro", "deepseek/deepseek-v4-pro"),
         ("mistral", "mistral-small-latest"),
-        ("xkiro", "qwen/qwen3.8-max:free"),
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         ("vyce", "deepseek-v4-flash"),
         ("google", "gemini-3.5-flash"),
     ),
@@ -355,7 +357,12 @@ class CloudModelRuntime:
         _deadline: float | None = None,
     ) -> tuple[BaseModel, ModelExecutionInfo]:
         chain = self.router.selection_chain(role)
-        deadline = _deadline if _deadline is not None else time.monotonic() + self.settings.cloud_role_timeout_seconds
+        developer = role is AgentRole.DEVELOPER
+        role_timeout = (
+            self.settings.developer_role_timeout_seconds if developer
+            else self.settings.cloud_role_timeout_seconds
+        )
+        deadline = _deadline if _deadline is not None else time.monotonic() + role_timeout
         # The budget bounds *escalations*, not the retries within one escalation: every
         # model in the chain is one attempt at the same escalation, so it is consumed
         # once, on entry, and never again as the chain is walked. It must be charged
@@ -389,7 +396,10 @@ class CloudModelRuntime:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RuntimeError("CLOUD_FALLBACK_UNAVAILABLE: role deadline exceeded")
-        request_timeout = min(self.settings.llm_timeout_seconds, remaining)
+        request_timeout = min(
+            self.settings.developer_llm_timeout_seconds if developer else self.settings.llm_timeout_seconds,
+            remaining,
+        )
         candidate_dict = candidate.model_dump(mode="json")
         output_schema = governed_output_schema(type(candidate), candidate_dict)
         system_prompt, user_prompt = build_role_prompts(

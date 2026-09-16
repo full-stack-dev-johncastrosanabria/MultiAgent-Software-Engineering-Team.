@@ -263,16 +263,25 @@ def test_cloud_provider_outage_is_normalized_without_secret_exposure() -> None:
     assert runtime.budget.run_count == 1
 
 
-def test_gateway_fallbacks_are_probed_models_with_free_before_paid() -> None:
-    """Probed 2026-09-16 with this runtime's JSON request shape and a 22-29k-token
-    prompt: every xKiro and Vyce model below answered valid JSON; TokenForge
-    answered 503 platform_maintenance for every model, so it is in no chain."""
+def test_gateway_fallbacks_are_models_that_passed_the_governed_tasks() -> None:
+    """Evaluated 2026-09-16 through CloudModelRuntime on ASET's own tasks (Product
+    spec, Developer target plan, Developer authoring of real FlaskApiProduct
+    sources, Security review) and in run apply-523385f8. xKiro's
+    deepseek-v4.1-flash passed all four; deepseek-v4-pro passed Security 3/3 and
+    Architecture 2/2. mistral-medium-3.5 rewrote governed fields 2/2. Vyce's
+    deepseek-v4-flash passed Product and Security only and draws on credit.
+    TokenForge answered 503 platform_maintenance for every model."""
     router = CloudRouter(Settings(_env_file=None))
-    for role in (AgentRole.PRODUCT, AgentRole.ARCHITECTURE, AgentRole.DEVELOPER, AgentRole.SECURITY):
-        providers = [item.provider for item in router.selection_chain(role)]
-        assert "xkiro" in providers and "vyce" in providers, role
-        # xKiro's models here cost nothing; Vyce draws on prepaid credit.
-        assert providers.index("xkiro") < providers.index("vyce"), role
+    chains = {role: [(i.provider, i.model) for i in router.selection_chain(role)] for role in (
+        AgentRole.PRODUCT, AgentRole.ARCHITECTURE, AgentRole.DEVELOPER, AgentRole.SECURITY)}
+    for role, chain in chains.items():
+        providers = [provider for provider, _ in chain]
+        assert "xkiro" in providers, role
         assert "tokenforge" not in providers, role
-    developer = [(i.provider, i.model) for i in router.selection_chain(AgentRole.DEVELOPER)]
-    assert developer.index(("xkiro", "mistralai/codestral-2508")) == 2
+        assert ("xkiro", "mistralai/mistral-medium-3.5") not in chain, role
+        if "vyce" in providers:
+            assert role in {AgentRole.PRODUCT, AgentRole.SECURITY}, role
+            assert providers.index("vyce") > max(
+                index for index, provider in enumerate(providers) if provider == "xkiro"
+            ), role
+    assert chains[AgentRole.DEVELOPER][2] == ("xkiro", "deepseek/deepseek-v4.1-flash:free")

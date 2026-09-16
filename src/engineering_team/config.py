@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     llm_timeout_seconds: float = Field(default=60, gt=0)
     cloud_role_timeout_seconds: float = Field(default=120, gt=0)
+    # Developer authors complete files: 33-45 s on the models that succeeded on
+    # 2026-09-16. A shared 45 s request timeout cut every slower success short.
+    developer_llm_timeout_seconds: float = Field(default=120, gt=0)
+    developer_role_timeout_seconds: float = Field(default=360, gt=0)
     ollama_timeout_seconds: float = Field(default=600, gt=0)
     gemini_api_key: str | None = None
     gemini_api_key_2: str | None = None
