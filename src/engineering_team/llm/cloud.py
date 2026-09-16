@@ -45,6 +45,8 @@ _OPENAI_COMPATIBLE = {
     ),
 }
 _CLOUDFLARE_ACCOUNT = re.compile(r"[0-9a-f]{32}")
+# Cohere refuses a budget above its models' 8192-token output limit with 400.
+_OUTPUT_TOKEN_LIMIT = {"cohere": 8000}
 # Gateway defaults for output length are provider-specific and can truncate a
 # Developer's full-file content; state the budget explicitly, as for OpenRouter.
 _EXPLICIT_OUTPUT_BUDGET = frozenset({"xkiro", "vyce", "tokenforge", "nvidia", "kilo", "cohere", "cloudflare"})
@@ -503,7 +505,10 @@ class CloudModelRuntime:
                 }, "max_tokens": 16000 if role is AgentRole.DEVELOPER else 4096,
                     "reasoning": {"effort": "low", "exclude": True},
                 } if selection.provider == "openrouter" else {
-                    "max_tokens": 16000 if role is AgentRole.DEVELOPER else 4096,
+                    "max_tokens": min(
+                        16000 if role is AgentRole.DEVELOPER else 4096,
+                        _OUTPUT_TOKEN_LIMIT.get(selection.provider, 16000),
+                    ),
                 } if selection.provider in _EXPLICIT_OUTPUT_BUDGET else {})
                 response = client.post(
                     endpoint,

@@ -616,3 +616,24 @@ def test_cloudflare_needs_a_well_formed_account_id_before_its_token_is_used(acco
         CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
             AgentRole.PRODUCT, cloud_envelope(), product_candidate())
     assert hosts == ["api.mistral.ai"]
+
+
+@pytest.mark.parametrize("role, expected", [(AgentRole.DEVELOPER, 8000), (AgentRole.PRODUCT, 4096)])
+def test_cohere_output_budget_stays_under_its_model_limit(role, expected):
+    """Cohere answers 400 "max tokens must be less than or equal to 8192" to the
+    16000-token Developer budget every other gateway accepts."""
+    import json
+
+    settings = Settings(_env_file=None, cloud_enabled=True, cohere_api_key="fixture",
+                        **{f"cloud_chain_{role.value.lower()}": "cohere:command-a-03-2025"})
+    budgets = []
+
+    def respond(request):
+        budgets.append(json.loads(request.content)["max_tokens"])
+        return httpx.Response(429, json={})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(RuntimeError):
+            CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
+                role, cloud_envelope(), product_candidate())
+    assert budgets == [expected]
