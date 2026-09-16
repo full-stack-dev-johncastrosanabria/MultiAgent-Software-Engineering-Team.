@@ -473,16 +473,23 @@ class CloudModelRuntime:
         system_prompt, user_prompt = build_role_prompts(
             role, envelope, output_schema, candidate_dict
         )
-        safe_context = build_cloud_context(
-            role, envelope.current_task,
-            str(envelope.state_projection.get("requirement", "")),
-            {"candidate": candidate_dict},
-            deterministic_evidence=[item.chunk_id for item in envelope.rag_evidence],
-        )
-        system_prompt = redacted_for_cloud(system_prompt)
-        user_prompt = redacted_for_cloud(user_prompt)
-        require_safe_cloud_context(system_prompt)
-        require_safe_cloud_context(user_prompt)
+        try:
+            safe_context = build_cloud_context(
+                role, envelope.current_task,
+                str(envelope.state_projection.get("requirement", "")),
+                {"candidate": candidate_dict},
+                deterministic_evidence=[item.chunk_id for item in envelope.rag_evidence],
+            )
+            system_prompt = redacted_for_cloud(system_prompt)
+            user_prompt = redacted_for_cloud(user_prompt)
+            require_safe_cloud_context(system_prompt)
+            require_safe_cloud_context(user_prompt)
+        except ValueError:
+            # Every provider would receive the same prompt, so the refusal ends
+            # the escalation -- as a run error with evidence, not a crashed run.
+            raise RuntimeError(
+                "CLOUD_FALLBACK_UNAVAILABLE: sensitive content refused in cloud context"
+            ) from None
         owns_client = self.client is None
         client = self.client or httpx.Client(timeout=request_timeout)
         started = time.perf_counter()

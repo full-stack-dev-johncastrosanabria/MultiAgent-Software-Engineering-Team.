@@ -159,7 +159,9 @@ _UNQUOTED_LINE_SECRET_VALUE = re.compile(
 )
 _REDACTED_ASSIGNMENT = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*"
-    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n;,"'}\)\]]))'''
+    # A shell line continuation (`-e PASSWORD=[REDACTED] \` at a line end) ends
+    # the value; anything else after the backslash on that line does not.
+    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n;,"'}\)\]]|\\[ \t]*(?:$|[\r\n])))'''
     r'''|(?:"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}]))'''
 )
 
@@ -311,6 +313,13 @@ def _redacted_across_json_literals(text: str) -> str:
             return match.group()
         return json.dumps(redact_secrets(decoded), ensure_ascii=False)
 
+    # A quoted value belongs to the key before it. Splitting on literals first put
+    # `export DB_PASSWORD=` and `"secret"` in different pieces, neither of which
+    # redaction recognised, while the checker read the line whole and refused it.
+    text = _QUOTED_SECRET_VALUE.sub(
+        lambda match: match.group("prefix") + ('"[REDACTED]"' if match.group("double") else "'[REDACTED]'"),
+        text,
+    )
     pieces: list[str] = []
     last = 0
     for match in re.finditer(r'"(?:\\.|[^"\\])*"', text):

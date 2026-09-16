@@ -9,6 +9,8 @@ requirements belong to the same system and contradicted each other.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from engineering_team.guardrails.secrets import (
@@ -146,3 +148,44 @@ def test_a_credential_written_as_prose_is_not_detected() -> None:
 
     assert redacted_for_cloud(prose) == prose
     require_safe_cloud_context(prose)
+
+
+# spring-demo's own docs, 2026-09-16: Architecture's cloud call was refused after
+# redaction and the whole run crashed without a report.
+@pytest.mark.parametrize("text", [
+    'Then run:\nexport DB_PASSWORD="secret1"\n',
+    "docker run -d \\\n  -e MYSQL_ROOT_PASSWORD=secret1 \\\n  mysql:8.0\n",
+])
+def test_documented_shell_credentials_are_redacted_so_the_check_passes(text):
+    redacted = redacted_for_cloud(text)
+    assert "secret1" not in redacted
+    require_safe_cloud_context(redacted)
+    require_safe_cloud_context("Repository data: " + json.dumps({"content": redacted}))
+
+
+def test_a_value_after_a_continuation_marker_is_still_refused():
+    with pytest.raises(ValueError):
+        require_safe_cloud_context("password=[REDACTED] \\ secret2")
+
+
+def test_a_refused_cloud_context_is_a_run_error_not_a_crash(monkeypatch):
+    import httpx
+
+    from engineering_team.config import Settings
+    from engineering_team.contracts.enums import AgentRole
+    from engineering_team.llm import cloud
+    from engineering_team.llm.cloud import CloudModelRuntime
+    from tests.unit.test_cloud_runtime import cloud_envelope, product_candidate
+
+    def refuse(_):
+        raise ValueError("sensitive content is not allowed in cloud context")
+
+    monkeypatch.setattr(cloud, "require_safe_cloud_context", refuse)
+    settings = Settings(_env_file=None, cloud_enabled=True, mistral_api_key="fixture",
+                        cloud_chain_product="mistral:mistral-small-latest")
+    transport = httpx.MockTransport(lambda _: pytest.fail("prompt was sent"))
+    with httpx.Client(transport=transport) as client, pytest.raises(
+        RuntimeError, match="CLOUD_FALLBACK_UNAVAILABLE: sensitive content"
+    ):
+        CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
+            AgentRole.PRODUCT, cloud_envelope(), product_candidate())
