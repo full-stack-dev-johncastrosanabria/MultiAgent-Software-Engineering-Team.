@@ -376,3 +376,30 @@ def test_later_remediation_rotates_the_developer_model_chain(tmp_path):
         "repository_context": {"apply_changes": True, "authorized": True},
     })
     assert runtime.rotations and set(runtime.rotations) == {(AgentRole.DEVELOPER, 2)}
+
+
+def test_a_new_production_source_beside_existing_sources_is_allowed():
+    """spring-demo apply-5f7b9e7e: authors referenced InvalidProductNameException,
+    a class the plan contract would not let them create, and compilation failed."""
+    paths = [*PATHS, "api/errors.py"]
+    candidate = plan_candidate(paths, authored=set())
+    proposed = proposed_plan(candidate, new_files=[
+        NewDeveloperFile(path="api/validation_errors.py", kind="source", component_root="api"),
+    ])
+    writes, _ = validate_target_plan(candidate, proposed, all_paths=set(paths))
+    assert writes == ["api/products.py", "api/validation_errors.py"]
+
+
+@pytest.mark.parametrize("path", [
+    "api/new_dir/invented.py",       # directory holds no inspected source
+    "api/tests/test_sneaky.py",      # a test is not a source
+    "api/setup.cfg",                 # not a source suffix
+    "other/invented.py",             # outside the component
+])
+def test_new_production_sources_stay_bounded(path):
+    candidate = plan_candidate(PATHS, authored=set())
+    proposed = proposed_plan(candidate, new_files=[
+        NewDeveloperFile(path=path, kind="source", component_root="api"),
+    ])
+    with pytest.raises(ValueError):
+        validate_target_plan(candidate, proposed, all_paths=set(PATHS))

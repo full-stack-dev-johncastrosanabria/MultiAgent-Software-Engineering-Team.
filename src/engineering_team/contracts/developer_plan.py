@@ -66,7 +66,7 @@ def is_manifest(path: str) -> bool:
 
 class NewDeveloperFile(StrictModel):
     path: str
-    kind: Literal["test_source", "test_project", "test_support"]
+    kind: Literal["test_source", "test_project", "test_support", "source"]
     component_root: str
 
 
@@ -138,11 +138,25 @@ def validate_target_plan(
         str(PurePosixPath(item.path).parent) for item in new_files
         if item.kind == "test_project"
     }
+    source_directories = {
+        str(PurePosixPath(path).parent) for path in candidate.inventory_paths
+        if PurePosixPath(path).suffix in _SOURCE_SUFFIXES and not is_test_path(path)
+    }
     for item in new_files:
         path = item.path
         root = item.component_root
         if root not in candidate.component_roots or not safe_plan_path(path) or path in all_paths:
             raise ValueError("target plan new file is unsafe, existing, or outside a component")
+        if item.kind == "source":
+            # An exception or DTO the change needs, beside sources already there;
+            # authors referenced such classes they were not allowed to create.
+            if (
+                not _under(path, root) or PurePosixPath(path).suffix not in _SOURCE_SUFFIXES
+                or is_test_path(path) or is_manifest(path)
+                or str(PurePosixPath(path).parent) not in source_directories
+            ):
+                raise ValueError("new source must sit in an existing source directory of its component")
+            continue
         # A .NET test project may live beside its source project, under a test
         # directory. Other new test files stay inside their declared component.
         in_component = _under(path, root)
