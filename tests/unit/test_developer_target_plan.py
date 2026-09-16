@@ -12,10 +12,12 @@ from engineering_team.contracts.developer_plan import (
 )
 from engineering_team.contracts.enums import ActionMode, AgentRole, ToolStatus
 from engineering_team.contracts.models import ImplementationResult, ModelExecutionInfo
+from engineering_team.contracts.state import EngineeringState
 from engineering_team.graph.stategraph import build_engineering_graph
 from engineering_team.llm.prompting import build_role_prompts
 from engineering_team.llm.runtime import _preserves_governed_facts
 from engineering_team.mcp.repository import RepositoryMCP
+from engineering_team.models.context import build_context
 
 PATHS = ["api/pyproject.toml", "api/products.py", "api/tests/test_original.py"]
 
@@ -290,3 +292,50 @@ def test_planned_source_must_be_read_successfully_before_authoring(tmp_path):
     assert patch["human_review_required"]
     assert len(runtime.calls) == 1
     assert (tmp_path / PATHS[1]).read_text() == "def valid(name):\n    return True\n"
+
+
+def test_remediation_may_repropose_its_own_test_as_new_and_it_becomes_an_edit():
+    """apply-d183c108 and apply-523385f8: in remediation the planner listed the
+    test it wrote in the previous iteration under new_files, and the whole plan
+    was rejected because that path already existed."""
+    paths = [*PATHS, "api/tests/test_validation.py"]
+    candidate = plan_candidate(paths, authored={"api/tests/test_validation.py"})
+    proposed = proposed_plan(candidate)  # new_files: api/tests/test_validation.py
+    writes, reads = validate_target_plan(candidate, proposed, all_paths=set(paths))
+    assert writes == ["api/products.py", "api/tests/test_validation.py"]
+    assert "api/tests/test_validation.py" in reads
+
+
+def test_an_original_test_reproposed_as_new_is_still_refused():
+    candidate = plan_candidate(PATHS, authored=set())
+    proposed = proposed_plan(candidate, new_files=[NewDeveloperFile(
+        path="api/tests/test_original.py", kind="test_source", component_root="api",
+    )])
+    with pytest.raises(ValueError, match="original tests"):
+        validate_target_plan(candidate, proposed, all_paths=set(PATHS))
+
+
+def test_planning_prompt_says_how_to_change_tests_this_run_wrote():
+    candidate = plan_candidate([*PATHS, "api/tests/test_validation.py"],
+                               authored={"api/tests/test_validation.py"})
+    envelope = build_context(AgentRole.DEVELOPER, EngineeringState(run_id="p", requirement=REQUIREMENT), "Developer")
+    system, _ = build_role_prompts(AgentRole.DEVELOPER, envelope, type(candidate), candidate.model_dump())
+    assert "not in protected_test_paths" in system and "edit_paths" in system
+
+
+def test_cloud_reports_why_a_target_plan_was_rejected():
+    import httpx
+
+    from engineering_team.config import Settings
+    from engineering_team.llm.cloud import CloudModelRuntime
+
+    candidate = plan_candidate(PATHS, authored=set())
+    rejected = proposed_plan(candidate, edit_paths=["api/tests/test_original.py"])
+    settings = Settings(_env_file=None, cloud_enabled=True, mistral_api_key="fixture",
+                        cloud_chain_developer="mistral:codestral-latest")
+    envelope = build_context(AgentRole.DEVELOPER, EngineeringState(run_id="p", requirement=REQUIREMENT), "Developer")
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={
+            "choices": [{"message": {"content": rejected.model_dump_json()}, "finish_reason": "stop"}]}))) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        with pytest.raises(RuntimeError, match="target plan rejected: target plan attempts to modify original tests"):
+            runtime.invoke_artifact(AgentRole.DEVELOPER, envelope, candidate)

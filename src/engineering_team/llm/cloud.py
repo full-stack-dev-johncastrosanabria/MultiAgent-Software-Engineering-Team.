@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from engineering_team.config import Settings
+from engineering_team.contracts.developer_plan import DeveloperTargetPlan, validate_target_plan
 from engineering_team.contracts.enums import AgentRole, ErrorCode
 from engineering_team.contracts.models import CloudFallbackContext, ModelExecutionInfo
 from engineering_team.guardrails.secrets import (
@@ -125,6 +126,15 @@ class _GovernedContradiction(ValueError):
     def __init__(self, candidate: dict[str, Any], actual: BaseModel) -> None:
         values = actual.model_dump(mode="json")
         self.fields = sorted(key for key, value in candidate.items() if values.get(key) != value)
+        # A target plan is expected to differ from its candidate: the model fills
+        # the proposal fields. The validator's fixed message is the actual cause.
+        self.reason = None
+        if isinstance(actual, DeveloperTargetPlan):
+            try:
+                validate_target_plan(DeveloperTargetPlan.model_validate(candidate), actual,
+                                     all_paths=set(candidate.get("inventory_paths", [])))
+            except ValueError as exc:
+                self.reason = str(exc)
         super().__init__("governed artifact contradiction")
 
 
@@ -543,6 +553,8 @@ class CloudModelRuntime:
             detail = (
                 f"{relayed_category} (provider error {exc.code})"
                 if relayed_category else
+                f"target plan rejected: {exc.reason}"
+                if contradiction and exc.reason else
                 f"governed fields differ: {', '.join(exc.fields)}"
                 if contradiction else
                 "unchanged developer remediation"

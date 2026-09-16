@@ -111,22 +111,33 @@ def validate_target_plan(
         if getattr(proposed, field) != getattr(candidate, field):
             raise ValueError("target plan changed governed inventory")
     inventory = set(candidate.inventory_paths)
-    existing = [*proposed.read_paths, *proposed.edit_paths]
+    protected = set(candidate.protected_test_paths)
+    # In remediation a planner re-proposes the test it wrote last iteration as
+    # new. It exists, and is not protected, so it is an edit of that file.
+    reproposed = [item.path for item in proposed.new_files
+                  if item.path in inventory and item.path not in protected and is_test_path(item.path)]
+    new_files = [item for item in proposed.new_files if item.path not in reproposed]
+    edit_paths = list(dict.fromkeys([*proposed.edit_paths, *reproposed]))
+    existing = [*proposed.read_paths, *edit_paths]
     if any(path not in inventory or not safe_plan_path(path) for path in existing):
         raise ValueError("target plan references an uninspected inventory path")
-    if any(path in candidate.protected_test_paths for path in proposed.edit_paths):
+    if any(path in protected for path in [*edit_paths, *(item.path for item in new_files)]):
         raise ValueError("target plan attempts to modify original tests")
-    if any(PurePosixPath(path).suffix not in _SOURCE_SUFFIXES for path in proposed.edit_paths):
+    if any(
+        PurePosixPath(path).suffix not in _SOURCE_SUFFIXES
+        and not (is_test_path(path) and is_manifest(path))
+        for path in edit_paths
+    ):
         raise ValueError("target plan edits must be source files")
-    new_paths = [item.path for item in proposed.new_files]
-    writes = [*proposed.edit_paths, *new_paths]
-    if not proposed.edit_paths or len(writes) > MAX_PLAN_PATHS or len(set(writes)) != len(writes):
+    new_paths = [item.path for item in new_files]
+    writes = [*edit_paths, *new_paths]
+    if not edit_paths or len(writes) > MAX_PLAN_PATHS or len(set(writes)) != len(writes):
         raise ValueError("target plan requires bounded distinct implementation edits")
     test_projects = {
-        str(PurePosixPath(item.path).parent) for item in proposed.new_files
+        str(PurePosixPath(item.path).parent) for item in new_files
         if item.kind == "test_project"
     }
-    for item in proposed.new_files:
+    for item in new_files:
         path = item.path
         root = item.component_root
         if root not in candidate.component_roots or not safe_plan_path(path) or path in all_paths:
@@ -155,10 +166,10 @@ def validate_target_plan(
             raise ValueError("unsupported test support file")
         if not in_component and not any(_under(path, project) for project in test_projects):
             raise ValueError("sibling tests require their new test project")
-    reads = list(dict.fromkeys([*proposed.edit_paths, *proposed.read_paths]))
+    reads = list(dict.fromkeys([*edit_paths, *proposed.read_paths]))
     # Always inspect build conventions and a test example in every edited component.
     edited_roots = {root for root in candidate.component_roots
-                    if any(_under(path, root) for path in proposed.edit_paths)}
+                    if any(_under(path, root) for path in edit_paths)}
     manifests = [path for path in candidate.inventory_paths
                  if is_manifest(path) and str(PurePosixPath(path).parent) in edited_roots]
     examples = [path for path in candidate.protected_test_paths
