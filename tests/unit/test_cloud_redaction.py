@@ -189,3 +189,26 @@ def test_a_refused_cloud_context_is_a_run_error_not_a_crash(monkeypatch):
     ):
         CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
             AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+
+
+def test_an_html_decorated_credential_is_redacted_not_its_closing_tag():
+    """PropFlow's login page: <strong>Password:</strong> Demo123! redacted the tag
+    and left the password in the prompt (the checker refused it)."""
+    text = "<p><strong>Password:</strong> Demo123!</p>"
+    redacted = redacted_for_cloud(text)
+    assert "Demo123!" not in redacted
+    require_safe_cloud_context(redacted)
+
+
+def test_a_redacted_cli_value_followed_by_another_flag_is_accepted():
+    """Banking's README: docker run -e POSTGRES_PASSWORD=... -p 5432:5432 postgres."""
+    text = "docker run -d --name db -e POSTGRES_PASSWORD=secret1 -p 5432:5432 postgres:16"
+    redacted = redacted_for_cloud(text)
+    assert "secret1" not in redacted
+    require_safe_cloud_context(redacted)
+
+
+@pytest.mark.parametrize("text", ["password=[REDACTED] secret2", "password=[REDACTED] -secret2"])
+def test_text_after_a_marker_that_is_not_a_flag_is_still_refused(text):
+    with pytest.raises(ValueError):
+        require_safe_cloud_context(text)

@@ -147,7 +147,9 @@ _QUOTED_SECRET_VALUE = re.compile(
 # Documentation decorates the key rather than the value: `**Password:** `123456``
 # put emphasis where the regex expected the secret, so the asterisks were
 # redacted and the credential was left in plain sight. Step over the decoration.
-_VALUE_DECORATION = r"(?:[*_`]+[ \t]*)?"
+# HTML does the same: `<strong>Password:</strong> Demo123!` redacted the closing
+# tag and left the password (PropFlow's login page).
+_VALUE_DECORATION = r"(?:(?:[*_`]+|</?[A-Za-z][A-Za-z0-9]*>)[ \t]*)*"
 _UNQUOTED_SECRET_VALUE = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*{_VALUE_DECORATION}"
     rf"(?!(?:{_TYPE_NAME_PATTERN})\b)[^\s,]+"
@@ -161,7 +163,10 @@ _REDACTED_ASSIGNMENT = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*"
     # A shell line continuation (`-e PASSWORD=[REDACTED] \` at a line end) ends
     # the value; anything else after the backslash on that line does not.
-    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n;,"'}\)\]]|\\[ \t]*(?:$|[\r\n])))'''
+    # So does the next option of a command line (`-e PASSWORD=[REDACTED] -p 5432`,
+    # Banking's README): a one-letter flag or a --long flag, never other words.
+    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n;,"'}\)\]]|\\[ \t]*(?:$|[\r\n]))'''
+    r'''|[ \t]+(?:-[A-Za-z](?=[ \t])|--[A-Za-z][\w-]*(?=[ \t=]|$)))'''
     r'''|(?:"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}]))'''
 )
 
