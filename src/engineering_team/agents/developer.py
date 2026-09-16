@@ -2,10 +2,10 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
+from engineering_team.contracts.developer_plan import is_test_path, safe_plan_path
 from engineering_team.contracts.enums import ActionMode, ToolStatus
 from engineering_team.contracts.models import ImplementationResult
 from engineering_team.models.context import ContextEnvelope
-from engineering_team.repository_evidence import is_credential_path
 
 from .base import AgentBase
 
@@ -27,7 +27,7 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
     _TARGET_EXTENSIONS: ClassVar[set[str]] = {
         "py", "ts", "tsx", "js", "jsx", "java", "go", "rb", "md", "json",
         "yaml", "yml", "toml", "txt", "cfg", "ini", "sql", "html", "css",
-        "c", "cpp", "h", "hpp", "rs", "kt", "swift",
+        "c", "cpp", "h", "hpp", "rs", "kt", "swift", "cs", "fs", "vb",
     }
     _SOURCE_EXTENSIONS: ClassVar[set[str]] = _TARGET_EXTENSIONS - {"md", "txt"}
 
@@ -178,8 +178,7 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
 
     @staticmethod
     def _is_test_path(path: str) -> bool:
-        normalized = path.replace("\\", "/")
-        return normalized.startswith(("test/", "tests/")) or Path(normalized).name.startswith("test_")
+        return is_test_path(path.replace("\\", "/"))
 
     @classmethod
     def _is_source_path(cls, path: str) -> bool:
@@ -299,23 +298,18 @@ class DeveloperAgent(AgentBase[ImplementationResult]):
             folded = path.casefold()
             term_score = sum(term in folded for term in terms)
             source_score = hit_counts[path]
-            code_score = 1 if PurePosixPath(path).suffix in {".py", ".js", ".ts", ".java"} else 0
+            code_score = 1 if PurePosixPath(path).suffix in {
+                ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".kt", ".go", ".cs", ".fs", ".vb",
+            } else 0
             return (source_score * 10 + term_score * 4 + code_score, -len(path), path)
 
         return sorted(paths, key=score, reverse=True)
 
     @staticmethod
     def _safe_path(path: str) -> bool:
-        candidate = PurePosixPath(path.replace("\\", "/"))
-        return bool(
-            path
-            and not candidate.is_absolute()
-            and ".." not in candidate.parts
-            and "__pycache__" not in candidate.parts
-            # El contenido que lee el Developer va literal al prompt y no puede
-            # sanearse: debe reescribir el archivo fiel. El control es no leerlo.
-            and not is_credential_path(path)
-        )
+        # Source text goes to the author verbatim; exclude credentials and build
+        # output before either the initial inspection or the planning phase.
+        return safe_plan_path(path.replace("\\", "/"))
 
     @staticmethod
     def _symbols(content: str) -> list[str]:
