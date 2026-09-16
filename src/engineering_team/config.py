@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     vyce_ai_api_key: str | None = None
     token_forge_api_key: str | None = None
     nvidia_api_key: str | None = None
+    kilo_api_key: str | None = None
+    cohere_api_key: str | None = None
+    cloudflare_worker_ai_api: str | None = None
+    # Workers AI addresses the account in the URL; a token alone cannot find it.
+    cloudflare_account_id: str | None = None
     # Per-role chain override: "provider:model,provider:model". Empty keeps the
     # defaults in llm/cloud.py, which spread primaries over three providers.
     cloud_chain_product: str = ""

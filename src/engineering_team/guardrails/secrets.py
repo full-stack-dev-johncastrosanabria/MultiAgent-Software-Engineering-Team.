@@ -11,6 +11,7 @@ _SENSITIVE_KEYS = {
     "gemini_api_key", "gemini_api_key_2", "groq_api_key", "langfuse_secret_key",
     "mistral_api_key", "open_router_api_key", "openrouter_api_key",
     "x_kiro_api_key", "vyce_ai_api_key", "token_forge_api_key", "nvidia_api_key",
+    "kilo_api_key", "cohere_api_key", "cloudflare_worker_ai_api",
 }
 
 
@@ -181,7 +182,9 @@ _ANTHROPIC_KEY = re.compile(r"\bsk-ant-[A-Za-z0-9\-_]{20,}\b")
 # `tf_live_...`: a rejected-key message may echo them back verbatim.
 _GATEWAY_KEY = re.compile(
     r"\bsk-(?:xt-)?[A-Za-z0-9]{32,}\b|\btf_(?:live|test)_[A-Za-z0-9]{32,}\b"
-    r"|\bnvapi-[A-Za-z0-9_\-]{32,}"
+    r"|\bnvapi-[A-Za-z0-9_\-]{32,}|\bcfut_[A-Za-z0-9]{32,}"
+    # Kilo issues JWTs as API keys.
+    r"|\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"
 )
 _AWS_ACCESS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
 # `scheme://user[:pass]@host/...` -- the password half is optional on purpose,

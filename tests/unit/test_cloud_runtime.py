@@ -493,17 +493,22 @@ def test_a_cooldown_beyond_the_role_deadline_still_fails_at_once(status, retry_a
     assert time.monotonic() - started < 1
 
 
-@pytest.mark.parametrize("provider, model, key, host", [
-    ("xkiro", "mistralai/codestral-2508", "x_kiro_api_key", "api.xkiro.com"),
-    ("vyce", "deepseek-v4-flash", "vyce_ai_api_key", "vyceai.com"),
-    ("tokenforge", "deepseek-v4-pro", "token_forge_api_key", "tokenforge.ai.studio"),
-    ("nvidia", "moonshotai/kimi-k3", "nvidia_api_key", "integrate.api.nvidia.com"),
+@pytest.mark.parametrize("provider, model, key, host, path", [
+    ("xkiro", "mistralai/codestral-2508", "x_kiro_api_key", "api.xkiro.com", "/v1/chat/completions"),
+    ("vyce", "deepseek-v4-flash", "vyce_ai_api_key", "vyceai.com", "/v1/chat/completions"),
+    ("tokenforge", "deepseek-v4-pro", "token_forge_api_key", "tokenforge.ai.studio", "/v1/chat/completions"),
+    ("nvidia", "moonshotai/kimi-k3", "nvidia_api_key", "integrate.api.nvidia.com", "/v1/chat/completions"),
+    ("kilo", "kilo-auto/free", "kilo_api_key", "api.kilo.ai", "/api/gateway/chat/completions"),
+    ("cohere", "command-a-03-2025", "cohere_api_key", "api.cohere.ai", "/compatibility/v1/chat/completions"),
+    ("cloudflare", "@cf/meta/llama-4-scout-17b-16e-instruct", "cloudflare_worker_ai_api",
+     "api.cloudflare.com", "/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/v1/chat/completions"),
 ])
-def test_gateway_providers_use_their_own_endpoint_and_credential(provider, model, key, host):
+def test_gateway_providers_use_their_own_endpoint_and_credential(provider, model, key, host, path):
     """Probed 2026-09-16 with the runtime's JSON request shape and a 22k-token prompt."""
     import json
 
     settings = Settings(_env_file=None, cloud_enabled=True, cloud_chain_product=f"{provider}:{model}",
+                        cloudflare_account_id="0123456789abcdef0123456789abcdef",
                         **{key: f"{provider}-fixture-key"})
     seen = []
 
@@ -520,7 +525,7 @@ def test_gateway_providers_use_their_own_endpoint_and_credential(provider, model
         artifact, info = runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
     assert artifact == product_candidate()
     assert info.provider == provider
-    assert seen == [(host, "/v1/chat/completions", f"Bearer {provider}-fixture-key")]
+    assert seen == [(host, path, f"Bearer {provider}-fixture-key")]
 
 
 def test_a_gateway_without_its_credential_is_skipped():
@@ -595,3 +600,19 @@ def test_a_fenced_answer_that_rewrites_governed_facts_is_still_rejected():
     runtime = _vyce_runtime("```json\n" + changed.model_dump_json() + "\n```")
     with pytest.raises(RuntimeError, match="governed fields differ"):
         runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+
+
+@pytest.mark.parametrize("account", [None, "../../other", "0123456789abcdef0123456789abcdeZ"])
+def test_cloudflare_needs_a_well_formed_account_id_before_its_token_is_used(account):
+    """The account id is part of the URL; a missing or malformed one must not
+    send the token anywhere."""
+    settings = Settings(_env_file=None, cloud_enabled=True, cloudflare_worker_ai_api="fixture",
+                        cloudflare_account_id=account, mistral_api_key="fixture",
+                        cloud_chain_product="cloudflare:@cf/meta/llama-4-scout-17b-16e-instruct,mistral:mistral-small-latest")
+    hosts = []
+    with httpx.Client(transport=httpx.MockTransport(lambda request: hosts.append(request.url.host) or
+            httpx.Response(200, json={"choices": [{"message": {
+                "content": product_candidate().model_dump_json()}}]}))) as client:
+        CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
+            AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+    assert hosts == ["api.mistral.ai"]

@@ -101,6 +101,7 @@ def test_cloud_context_rejects_env_content() -> None:
 @pytest.mark.parametrize("key", [
     "mistral_api_key", "open_router_api_key", "openrouter_api_key",
     "vyce_ai_api_key", "token_forge_api_key", "x_kiro_api_key", "nvidia_api_key",
+    "kilo_api_key", "cohere_api_key", "cloudflare_worker_ai_api",
 ])
 def test_cloud_context_rejects_new_provider_credentials(key):
     with pytest.raises(ValueError, match="sensitive"):
@@ -314,6 +315,8 @@ def test_a_failed_push_message_with_an_embedded_token_is_redacted() -> None:
     "sk-xt-" + "Zz09" * 12,
     "tf_live_" + "q7W3" * 11,
     "nvapi-" + "Ab_9-" * 12,
+    "cfut_" + "Qw3r" * 12,
+    "eyJhbGciOiJIUzI1NiJ9." + "eyJzdWIiOiJhc2V0In0" * 3 + "." + "c2lnbmF0dXJl" * 3,
 ])
 def test_gateway_keys_are_redacted_by_shape(token):
     assert token not in redact_secrets(f"provider said: invalid key {token} rejected")

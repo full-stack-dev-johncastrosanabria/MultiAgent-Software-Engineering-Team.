@@ -37,10 +37,17 @@ _OPENAI_COMPATIBLE = {
     "vyce": ("https://vyceai.com/v1/chat/completions", "vyce_ai_api_key"),
     "tokenforge": ("https://tokenforge.ai.studio/v1/chat/completions", "token_forge_api_key"),
     "nvidia": ("https://integrate.api.nvidia.com/v1/chat/completions", "nvidia_api_key"),
+    "kilo": ("https://api.kilo.ai/api/gateway/chat/completions", "kilo_api_key"),
+    "cohere": ("https://api.cohere.ai/compatibility/v1/chat/completions", "cohere_api_key"),
+    "cloudflare": (
+        "https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1/chat/completions",
+        "cloudflare_worker_ai_api",
+    ),
 }
+_CLOUDFLARE_ACCOUNT = re.compile(r"[0-9a-f]{32}")
 # Gateway defaults for output length are provider-specific and can truncate a
 # Developer's full-file content; state the budget explicitly, as for OpenRouter.
-_EXPLICIT_OUTPUT_BUDGET = frozenset({"xkiro", "vyce", "tokenforge", "nvidia"})
+_EXPLICIT_OUTPUT_BUDGET = frozenset({"xkiro", "vyce", "tokenforge", "nvidia", "kilo", "cohere", "cloudflare"})
 
 # Both logical providers use Google's official API. Keeping the second route
 # distinct gives its credential and cooldown independent state while ensuring
@@ -296,6 +303,10 @@ class CloudRouter:
         else:
             entry = _OPENAI_COMPATIBLE.get(selection.provider)
             key = getattr(self._settings, entry[1], None) if entry else None
+            if entry and "{account}" in entry[0]:
+                # The account id is interpolated into the URL the token is sent to.
+                account = self._settings.cloudflare_account_id or ""
+                key = key if _CLOUDFLARE_ACCOUNT.fullmatch(account) else None
         return self._settings.cloud_enabled and bool(key)
 
 
@@ -481,6 +492,7 @@ class CloudModelRuntime:
                 usage = payload.get("usageMetadata")
             else:
                 endpoint, credential = _OPENAI_COMPATIBLE[selection.provider]
+                endpoint = endpoint.replace("{account}", self.settings.cloudflare_account_id or "")
                 schema_mode = (selection.provider == "mistral" or
                     (selection.provider == "openrouter" and selection.model != "minimax/minimax-m3:free"))
                 response_format = ({"type": "json_schema", "json_schema": {
