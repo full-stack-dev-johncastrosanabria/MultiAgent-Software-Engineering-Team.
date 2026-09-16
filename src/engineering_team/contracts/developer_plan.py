@@ -190,7 +190,12 @@ def validate_target_plan(
                  if is_manifest(path) and str(PurePosixPath(path).parent) in edited_roots]
     examples = [path for path in candidate.protected_test_paths
                 if any(_under(path, root) for root in edited_roots)][:3]
-    reads = list(dict.fromkeys([*reads, *manifests, *examples]))
+    # Shared fixtures decide what a new test can rely on: FlaskApiProduct's autouse
+    # conftest fixture wiped every row a test created in its own setup.
+    fixtures = [path for path in candidate.inventory_paths
+                if PurePosixPath(path).name == "conftest.py"
+                and any(_under(path, root) for root in edited_roots)]
+    reads = list(dict.fromkeys([*reads, *manifests, *fixtures, *examples]))
     if len(reads) > 24:
         raise ValueError("target plan exceeds the evidence read budget")
     return writes, reads

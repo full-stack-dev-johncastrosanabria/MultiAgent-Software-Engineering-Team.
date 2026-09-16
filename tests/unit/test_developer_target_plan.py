@@ -403,3 +403,14 @@ def test_new_production_sources_stay_bounded(path):
     ])
     with pytest.raises(ValueError):
         validate_target_plan(candidate, proposed, all_paths=set(PATHS))
+
+
+def test_shared_test_fixtures_of_the_component_are_always_read():
+    """FlaskApiProduct apply-470d0440: tests/conftest.py has an autouse fixture that
+    deletes every category before each test. The author never read it, created data
+    in its own fixture, and its tests failed on data the conftest had wiped."""
+    paths = [*PATHS, "api/tests/test_other_a.py", "api/tests/test_other_b.py",
+             "api/tests/test_other_c.py", "api/tests/conftest.py"]
+    candidate = plan_candidate(paths, authored=set())
+    _, reads = validate_target_plan(candidate, proposed_plan(candidate), all_paths=set(paths))
+    assert "api/tests/conftest.py" in reads
