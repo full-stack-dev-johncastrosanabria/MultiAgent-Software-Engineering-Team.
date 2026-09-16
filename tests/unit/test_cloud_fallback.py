@@ -280,7 +280,6 @@ def test_gateway_fallbacks_are_models_that_passed_the_governed_tasks() -> None:
         assert "tokenforge" not in providers, role
         assert ("xkiro", "mistralai/mistral-medium-3.5") not in chain, role
         if "vyce" in providers:
-            assert role in {AgentRole.PRODUCT, AgentRole.DEVELOPER, AgentRole.SECURITY}, role
             assert providers.index("vyce") > max(
                 index for index, provider in enumerate(providers) if provider == "xkiro"
             ), role
@@ -288,3 +287,8 @@ def test_gateway_fallbacks_are_models_that_passed_the_governed_tasks() -> None:
     # agnes-3.0-flash authored real sources 2/2 once fenced JSON was accepted,
     # and fails target planning within seconds; it closes Developer's chain.
     assert chains[AgentRole.DEVELOPER][-2] == ("vyce", "agnes-3.0-flash")
+    # In apply-82aaa8c3 Nemotron spent 117-129 s of Architecture's 120 s deadline;
+    # agnes-3.0-flash passed the Architecture task in 8 s.
+    architecture = chains[AgentRole.ARCHITECTURE]
+    assert architecture.index(("vyce", "agnes-3.0-flash")) < architecture.index(
+        ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"))

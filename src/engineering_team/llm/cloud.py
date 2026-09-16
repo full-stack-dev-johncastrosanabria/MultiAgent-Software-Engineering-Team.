@@ -77,6 +77,8 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
         ("groq", "openai/gpt-oss-120b"),
         ("xkiro", "deepseek/deepseek-v4-pro"),
         ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
+        # Nemotron spent 117-129 s of this role's deadline in apply-82aaa8c3.
+        ("vyce", "agnes-3.0-flash"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
         ("google", "gemini-3.5-flash"),
     ),
