@@ -299,3 +299,50 @@ def test_gateway_fallbacks_are_models_that_passed_the_governed_tasks() -> None:
     architecture = chains[AgentRole.ARCHITECTURE]
     assert architecture.index(("vyce", "agnes-3.0-flash")) < architecture.index(
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"))
+
+
+# Gateway models that passed each role's own task when evaluated through
+# CloudModelRuntime on 2026-09-16 (Product spec, Architecture proposal, Developer
+# target plan and authoring of real FlaskApiProduct sources, Security review).
+_PASSED = {
+    AgentRole.PRODUCT: {
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"), ("vyce", "deepseek-v4-flash"),
+        ("nvidia", "nvidia/nemotron-3-super-120b-a12b"), ("cohere", "command-a-03-2025"),
+        ("kilo", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("cloudflare", "@cf/meta/llama-4-scout-17b-16e-instruct"),
+    },
+    AgentRole.ARCHITECTURE: {
+        ("xkiro", "deepseek/deepseek-v4-pro"), ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
+        ("vyce", "agnes-3.0-flash"), ("cohere", "command-a-03-2025"),
+        ("cloudflare", "@cf/nvidia/nemotron-3-120b-a12b"), ("kilo", "nex-agi/nex-n2.5-pro:free"),
+    },
+    AgentRole.DEVELOPER: {
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"), ("xkiro", "qwen/qwen3-coder-plus:free"),
+        ("vyce", "agnes-3.0-flash"), ("cohere", "command-a-03-2025"),
+        ("kilo", "nvidia/nemotron-3-super-120b-a12b:free"), ("cloudflare", "@cf/openai/gpt-oss-120b"),
+    },
+    AgentRole.SECURITY: {
+        ("xkiro", "deepseek/deepseek-v4-pro"), ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
+        ("vyce", "deepseek-v4-flash"), ("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
+        ("cohere", "command-a-03-2025"), ("kilo", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("cloudflare", "@cf/meta/llama-4-scout-17b-16e-instruct"),
+    },
+}
+_GATEWAYS = {"xkiro", "vyce", "nvidia", "cohere", "kilo", "cloudflare", "tokenforge"}
+
+
+def test_every_gateway_entry_passed_that_roles_own_task() -> None:
+    router = CloudRouter(Settings(_env_file=None))
+    for role, passed in _PASSED.items():
+        chain = [(item.provider, item.model) for item in router.selection_chain(role)]
+        gateways = [entry for entry in chain if entry[0] in _GATEWAYS]
+        assert set(gateways) <= passed, (role, set(gateways) - passed)
+
+
+def test_cohere_command_a_is_the_first_gateway_after_groq_where_runs_died():
+    """apply-82aaa8c3 and apply-f48e4189 died in Architecture and Security
+    remediation; Command A passed those tasks in 3 s and 2 s."""
+    router = CloudRouter(Settings(_env_file=None))
+    for role in (AgentRole.ARCHITECTURE, AgentRole.SECURITY, AgentRole.PRODUCT):
+        chain = [(item.provider, item.model) for item in router.selection_chain(role)]
+        assert chain.index(("cohere", "command-a-03-2025")) == 2, role

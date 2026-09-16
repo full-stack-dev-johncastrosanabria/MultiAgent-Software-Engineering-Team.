@@ -79,8 +79,13 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
     AgentRole.PRODUCT: (
         ("groq", "openai/gpt-oss-120b"),
         ("mistral", "mistral-small-latest"),
+        # Cohere's Command A passed all five tasks once its output budget stayed
+        # under 8192 tokens; trial keys are rate limited, so it is a fallback.
+        ("cohere", "command-a-03-2025"),
         ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("kilo", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("cloudflare", "@cf/meta/llama-4-scout-17b-16e-instruct"),
         ("vyce", "deepseek-v4-flash"),
         ("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
         ("google", "gemini-3.5-flash"),
@@ -88,10 +93,13 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
     AgentRole.ARCHITECTURE: (
         ("mistral", "mistral-medium-latest"),
         ("groq", "openai/gpt-oss-120b"),
+        ("cohere", "command-a-03-2025"),
         ("xkiro", "deepseek/deepseek-v4-pro"),
+        ("cloudflare", "@cf/nvidia/nemotron-3-120b-a12b"),
         ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         # Nemotron spent 117-129 s of this role's deadline in apply-82aaa8c3.
         ("vyce", "agnes-3.0-flash"),
+        ("kilo", "nex-agi/nex-n2.5-pro:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
         ("google", "gemini-3.5-flash"),
     ),
@@ -103,17 +111,24 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
         ("mistral", "codestral-latest"),
         ("groq", "openai/gpt-oss-120b"),
         ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
+        ("cohere", "command-a-03-2025"),
         ("xkiro", "qwen/qwen3-coder-plus:free"),
         ("mistral", "mistral-small-latest"),
+        # Authoring took 72-85 s on these two; the Developer timeout allows it.
+        ("kilo", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("cloudflare", "@cf/openai/gpt-oss-120b"),
         ("vyce", "agnes-3.0-flash"),
         ("google", "gemini-3.5-flash"),
     ),
     AgentRole.SECURITY: (
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
         ("groq", "openai/gpt-oss-120b"),
+        ("cohere", "command-a-03-2025"),
         ("xkiro", "deepseek/deepseek-v4-pro"),
         ("mistral", "mistral-small-latest"),
         ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
+        ("cloudflare", "@cf/meta/llama-4-scout-17b-16e-instruct"),
+        ("kilo", "nvidia/nemotron-3-super-120b-a12b:free"),
         ("vyce", "deepseek-v4-flash"),
         ("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
         ("google", "gemini-3.5-flash"),
