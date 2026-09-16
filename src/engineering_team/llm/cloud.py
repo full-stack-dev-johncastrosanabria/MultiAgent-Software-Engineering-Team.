@@ -314,6 +314,12 @@ class CloudModelRuntime:
         self.attempts: list[ModelExecutionInfo] = []
         self._unavailable_until: dict[tuple[str, str], float] = {}
 
+    def _cooling_until(self, selection: ModelSelection) -> float:
+        return max(
+            self._unavailable_until.get((selection.provider, "*"), 0),
+            self._unavailable_until.get((selection.provider, selection.model), 0),
+        )
+
     def invoke_artifact(
         self,
         role: AgentRole,
@@ -335,14 +341,26 @@ class CloudModelRuntime:
             raise RuntimeError("CLOUD_FALLBACK_UNAVAILABLE: disabled, missing credential, or budget")
         # Skip entries whose provider has no usable credential rather than aborting the
         # whole chain on the first unconfigured one.
-        while _attempt < len(chain) and (
-            not self.router.enabled_for(chain[_attempt])
-            or self._unavailable_until.get((chain[_attempt].provider, "*"), 0) > time.monotonic()
-            or self._unavailable_until.get((chain[_attempt].provider, chain[_attempt].model), 0) > time.monotonic()
-        ):
-            _attempt += 1
-        if _attempt >= len(chain):
-            raise RuntimeError("CLOUD_FALLBACK_UNAVAILABLE: disabled, missing credential, or budget")
+        start = _attempt
+        while True:
+            _attempt = start
+            while _attempt < len(chain) and (
+                not self.router.enabled_for(chain[_attempt])
+                or self._cooling_until(chain[_attempt]) > time.monotonic()
+            ):
+                _attempt += 1
+            if _attempt < len(chain):
+                break
+            # Every usable model is cooling down. Waiting for the earliest one,
+            # within the role deadline, is an attempt; failing at once made a
+            # stage retry touch nothing. A credential failure never expires.
+            resume = min(
+                (self._cooling_until(item) for item in chain[start:] if self.router.enabled_for(item)),
+                default=float("inf"),
+            )
+            if resume >= deadline:
+                raise RuntimeError("CLOUD_FALLBACK_UNAVAILABLE: disabled, missing credential, or budget")
+            time.sleep(max(0.0, resume - time.monotonic()))
         selection = chain[_attempt]
         remaining = deadline - time.monotonic()
         if remaining <= 0:

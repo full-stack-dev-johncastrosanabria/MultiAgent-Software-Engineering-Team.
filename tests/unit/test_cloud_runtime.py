@@ -442,3 +442,52 @@ def test_secondary_google_credential_name_is_redacted_from_trace_and_events():
 
     assert trace.events[0]["metadata"]["gemini_api_key_2"] == "[REDACTED]"
     assert "secondary-secret" not in str(event)
+
+
+def _mistral_success(candidate) -> httpx.Response:
+    return httpx.Response(200, json={
+        "choices": [{"message": {"content": candidate.model_dump_json()}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    })
+
+
+def test_a_stage_retry_waits_for_a_cooling_chain_instead_of_failing_at_once():
+    """Observed 2026-09-16: Developer's stage retry ran while every usable model
+    was in its 30 s cooldown, touched nothing, and sent the run to human review."""
+    import time
+
+    settings = Settings(_env_file=None, cloud_enabled=True, mistral_api_key="fixture",
+        cloud_chain_product="mistral:mistral-small-latest")
+    responses = iter([
+        httpx.Response(429, headers={"Retry-After": "0.3"}, json={}),
+        _mistral_success(product_candidate()),
+    ])
+    with httpx.Client(transport=httpx.MockTransport(lambda _: next(responses))) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        with pytest.raises(RuntimeError, match="rate_limit"):
+            runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+        started = time.monotonic()
+        artifact, info = runtime.invoke_artifact(
+            AgentRole.PRODUCT, cloud_envelope(), product_candidate()
+        )
+    assert artifact == product_candidate()
+    assert info.structured_output_success
+    assert time.monotonic() - started >= 0.2
+
+
+@pytest.mark.parametrize("status, retry_after", [(429, "600"), (401, None)])
+def test_a_cooldown_beyond_the_role_deadline_still_fails_at_once(status, retry_after):
+    import time
+
+    settings = Settings(_env_file=None, cloud_enabled=True, mistral_api_key="fixture",
+        cloud_chain_product="mistral:mistral-small-latest")
+    headers = {"Retry-After": retry_after} if retry_after else {}
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda _: httpx.Response(status, headers=headers, json={}))) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        with pytest.raises(RuntimeError):
+            runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+        started = time.monotonic()
+        with pytest.raises(RuntimeError, match="disabled, missing credential, or budget"):
+            runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+    assert time.monotonic() - started < 1
