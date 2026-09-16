@@ -65,12 +65,15 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
     # primary and first fallback. Vyce ignores response_format and fences its
     # JSON; once one fenced block was accepted, deepseek-v4-flash passed Product
     # and Security and agnes-3.0-flash passed Developer authoring (not planning).
+    # NVIDIA's free endpoints timed out on almost every model; its Nemotron 3
+    # Super passed Product and Security and keeps that model off one provider.
     AgentRole.PRODUCT: (
         ("groq", "openai/gpt-oss-120b"),
         ("mistral", "mistral-small-latest"),
         ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
         ("vyce", "deepseek-v4-flash"),
+        ("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
         ("google", "gemini-3.5-flash"),
     ),
     AgentRole.ARCHITECTURE: (
@@ -103,6 +106,7 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
         ("mistral", "mistral-small-latest"),
         ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         ("vyce", "deepseek-v4-flash"),
+        ("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
         ("google", "gemini-3.5-flash"),
     ),
 }

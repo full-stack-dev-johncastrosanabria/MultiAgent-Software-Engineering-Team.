@@ -289,6 +289,13 @@ def test_gateway_fallbacks_are_models_that_passed_the_governed_tasks() -> None:
     assert chains[AgentRole.DEVELOPER][-2] == ("vyce", "agnes-3.0-flash")
     # In apply-82aaa8c3 Nemotron spent 117-129 s of Architecture's 120 s deadline;
     # agnes-3.0-flash passed the Architecture task in 8 s.
+    # NVIDIA's free endpoints timed out on almost every model when evaluated; only
+    # nemotron-3-super passed, on Product (15 s) and Security (6 s).
+    for role, chain in chains.items():
+        nvidia = [model for provider, model in chain if provider == "nvidia"]
+        expected = ["nvidia/nemotron-3-super-120b-a12b"] if role in {
+            AgentRole.PRODUCT, AgentRole.SECURITY} else []
+        assert nvidia == expected, role
     architecture = chains[AgentRole.ARCHITECTURE]
     assert architecture.index(("vyce", "agnes-3.0-flash")) < architecture.index(
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"))
