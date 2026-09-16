@@ -94,7 +94,11 @@ _REMEDIATION_CONTRACT = (
     "editing; a quoted JSON number against a numeric oracle is an implementation "
     "serialization defect, so convert the implementation value to a native JSON "
     "number and never change a numeric oracle to a string; do not reproduce file "
-    "contents already rejected for these obligations."
+    "contents already rejected for these obligations.\n"
+    "4. A compilation error saying a package, class or symbol does not exist means "
+    "that API is not on this project's classpath at the versions it declares: stop "
+    "using it, never add a dependency, and use only APIs the project's existing "
+    "sources, tests and manifests already provide."
 )
 
 

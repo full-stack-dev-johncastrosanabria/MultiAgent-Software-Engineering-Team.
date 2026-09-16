@@ -402,11 +402,20 @@ class CloudModelRuntime:
         self.settings = settings
         self.router = CloudRouter(settings)
         self.budget = CloudBudget(settings, unlimited=primary)
+        self._rotation: dict[AgentRole, int] = {}
         self.client = client
         self.trace = trace
         self.primary = primary
         self.attempts: list[ModelExecutionInfo] = []
         self._unavailable_until: dict[tuple[str, str], float] = {}
+
+    def rotate_chain(self, role: AgentRole, offset: int) -> None:
+        """Start this role's chain `offset` models later, wrapping around.
+
+        A remediation that did not converge with one model is retried with the
+        next: spring-demo repeated the same compile error for five iterations.
+        """
+        self._rotation[role] = max(0, offset)
 
     def _cooling_until(self, selection: ModelSelection) -> float:
         return max(
@@ -425,6 +434,8 @@ class CloudModelRuntime:
         _deadline: float | None = None,
     ) -> tuple[BaseModel, ModelExecutionInfo]:
         chain = self.router.selection_chain(role)
+        offset = self._rotation.get(role, 0) % len(chain) if chain else 0
+        chain = chain[offset:] + chain[:offset]
         developer = role is AgentRole.DEVELOPER
         role_timeout = (
             self.settings.developer_role_timeout_seconds if developer

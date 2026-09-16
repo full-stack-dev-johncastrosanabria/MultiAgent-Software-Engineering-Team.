@@ -356,3 +356,23 @@ def test_a_plan_that_writes_nothing_is_still_refused():
     with pytest.raises(ValueError, match="bounded distinct"):
         validate_target_plan(candidate, proposed_plan(candidate, edit_paths=[], new_files=[]),
                              all_paths=set(PATHS))
+
+
+def test_later_remediation_rotates_the_developer_model_chain(tmp_path):
+    """The same model repeated one compile error for five iterations; a later
+    remediation starts with the next model instead."""
+    class RotatingRuntime(NaturalRuntime):
+        def __init__(self):
+            super().__init__()
+            self.rotations = []
+
+        def rotate_chain(self, role, offset):
+            self.rotations.append((role, offset))
+
+    runtime = RotatingRuntime()
+    graph = build_engineering_graph(repository_mcp=setup_repository(tmp_path), model_runtime=runtime)
+    graph.nodes["Developer"].invoke({
+        "run_id": "rotation", "requirement": REQUIREMENT, "iteration": 3,
+        "repository_context": {"apply_changes": True, "authorized": True},
+    })
+    assert runtime.rotations and set(runtime.rotations) == {(AgentRole.DEVELOPER, 2)}

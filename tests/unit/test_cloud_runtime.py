@@ -632,8 +632,25 @@ def test_cohere_output_budget_stays_under_its_model_limit(role, expected):
         budgets.append(json.loads(request.content)["max_tokens"])
         return httpx.Response(429, json={})
 
-    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        with pytest.raises(RuntimeError):
-            CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
-                role, cloud_envelope(), product_candidate())
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client, pytest.raises(RuntimeError):
+        CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
+            role, cloud_envelope(), product_candidate())
     assert budgets == [expected]
+
+
+def test_a_rotated_developer_chain_starts_later_and_wraps_around():
+    settings = Settings(_env_file=None, cloud_enabled=True, mistral_api_key="fixture",
+                        groq_api_key="fixture", cohere_api_key="fixture",
+                        cloud_chain_developer="mistral:codestral-latest,groq:openai/gpt-oss-120b,cohere:command-a-03-2025")
+    hosts = []
+
+    def respond(request):
+        hosts.append(request.url.host)
+        return httpx.Response(429, json={})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = CloudModelRuntime(settings, client=client, primary=True)
+        runtime.rotate_chain(AgentRole.DEVELOPER, 2)
+        with pytest.raises(RuntimeError):
+            runtime.invoke_artifact(AgentRole.DEVELOPER, cloud_envelope(), product_candidate())
+    assert hosts == ["api.cohere.ai", "api.mistral.ai", "api.groq.com"]

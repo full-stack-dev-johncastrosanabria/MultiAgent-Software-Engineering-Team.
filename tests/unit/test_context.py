@@ -222,3 +222,12 @@ def test_developer_projection_carries_the_implementation_it_authored() -> None:
 
     assert "implementation" in envelope.state_projection
     assert envelope.state_projection["implementation"] is not None
+
+
+def test_remediation_says_what_a_missing_package_or_symbol_means() -> None:
+    """spring-demo apply-f8a92e20: five iterations imported a Spring Boot 3 package
+    that does not exist in the project's Spring Boot 4, with the compiler saying so."""
+    from engineering_team.models.context import _REMEDIATION_CONTRACT
+
+    assert "does not exist" in _REMEDIATION_CONTRACT
+    assert "classpath" in _REMEDIATION_CONTRACT
