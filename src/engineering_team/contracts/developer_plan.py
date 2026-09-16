@@ -131,7 +131,8 @@ def validate_target_plan(
         raise ValueError("target plan edits must be source files")
     new_paths = [item.path for item in new_files]
     writes = [*edit_paths, *new_paths]
-    if not edit_paths or len(writes) > MAX_PLAN_PATHS or len(set(writes)) != len(writes):
+    # A remediation may only need a test: coverage can be the one thing missing.
+    if not writes or len(writes) > MAX_PLAN_PATHS or len(set(writes)) != len(writes):
         raise ValueError("target plan requires bounded distinct implementation edits")
     test_projects = {
         str(PurePosixPath(item.path).parent) for item in new_files
@@ -170,6 +171,7 @@ def validate_target_plan(
     # Always inspect build conventions and a test example in every edited component.
     edited_roots = {root for root in candidate.component_roots
                     if any(_under(path, root) for path in edit_paths)}
+    edited_roots |= {item.component_root for item in new_files}
     manifests = [path for path in candidate.inventory_paths
                  if is_manifest(path) and str(PurePosixPath(path).parent) in edited_roots]
     examples = [path for path in candidate.protected_test_paths

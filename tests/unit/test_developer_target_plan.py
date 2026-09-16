@@ -339,3 +339,20 @@ def test_cloud_reports_why_a_target_plan_was_rejected():
         runtime = CloudModelRuntime(settings, client=client, primary=True)
         with pytest.raises(RuntimeError, match="target plan rejected: target plan attempts to modify original tests"):
             runtime.invoke_artifact(AgentRole.DEVELOPER, envelope, candidate)
+
+
+def test_a_remediation_that_only_adds_a_test_is_a_valid_plan():
+    """spring-demo apply-de2851ce: every test passed and only coverage was missing;
+    plans adding a test without touching implementation were rejected as
+    "requires bounded distinct implementation edits"."""
+    candidate = plan_candidate(PATHS, authored=set())
+    proposed = proposed_plan(candidate, edit_paths=[])
+    writes, _ = validate_target_plan(candidate, proposed, all_paths=set(PATHS))
+    assert writes == ["api/tests/test_validation.py"]
+
+
+def test_a_plan_that_writes_nothing_is_still_refused():
+    candidate = plan_candidate(PATHS, authored=set())
+    with pytest.raises(ValueError, match="bounded distinct"):
+        validate_target_plan(candidate, proposed_plan(candidate, edit_paths=[], new_files=[]),
+                             all_paths=set(PATHS))
