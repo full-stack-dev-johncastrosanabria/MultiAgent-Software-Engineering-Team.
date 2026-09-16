@@ -138,3 +138,77 @@ def test_dotnet_supported_clean_reports_still_pass(tmp_path, monkeypatch, payloa
     result = run_scan(tmp_path, monkeypatch, "dotnet", "Restore complete\n" + json.dumps(payload), 0)
     assert result.status is ToolStatus.SUCCESS
     assert not result.confirmed_dependency_findings
+
+
+@pytest.mark.parametrize("stack", ["node", "dotnet"])
+def test_container_keeps_large_advisory_stdout_separate_from_notices(tmp_path, monkeypatch, stack):
+    """Exercise the actual buffering boundary, not a full-output fake runner."""
+    from io import BytesIO
+
+    from engineering_team.mcp.container import ContainerRunner
+
+    payload = {**(NPM if stack == "node" else DOTNET), "padding": "x" * 12000}
+    stdout = json.dumps(payload).encode()
+
+    class Process:
+        def __init__(self, *args, **kwargs):
+            self.stdout = BytesIO(stdout)
+            self.stderr = BytesIO(b"npm notice: a newer version is available\n")
+            self.returncode = 1 if stack == "node" else 0
+
+        def wait(self, timeout):
+            return self.returncode
+
+    runner = ContainerRunner(tmp_path, image=profile_for(stack).image)
+    monkeypatch.setattr(runner, "_ensure_volume", lambda: None)
+    monkeypatch.setattr(runner, "_quiet", lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""))
+    monkeypatch.setattr(subprocess, "Popen", Process)
+    quality = QualityMCP(tmp_path, runner=runner, profile=profile_for(stack))
+    monkeypatch.setattr(quality, "_sandbox_directory", lambda: "/aset/env")
+    result = quality._run_profile(AgentRole.SECURITY, "run_security_scan", "security", [], {AgentRole.SECURITY}, quality._deadline())
+    assert result.status is ToolStatus.FAIL
+    assert result.confirmed_dependency_findings
+    assert len(result.output_summary) <= 4000
+
+
+@pytest.mark.parametrize("stack", ["node", "dotnet"])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+@pytest.mark.parametrize("failure", ["overflow", OSError, ValueError])
+def test_truncated_scanner_output_cannot_confirm_findings_or_success(tmp_path, monkeypatch, stack, stream, failure):
+    from io import BytesIO
+
+    from engineering_team.mcp.command import _STRUCTURED_OUTPUT_LIMIT
+    from engineering_team.mcp.container import ContainerRunner
+
+    payload = json.dumps(NPM if stack == "node" else DOTNET).encode()
+
+    class BrokenStream(BytesIO):
+        def read(self, size=-1):
+            chunk = super().read(size)
+            if not chunk:
+                raise failure("stream failed before EOF")
+            return chunk
+
+    class Process:
+        def __init__(self, *args, **kwargs):
+            # A complete JSON object remains at the tail. Only the explicit
+            # truncation signal can prove that preceding diagnostics were lost.
+            self.stdout = BytesIO((b"x" * _STRUCTURED_OUTPUT_LIMIT if stream == "stdout" and failure == "overflow" else b"") + payload)
+            self.stderr = BytesIO(b"x" * (_STRUCTURED_OUTPUT_LIMIT + 1) if stream == "stderr" and failure == "overflow" else b"")
+            if failure != "overflow":
+                setattr(self, stream, BrokenStream(payload if stream == "stdout" else b"notice\n"))
+            self.returncode = 1 if stack == "node" else 0
+
+        def wait(self, timeout):
+            return self.returncode
+
+    runner = ContainerRunner(tmp_path, image=profile_for(stack).image)
+    monkeypatch.setattr(runner, "_ensure_volume", lambda: None)
+    monkeypatch.setattr(runner, "_quiet", lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""))
+    monkeypatch.setattr(subprocess, "Popen", Process)
+    quality = QualityMCP(tmp_path, runner=runner, profile=profile_for(stack))
+    monkeypatch.setattr(quality, "_sandbox_directory", lambda: "/aset/env")
+    result = quality._run_profile(AgentRole.SECURITY, "run_security_scan", "security", [], {AgentRole.SECURITY}, quality._deadline())
+    assert result.status is ToolStatus.UNAVAILABLE
+    assert not result.confirmed_dependency_findings
+    assert len(result.output_summary) <= 4000

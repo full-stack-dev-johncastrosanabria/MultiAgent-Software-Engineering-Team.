@@ -229,6 +229,7 @@ class QualityMCP:
         allow_network: bool = False,
         allow_subprocesses: bool = False,
         env: tuple[tuple[str, str], ...] = (),
+        structured_output: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """Hand one command to the runner.
 
@@ -241,6 +242,7 @@ class QualityMCP:
                 cwd=cwd,
                 deadline=deadline,
                 allow_network=allow_network,
+                structured_output=structured_output,
                 allow_subprocesses=allow_subprocesses,
                 env=tuple({**dict(env), **dict(self.service_environment)}.items()),
                 writable_paths=self.profile.toolchain_writable_paths,
@@ -660,7 +662,10 @@ class QualityMCP:
             env=self.profile.env(environment), fail_on_output=fail_on_output,
             unavailable_on_output=unavailable_on_output,
             scans_dependencies=phase in self.profile.dependency_scan_phases,
-            dependency_findings=(self._dependency_findings if phase == "security" else None),
+            dependency_findings=(
+                self._dependency_findings
+                if phase == "security" and self.profile.name in {"node", "dotnet"} else None
+            ),
         )
 
     def _run(
@@ -694,6 +699,7 @@ class QualityMCP:
                 # still has to start its own launcher.
                 allow_subprocesses=allow_network or self.profile.needs_subprocesses,
                 env=env,
+                structured_output=dependency_findings is not None,
             )
         except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
             return self._unavailable(role, tool, exc, started)
@@ -704,9 +710,9 @@ class QualityMCP:
                 role, tool, RuntimeError("quality subprocess was terminated"), started
             )
         infrastructure_error = (
-            unavailable_on_output(full_output)
-            if unavailable_on_output is not None
-            else None
+            "structured scanner output exceeded its retention limit or was incomplete"
+            if dependency_findings is not None and getattr(completed, "output_truncated", False)
+            else unavailable_on_output(full_output) if unavailable_on_output is not None else None
         )
         if infrastructure_error is not None:
             status = ToolStatus.UNAVAILABLE
@@ -719,7 +725,7 @@ class QualityMCP:
             ):
                 status = ToolStatus.FAIL
         findings = (
-            dependency_findings(full_output, completed.returncode)
+            dependency_findings(completed.stdout, completed.returncode)
             if status is ToolStatus.FAIL and dependency_findings is not None else []
         )
         if findings:

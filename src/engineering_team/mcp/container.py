@@ -27,6 +27,8 @@ from pathlib import Path, PurePosixPath
 from engineering_team.docker_labels import label_arguments
 from engineering_team.mcp.command import (
     _OUTPUT_LIMIT,
+    _STRUCTURED_OUTPUT_LIMIT,
+    CommandOutput,
     CommandRequest,
     _BoundedOutput,
     _remaining,
@@ -381,8 +383,9 @@ class ContainerRunner:
         self, name: str, args: list[str], request: CommandRequest
     ) -> subprocess.CompletedProcess[str]:
         timeout = _remaining(request.deadline)
-        stdout_buffer = _BoundedOutput(_OUTPUT_LIMIT)
-        stderr_buffer = _BoundedOutput(_OUTPUT_LIMIT)
+        output_limit = _STRUCTURED_OUTPUT_LIMIT if request.structured_output else _OUTPUT_LIMIT
+        stdout_buffer = _BoundedOutput(output_limit)
+        stderr_buffer = _BoundedOutput(output_limit)
         created = self._quiet(args, timeout=max(1.0, min(timeout, 120.0)))
         if created is None or created.returncode != 0:
             detail = "" if created is None else created.stderr.strip()[-400:]
@@ -441,11 +444,19 @@ class ContainerRunner:
                 output=stdout_buffer.text(),
                 stderr=stderr_buffer.text(),
             )
-        return subprocess.CompletedProcess(
+        # Capture completion before reading either buffer. A reader finishing
+        # between the two snapshots must not make an incomplete snapshot look
+        # complete to a structured-output consumer.
+        readers_incomplete = any(reader.is_alive() for reader in readers)
+        return CommandOutput(
             list(request.args),
             process.returncode,
             stdout_buffer.text(),
             stderr_buffer.text(),
+            output_truncated=(
+                stdout_buffer.truncated or stderr_buffer.truncated
+                or readers_incomplete
+            ),
         )
 
     @staticmethod
@@ -454,6 +465,9 @@ class ContainerRunner:
             for chunk in iter(lambda: stream.read(4096), b""):
                 buffer.append(chunk)
         except (OSError, ValueError):
+            # A terminated reader is not proof of EOF. Its prefix may even be
+            # valid JSON while later error diagnostics were never received.
+            buffer.truncated = True
             return
         finally:
             try:

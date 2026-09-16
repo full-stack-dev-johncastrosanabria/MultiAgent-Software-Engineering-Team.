@@ -522,3 +522,29 @@ def test_a_host_path_outside_both_mounts_is_still_refused(tmp_path: Path) -> Non
     runner = _runner(tmp_path / "inside")
     with pytest.raises(ValueError, match="outside the mounted workspace"):
         runner._container_command("c1", _request(outside, "true"))
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_runner_reports_truncation_at_the_requested_output_limit(tmp_path, monkeypatch, structured, stream):
+    from engineering_team.mcp.command import _OUTPUT_LIMIT, _STRUCTURED_OUTPUT_LIMIT
+
+    limit = _STRUCTURED_OUTPUT_LIMIT if structured else _OUTPUT_LIMIT
+    runner = _runner(tmp_path)
+
+    class Process:
+        returncode = 0
+
+        def __init__(self, *args, **kwargs):
+            self.stdout = BytesIO(b"x" * (limit + 1) if stream == "stdout" else b"ok")
+            self.stderr = BytesIO(b"x" * (limit + 1) if stream == "stderr" else b"")
+
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(runner, "_quiet", lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""))
+    monkeypatch.setattr(subprocess, "Popen", Process)
+    request = _request(tmp_path, "scan", structured_output=structured)
+    result = runner._run_container("probe", runner._container_command("probe", request), request)
+    assert result.output_truncated
+    assert len(getattr(result, stream).encode()) == limit

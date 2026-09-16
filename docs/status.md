@@ -56,7 +56,25 @@ reprodujeron el fallo antes del arreglo; después pasan las 73 pruebas focales.
 La suite integrada del 2026-09-14 terminó con 1038 pruebas aprobadas y 17 omitidas;
 esa ejecución comenzó antes del último ajuste de .NET, cubierto por las focales.
 La revisión independiente aprobó ese ajuste y verificó 48 pruebas adicionales.
-Los cuatro ciclos nuevos con entrega todavía están pendientes.
+La primera repetición, `flaskapiproduct-corrected-20260914a`, conserva clone,
+infraestructura e higiene en verde; ejecución, spec y entrega siguen rojas.
+Sus tres iteraciones ejecutaron los 62 tests originales del backend con éxito.
+El cliente falló con `ENOTDIR`/`ENOENT` durante npm y luego sin detalle.
+La traza y una reproducción independiente confirman que el runner recorta a
+4096 bytes un JSON de npm audit de 10890 bytes antes de validar su procedencia;
+además se mezclaba stderr con el JSON. El transporte corregido retiene hasta
+4 MiB por stream para escáneres estructurados, mantiene los diagnósticos cortos
+y rechaza evidencia truncada o incompleta. La reproducción Docker del 14 de
+septiembre confirmó los advisories con el JSON completo y mantuvo el escáner
+en FAIL. La revisión independiente del 16 de septiembre aprobó el cambio tras
+corregir también errores de lectura de tuberías: 111 pruebas focales pasan y
+ocho pruebas de integración se omiten sin su imagen configurada.
+
+La misma traza demuestra otra causa: los requisitos de la campaña no nombran
+archivos y Developer solo activa la autoría si resuelve destinos explícitos.
+Las tres propuestas quedaron en `PROPOSED`, sin `file_contents`. Falta habilitar
+la resolución de destinos desde evidencia del repositorio para requisitos
+humanos, conservando los tests originales. Ningún PR nuevo quedó entregado.
 
 ### Medición conservada
 
