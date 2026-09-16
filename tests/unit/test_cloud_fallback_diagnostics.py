@@ -35,7 +35,7 @@ def _settings(**overrides: object) -> Settings:
     return Settings(
         cloud_enabled=True, local_first=False, gemini_api_key="fixture-key",
         gemini_api_key_2=None, mistral_api_key=None, open_router_api_key=None,
-        x_kiro_api_key=None, vyce_ai_api_key=None, token_forge_api_key=None,
+        x_kiro_api_key=None, vyce_ai_api_key=None, token_forge_api_key=None, nvidia_api_key=None,
         **{"groq_api_key": None, **overrides},
     )
 

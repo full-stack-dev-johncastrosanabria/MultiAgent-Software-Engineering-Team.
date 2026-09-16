@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     x_kiro_api_key: str | None = None
     vyce_ai_api_key: str | None = None
     token_forge_api_key: str | None = None
+    nvidia_api_key: str | None = None
     # Per-role chain override: "provider:model,provider:model". Empty keeps the
     # defaults in llm/cloud.py, which spread primaries over three providers.
     cloud_chain_product: str = ""

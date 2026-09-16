@@ -36,10 +36,11 @@ _OPENAI_COMPATIBLE = {
     "xkiro": ("https://api.xkiro.com/v1/chat/completions", "x_kiro_api_key"),
     "vyce": ("https://vyceai.com/v1/chat/completions", "vyce_ai_api_key"),
     "tokenforge": ("https://tokenforge.ai.studio/v1/chat/completions", "token_forge_api_key"),
+    "nvidia": ("https://integrate.api.nvidia.com/v1/chat/completions", "nvidia_api_key"),
 }
 # Gateway defaults for output length are provider-specific and can truncate a
 # Developer's full-file content; state the budget explicitly, as for OpenRouter.
-_EXPLICIT_OUTPUT_BUDGET = frozenset({"xkiro", "vyce", "tokenforge"})
+_EXPLICIT_OUTPUT_BUDGET = frozenset({"xkiro", "vyce", "tokenforge", "nvidia"})
 
 # Both logical providers use Google's official API. Keeping the second route
 # distinct gives its credential and cooldown independent state while ensuring

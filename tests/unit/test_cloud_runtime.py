@@ -497,6 +497,7 @@ def test_a_cooldown_beyond_the_role_deadline_still_fails_at_once(status, retry_a
     ("xkiro", "mistralai/codestral-2508", "x_kiro_api_key", "api.xkiro.com"),
     ("vyce", "deepseek-v4-flash", "vyce_ai_api_key", "vyceai.com"),
     ("tokenforge", "deepseek-v4-pro", "token_forge_api_key", "tokenforge.ai.studio"),
+    ("nvidia", "moonshotai/kimi-k3", "nvidia_api_key", "integrate.api.nvidia.com"),
 ])
 def test_gateway_providers_use_their_own_endpoint_and_credential(provider, model, key, host):
     """Probed 2026-09-16 with the runtime's JSON request shape and a 22k-token prompt."""
