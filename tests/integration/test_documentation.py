@@ -24,6 +24,10 @@ OWNERS = (
 # owner file. The index is their entry point; the records themselves are immutable.
 DECISIONS = "docs/architecture/decisions"
 DECISION_INDEX = f"{DECISIONS}/README.md"
+# A dated audit is evidence of one review, not the owner of current facts. Its pages
+# are active so their links are checked; `anexos/` keeps verbatim working papers.
+AUDIT_GLOB = "audit*"
+AUDIT_WORKING_PAPERS = "anexos"
 LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\s]+)\)")
 
 
@@ -36,8 +40,29 @@ def _decision_records() -> set[str]:
     }
 
 
+def _audit_directories() -> list[Path]:
+    return [path for path in (ROOT / "docs").glob(AUDIT_GLOB) if path.is_dir()]
+
+
+def _audit_pages() -> set[str]:
+    return {
+        p.relative_to(ROOT).as_posix()
+        for directory in _audit_directories()
+        for p in directory.rglob("*.md")
+        if AUDIT_WORKING_PAPERS not in p.relative_to(directory).parts
+    }
+
+
+def _audit_working_papers() -> set[Path]:
+    return {
+        p
+        for directory in _audit_directories()
+        for p in (directory / AUDIT_WORKING_PAPERS).rglob("*.md")
+    }
+
+
 def _active_pages() -> set[str]:
-    return set(OWNERS) | {DECISION_INDEX} | _decision_records()
+    return set(OWNERS) | {DECISION_INDEX} | _decision_records() | _audit_pages()
 
 
 def _manifest() -> dict:
@@ -92,9 +117,16 @@ def test_active_local_links_resolve_without_loading_archived_pages() -> None:
 
 
 def test_active_documentation_has_no_unmapped_pages() -> None:
+    working_papers = _audit_working_papers()
     active = {p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md")
-              if not p.is_relative_to(ARCHIVE)}
+              if not p.is_relative_to(ARCHIVE) and p not in working_papers}
     assert active == {name for name in _active_pages() if name.startswith("docs/")}
+
+
+def test_every_dated_audit_is_entered_from_the_map() -> None:
+    map_links = set(_local_links(ROOT / "docs/README.md"))
+    for directory in _audit_directories():
+        assert (directory / "README.md").resolve() in map_links
 
 
 def test_every_decision_record_is_listed_by_its_index() -> None:
