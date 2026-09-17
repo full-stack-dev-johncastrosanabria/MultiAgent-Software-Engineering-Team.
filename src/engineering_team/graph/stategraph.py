@@ -226,7 +226,12 @@ def build_engineering_graph(
         )
         if not blocking:
             return False
-        code = (
+        # What the producer said it was, when it said anything. Folding every
+        # UNAVAILABLE result into MCP_ERROR reported an environment that never
+        # came up as a silent MCP server, and pointed remediation at the code
+        # under test. The status still answers for every result carrying no code
+        # of its own -- which is all of them recorded before the field existed.
+        code = result.error_code or (
             ErrorCode.MCP_ERROR
             if result.status is ToolStatus.UNAVAILABLE
             else ErrorCode.TOOL_ERROR

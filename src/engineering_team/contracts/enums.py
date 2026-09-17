@@ -82,11 +82,12 @@ class StopCause(StrEnum):
     MCP_UNAVAILABLE = "mcp_unavailable"
     # A dependency the project needs never came up. Not in the vocabulary this
     # task started from, and added because its absence made the instrument lie:
-    # every UNAVAILABLE tool result folds into ErrorCode.MCP_ERROR, so a
-    # database that never started was reported as a silent MCP server.
-    # INFRASTRUCTURE_ERROR above exists to draw exactly this distinction, and a
-    # stop cause that cannot draw it points remediation at the code under test
-    # instead of at the environment.
+    # an UNAVAILABLE tool result used to fold into ErrorCode.MCP_ERROR whatever
+    # had actually failed, so a workspace that never synchronised was reported
+    # as a silent MCP server and remediation went looking at the code under
+    # test. INFRASTRUCTURE_ERROR above exists to draw exactly this distinction;
+    # the producers stamp it on ToolResult.error_code and the graph carries it
+    # through, so this cause is read rather than recovered from the wording.
     INFRASTRUCTURE_UNAVAILABLE = "infrastructure_unavailable"
     # The provider answered and this system refused the content: a governed
     # contradiction, a rejected target plan, a truncated generation. Folding

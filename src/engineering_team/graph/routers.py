@@ -237,31 +237,6 @@ def _content_was_rejected(state: EngineeringState) -> bool:
     )
 
 
-_INFRASTRUCTURE_PREFIX = f"{ErrorCode.INFRASTRUCTURE_ERROR.value}:"
-
-
-def _infrastructure_never_started(state: EngineeringState) -> bool:
-    """Whether the result that blocked the run was a dependency that never came up.
-
-    `preserve_tool_result` folds every UNAVAILABLE result into `MCP_ERROR`, so
-    the error code alone cannot separate a silent MCP server from a database
-    that failed to start -- which is the distinction `ErrorCode` already draws
-    with `INFRASTRUCTURE_ERROR`, and draws for precisely this reason. The runner
-    stamps that code as the leading token of the blocking result's error.
-    Reading it reads a typed code that travels in a string field, the same
-    contract the graph already relies on when it classifies a runtime failure;
-    it does not read prose about what went wrong.
-    """
-    blocking = next(
-        (item for item in reversed(state.tool_results) if item.status is ToolStatus.UNAVAILABLE),
-        None,
-    )
-    return (
-        blocking is not None
-        and blocking.error is not None
-        and blocking.error.startswith(_INFRASTRUCTURE_PREFIX)
-    )
-
 
 def _write_attempt_failed(state: EngineeringState) -> bool:
     """Whether a write tool ran and did not succeed."""
@@ -327,9 +302,9 @@ def classify_stop_cause(state: EngineeringState, *, max_iterations: int) -> Stop
         # empty list means an unrecorded one -- surfaced, not guessed at.
         return StopCause.UNKNOWN
     last = state.errors[-1]
+    if last.code is ErrorCode.INFRASTRUCTURE_ERROR:
+        return StopCause.INFRASTRUCTURE_UNAVAILABLE
     if last.code is ErrorCode.MCP_ERROR:
-        if _infrastructure_never_started(state):
-            return StopCause.INFRASTRUCTURE_UNAVAILABLE
         return StopCause.MCP_UNAVAILABLE
     if last.code is ErrorCode.TOOL_ERROR:
         if _authored_changes_were_never_written(state):

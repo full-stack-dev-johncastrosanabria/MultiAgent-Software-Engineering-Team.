@@ -5,6 +5,8 @@ from message strings: the point of `classify_stop_cause` is that the graph stops
 needing to read its own error text back.
 """
 
+import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +31,7 @@ from engineering_team.contracts.models import (
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.graph.routers import classify_stop_cause
 from engineering_team.graph.stategraph import build_engineering_graph
+from engineering_team.mcp.quality import CompositeQuality, QualityMCP
 
 SUBSCORES = {
     "requirements": 100.0, "architecture": 100.0, "security": 100.0,
@@ -98,12 +101,39 @@ def _produced_an_artifact() -> ModelExecutionInfo:
     )
 
 
-def _unavailable_tool(name: str, error: str) -> ToolResult:
-    return ToolResult(
-        tool_name=name, allowed_role=AgentRole.DEVELOPER,
-        status=ToolStatus.UNAVAILABLE, input_summary="services",
-        output_summary="", duration_ms=1, error=error,
-    )
+class WorkspaceSyncError(RuntimeError):
+    """The failure the only two UNAVAILABLE results in the campaign came from."""
+
+
+class IsolatedEnvironmentDown:
+    """The quality MCP a multi-component run gets when its workspace never syncs.
+
+    Built out of the real producers rather than out of a hand-written
+    `ToolResult`, because the hand-written shape is the one production almost
+    never emits: `QualityMCP._unavailable` writes no marker into the message at
+    all, and `CompositeQuality._aggregate` then relabels every component's error
+    with its evidence reference. `apply_run` always wraps the backends in
+    `CompositeQuality`, so this pair is what actually reached the graph in
+    flaskapiproduct-dry-20260916k, the one run in
+    `evaluation/benchmarks/ghcycle/results/raw/` that has UNAVAILABLE results:
+
+        mcp://quality/scan_dependencies#client: isolated environment
+        unavailable: WorkspaceSyncError: workspace transfer container failed
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._components = [
+            QualityMCP(root / name, workspace_root=root, component=name)
+            for name in ("client", "server")
+        ]
+
+    def run_tests(self, role, paths=None) -> ToolResult:
+        failure = WorkspaceSyncError("workspace transfer container failed")
+        results = [
+            component._unavailable(role, "run_tests", failure, time.perf_counter())
+            for component in self._components
+        ]
+        return CompositeQuality._aggregate("run_tests", role, results)
 
 
 def test_an_approved_review_that_never_raised_the_flag_is_approved() -> None:
@@ -390,36 +420,9 @@ def test_a_refusal_a_later_retry_recovered_from_does_not_colour_a_real_outage() 
     )
 
 
-def test_a_dependency_that_never_started_is_not_reported_as_a_silent_mcp_server() -> None:
-    """`ErrorCode` separates these two; the stop cause has to as well.
-
-    `preserve_tool_result` folds every UNAVAILABLE result into MCP_ERROR, so
-    without reading the result itself a database that would not come up is filed
-    against the MCP layer -- and remediation goes looking at the code under test
-    instead of at the environment.
-    """
-    state = _state(
-        human_review_required=True,
-        tool_results=[_unavailable_tool(
-            "run_tests", "INFRASTRUCTURE_ERROR: database never became healthy"
-        )],
-        errors=[_error(
-            ErrorCode.MCP_ERROR,
-            "run_tests: INFRASTRUCTURE_ERROR: database never became healthy",
-            retryable=False,
-        )],
-    )
-
-    cause = classify_stop_cause(state, max_iterations=3)
-
-    assert cause is StopCause.INFRASTRUCTURE_UNAVAILABLE
-    assert cause is not StopCause.MCP_UNAVAILABLE
-
-
 def test_an_unavailable_server_that_is_not_infrastructure_stays_an_mcp_outage() -> None:
     state = _state(
         human_review_required=True,
-        tool_results=[_unavailable_tool("read_file", "repository server did not answer")],
         errors=[_error(
             ErrorCode.MCP_ERROR, "read_file: repository server did not answer",
             retryable=False,
@@ -427,6 +430,36 @@ def test_an_unavailable_server_that_is_not_infrastructure_stays_an_mcp_outage() 
     )
 
     assert classify_stop_cause(state, max_iterations=3) is StopCause.MCP_UNAVAILABLE
+
+
+def test_one_refused_link_outranks_every_genuine_outage_beside_it() -> None:
+    """The declared policy, fixed so it cannot erode into a regression.
+
+    Three links of this chain were really unreachable and one refused what we
+    asked it to write. The stop is the refusal, and deliberately so: an outage is
+    repaired by waiting or by changing provider, a refusal is not, so reporting
+    the majority would send the reader to the wrong repair. Changing this
+    assertion means deciding the policy again, which is the point of writing it
+    down as a test rather than only as a comment.
+    """
+    state = _state(
+        human_review_required=True,
+        errors=[_error(
+            ErrorCode.CLOUD_FALLBACK_UNAVAILABLE,
+            "CLOUD_FALLBACK_UNAVAILABLE: timeout (provider error 504)", retryable=True,
+        )],
+        model_usage=[
+            _attempt(error="rate_limit (provider error 429)", category="rate_limit"),
+            _attempt(
+                error="governed fields differ: objective",
+                category="governed_contradiction", governed_fields_diff=["objective"],
+            ),
+            _attempt(error="server_error (provider error 503)", category="server_error"),
+            _attempt(error="timeout (provider error 504)", category="timeout"),
+        ],
+    )
+
+    assert classify_stop_cause(state, max_iterations=3) is StopCause.LLM_QUALITY_REJECTED
 
 
 def test_a_rate_limited_chain_really_is_an_exhausted_provider_chain() -> None:
@@ -600,6 +633,34 @@ def test_the_blocked_write_flag_is_derived_from_the_cause_not_matched_on_text(
 
     assert not any("destructive operation" in item for item in evidence["errors"])
     assert evidence["destructive_authorization_blocked"] is True
+
+
+def test_a_workspace_that_never_synchronised_is_not_filed_against_the_mcp_layer(
+    tmp_path,
+) -> None:
+    """The real shape, through the real producers, end to end.
+
+    Two component results from `QualityMCP._unavailable`, merged by
+    `CompositeQuality._aggregate`, classified by `preserve_tool_result` and named
+    by `classify_stop_cause`. Nothing here is hand-shaped, which matters: the
+    message that comes out carries no marker a reader could match on, so the
+    typed code is the only thing that survives the trip. The environment failed;
+    the MCP server answered every call it was given.
+    """
+    state = build_engineering_graph(
+        quality_mcp=IsolatedEnvironmentDown(tmp_path)
+    ).invoke({"run_id": "workspace", "requirement": "safe bounded change"})
+
+    blocking = next(
+        item for item in state["tool_results"] if item.status is ToolStatus.UNAVAILABLE
+    )
+
+    assert blocking.error.startswith("mcp://quality/run_tests#client:")
+    assert ErrorCode.INFRASTRUCTURE_ERROR.value not in blocking.error
+    assert blocking.error_code is ErrorCode.INFRASTRUCTURE_ERROR
+    assert state["errors"][-1].code is ErrorCode.INFRASTRUCTURE_ERROR
+    assert state["final_status"] == "HUMAN_REVIEW_REQUIRED"
+    assert state["stop_cause"] == StopCause.INFRASTRUCTURE_UNAVAILABLE.value
 
 
 def test_an_approved_run_names_its_cause_too_instead_of_leaving_it_empty() -> None:

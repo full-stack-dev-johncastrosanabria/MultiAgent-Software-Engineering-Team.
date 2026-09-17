@@ -411,6 +411,12 @@ class QualityMCP:
             output_summary="",
             duration_ms=int((time.perf_counter() - started) * 1000),
             error=f"isolated environment unavailable: {type(exc).__name__}: {exc}",
+            # The isolated environment is what did not come up -- a container, a
+            # workspace transfer, a daemon this suite needed. The code under test
+            # was never given a chance to run, which is the distinction
+            # INFRASTRUCTURE_ERROR exists to draw, and the one the message alone
+            # never carried: this wording has no marker in it at all.
+            error_code=ErrorCode.INFRASTRUCTURE_ERROR,
             evidence_reference=self._evidence_reference(tool),
         )
         self._last[tool] = result
@@ -499,6 +505,7 @@ class QualityMCP:
                 input_summary="services", output_summary="",
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 error=f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: {exc}",
+                error_code=ErrorCode.INFRASTRUCTURE_ERROR,
                 evidence_reference=self._evidence_reference(tool),
             )
         self._services_started = True
@@ -563,6 +570,7 @@ class QualityMCP:
                         f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: applying the "
                         f"project's migrations failed ({' '.join(command[:3])})"
                     ),
+                    error_code=ErrorCode.INFRASTRUCTURE_ERROR,
                     evidence_reference=self._evidence_reference(tool),
                 )
         return None
@@ -750,6 +758,9 @@ class QualityMCP:
                 f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: {infrastructure_error}"
                 if infrastructure_error is not None
                 else None
+            ),
+            error_code=(
+                ErrorCode.INFRASTRUCTURE_ERROR if infrastructure_error is not None else None
             ),
             scans_dependencies=scans_dependencies,
             confirmed_dependency_findings=bool(findings),
@@ -1062,6 +1073,7 @@ class QualityMCP:
             completed = completed.model_copy(update={
                 "status": ToolStatus.UNAVAILABLE,
                 "error": f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: {explanation}",
+                "error_code": ErrorCode.INFRASTRUCTURE_ERROR,
             })
         self._project_result = completed
         return self._operation_failure(completed, role, tool)
@@ -1111,6 +1123,7 @@ class QualityMCP:
             output_summary=previous.output_summary if previous else f"no {source} result",
             duration_ms=0,
             error=previous.error if previous else f"{source} has not executed",
+            error_code=previous.error_code if previous else None,
             test_cases=previous.test_cases if previous else None,
             scans_dependencies=previous.scans_dependencies if previous else False,
             confirmed_dependency_findings=(previous.confirmed_dependency_findings if previous else False),
@@ -1587,6 +1600,19 @@ class CompositeQuality:
             duration_ms=duration,
             evidence_reference=None,
             error="; ".join(errors) if errors else None,
+            # The joined message above is where a producer's marker goes to die:
+            # every component's error is relabelled with its evidence reference,
+            # so nothing a producer wrote at the front of its string is at the
+            # front any more. The code is forwarded instead, taken from the same
+            # result that decided the aggregate status, so what the consumer
+            # reads and what it was told happened cannot disagree.
+            error_code=next(
+                (
+                    result.error_code for result in results
+                    if result.status is status and result.error_code is not None
+                ),
+                None,
+            ),
             # Successful code scans must not hide the provenance of a failing
             # dependency scan. Missing or denied validation is never a finding.
             scans_dependencies=bool(failed_results) and all(

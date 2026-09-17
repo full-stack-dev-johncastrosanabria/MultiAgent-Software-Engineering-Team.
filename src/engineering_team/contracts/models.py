@@ -172,6 +172,21 @@ class ToolResult(StrictModel):
     duration_ms: int = Field(ge=0)
     evidence_reference: str | None = None
     error: str | None = None
+    error_code: ErrorCode | None = None
+    """What kind of failure this is, for consumers that must not read `error`.
+
+    `error` is free text assembled for a human, and it does not survive the trip:
+    `CompositeQuality._aggregate` relabels every component's message with its
+    evidence reference, so any marker a producer wrote at the front of the string
+    stops being at the front as soon as a project has two components. A run that
+    was stopped by an environment that never came up therefore reached the graph
+    indistinguishable from an MCP server that went quiet, and remediation was
+    sent at the code under test. This field carries that distinction in a form
+    aggregation can forward and consumers can match on.
+
+    None means the producer said nothing, and the consumer falls back to the
+    status -- which is what every result recorded before this field existed does.
+    """
     # None preserves legacy stdout evidence. [] means report-aware execution
     # produced no passing cases; a zero exit code alone cannot fill coverage.
     test_cases: list[ExecutedTestCase] | None = None
