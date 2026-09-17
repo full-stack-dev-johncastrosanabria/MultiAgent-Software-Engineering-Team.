@@ -51,10 +51,10 @@ from engineering_team.repository_evidence import (
 )
 
 from .routers import (
+    failure_repetitions,
     remediation_fingerprint,
     review_route,
     security_route,
-    trailing_failure_repetitions,
 )
 
 MAX_DEVELOPER_DEPENDENCY_DEPTH = 2
@@ -926,7 +926,7 @@ def build_engineering_graph(
         state = EngineeringState.model_validate(raw_state)
         if state.human_review_required:
             return "HUMAN_REVIEW_REQUIRED"
-        repeated_failures = trailing_failure_repetitions(state.failure_fingerprints)
+        repeated_failures = failure_repetitions(state.failure_fingerprints)
         route = review_route(
             state.review,
             state.iteration,

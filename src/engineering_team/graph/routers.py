@@ -9,32 +9,53 @@ from engineering_team.contracts.enums import (
     RouteTarget,
     SecuritySeverity,
 )
-from engineering_team.contracts.models import ReviewerDecision
+from engineering_team.contracts.models import BASELINE_RISK_PREFIX, ReviewerDecision
 
 _ALLOWED_REJECTED_TARGETS = {RouteTarget.ARCHITECTURE, RouteTarget.DEVELOPER}
+_HEX = re.compile(r"0x[0-9a-f]+")
+_NUMBER = re.compile(r"\d+(?:[.,:]\d+)*")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _failure_class_text(text: str) -> str:
+    """Text with the parts that change between two identical failures removed.
+
+    Runners print progress percentages, durations, timestamps and counts that
+    differ between cycles failing for the same reason.
+    """
+    folded = _HEX.sub("#", text.casefold())
+    return _WHITESPACE.sub(" ", _NUMBER.sub("#", folded)).strip()
 
 
 def remediation_fingerprint(decision: ReviewerDecision) -> str:
-    """Stable identity for one rejected outcome, without retaining diagnostics."""
+    """Identity of a rejected outcome's failure class, not of its wording.
+
+    Hashing raw text made every cycle look new: in flaskapiproduct-dry-20260916j
+    five rejections gave one reason and five fingerprints. Residual baseline risk
+    is not caused by the change, so it cannot tell two attempts apart.
+    """
+    problems = sorted({
+        _failure_class_text(problem)
+        for problem in decision.problems
+        if not problem.startswith(BASELINE_RISK_PREFIX)
+    })
     material = "\n".join([
         decision.remediation_category.value if decision.remediation_category else "none",
-        decision.reason,
-        *decision.problems,
-    ]).casefold()
-    normalized = re.sub(r"\s+", " ", material).strip()
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:20]
+        _failure_class_text(decision.reason),
+        *problems,
+    ])
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:20]
 
 
-def trailing_failure_repetitions(fingerprints: list[str]) -> int:
+def failure_repetitions(fingerprints: list[str]) -> int:
+    """How many times the latest failure class has occurred anywhere in this run.
+
+    A trailing streak missed an A-B-A loop: spring-demo-dry-20260916e alternated
+    two fingerprints for five cycles and was never stopped early.
+    """
     if not fingerprints:
         return 0
-    latest = fingerprints[-1]
-    count = 0
-    for fingerprint in reversed(fingerprints):
-        if fingerprint != latest:
-            break
-        count += 1
-    return count
+    return fingerprints.count(fingerprints[-1])
 
 
 def review_route(
@@ -61,8 +82,6 @@ def review_route(
         return "HUMAN_REVIEW_REQUIRED"
     if repeated_failures >= 3:
         return "HUMAN_REVIEW_REQUIRED"
-    if repeated_failures == 2 and expected is RouteTarget.DEVELOPER:
-        return "Architecture"
     return decision.return_to.value
 
 

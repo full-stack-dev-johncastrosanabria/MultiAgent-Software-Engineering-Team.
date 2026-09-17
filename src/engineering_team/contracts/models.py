@@ -15,6 +15,10 @@ from .enums import (
     ToolStatus,
 )
 
+# Security's description of dependency advisories on manifests this change did not
+# touch. Consumers use it to keep pre-existing risk out of what a change is asked to fix.
+BASELINE_RISK_PREFIX = "Residual baseline dependency risk"
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")

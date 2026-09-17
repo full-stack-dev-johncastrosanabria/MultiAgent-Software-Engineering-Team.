@@ -1,7 +1,7 @@
 from pathlib import PurePosixPath
 
 from engineering_team.contracts.enums import SecuritySeverity, SecurityStatus, ToolStatus
-from engineering_team.contracts.models import SecurityFinding, SecurityReview
+from engineering_team.contracts.models import BASELINE_RISK_PREFIX, SecurityFinding, SecurityReview
 from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.models.context import ContextEnvelope
 
@@ -113,7 +113,7 @@ class SecurityAgent(AgentBase[SecurityReview]):
                     category="baseline dependencies",
                     severity=SecuritySeverity.HIGH,
                     description=(
-                        "Residual baseline dependency risk reported by scanners; "
+                        f"{BASELINE_RISK_PREFIX} reported by scanners; "
                         "dependency manifests were not modified by this change. "
                         + " | ".join(snippets)
                     ),

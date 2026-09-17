@@ -42,9 +42,9 @@ flowchart LR
   de dependencias, evidencia de seguridad y migración de esquema.
 - **La revisión humana es una salida real.** Cualquier etapa puede terminar en
   `HUMAN_REVIEW_REQUIRED`. La remediación está acotada: el rechazo número
-  `MAX_REMEDIATION_ITERATIONS` (5 por omisión), o el tercero consecutivo con la
-  misma huella de fallo, detiene la automatización en lugar de reintentar
-  indefinidamente.
+  `MAX_REMEDIATION_ITERATIONS` (5 por omisión), o la tercera aparición en la
+  corrida de la misma clase de fallo, detiene la automatización en lugar de
+  reintentar indefinidamente.
 - **Se redacta antes de negar.** Los secretos se enmascaran en el prompt antes de
   que una guardarraíl rechace la operación.
 
