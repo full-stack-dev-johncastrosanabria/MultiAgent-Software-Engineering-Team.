@@ -163,3 +163,10 @@ One decision taken during implementation and worth recording: a file whose bytes
 are not valid UTF-8 is now **refused** rather than returned as a lossy copy. The
 previous host-only code decoded with a replacement character, which handed an
 agent text that differed from the file it claimed to be reading.
+
+*Note, 2026-09-16: for `node` components only, quality commands now run
+against a per-runner native volume holding the repository
+(`mcp/workspace_runner.py`), with sources pushed before each command and checked
+deltas returned. This is a command-execution measure against bind-mount
+failures, not `VolumeWorkspace`: the project still lives on the host and no run
+uses `VolumeWorkspace`.*
