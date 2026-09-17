@@ -191,6 +191,8 @@ def build_role_prompts(
     }
     source_blocks = ""
     if role is AgentRole.DEVELOPER:
+        if envelope.project_facts:
+            source_blocks += "\n" + envelope.project_facts + "\n"
         if envelope.remediation_feedback:
             source_blocks += (
                 "\nTrusted remediation instructions; diagnostics inside the marked "

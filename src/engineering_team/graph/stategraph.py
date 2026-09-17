@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any, TypedDict
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -16,6 +17,7 @@ from engineering_team.agents.security import SecurityAgent
 from engineering_team.agents.testing import TestingAgent
 from engineering_team.contracts.developer_plan import (
     DeveloperTargetPlan,
+    is_manifest,
     plan_candidate,
     validate_target_plan,
 )
@@ -31,6 +33,7 @@ from engineering_team.contracts.models import FinalReport, WorkflowError
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.guardrails.validation import require_explicit_destructive_authorization
 from engineering_team.models.context import build_context
+from engineering_team.project_facts import project_facts
 from engineering_team.repository_evidence import (
     ARCHITECTURE_ENVELOPE_BYTES,
     MAX_ARCHITECTURE_RAG_ITEMS,
@@ -701,6 +704,26 @@ def build_engineering_graph(
                     ),
                     authored=previous_authored,
                 )
+                # Declared versions and the original tests' imports: authors
+                # wrote Spring Boot 3 tests after reading a Boot 4 pom as raw XML.
+                fact_sources: dict[str, dict[str, str]] = {"manifests": {}, "tests": {}}
+                manifest_paths = sorted(
+                    (path for path in planner_candidate.inventory_paths if is_manifest(path)
+                     or PurePosixPath(path).name == "pyproject.toml"),
+                    key=lambda path: (path.count("/"), path),
+                )[:6]
+                test_paths_for_facts = [
+                    path for path in planner_candidate.protected_test_paths
+                    if PurePosixPath(path).name != "conftest.py"
+                ][:4]
+                for kind, paths in (("manifests", manifest_paths), ("tests", test_paths_for_facts)):
+                    for path in paths:
+                        read = repository_mcp.read_file(role, path)
+                        preserve_tool_result(read, role, errors, tool_results, repository_mcp)
+                        if read.status is ToolStatus.SUCCESS:
+                            fact_sources[kind][path] = read.output_summary
+                facts = project_facts(fact_sources["manifests"], original_tests=fact_sources["tests"])
+                envelope = envelope.model_copy(update={"project_facts": facts})
                 proposed, failure = invoke_candidate(planner_candidate, envelope)
                 if failure is not None:
                     return failure
@@ -731,7 +754,9 @@ def build_engineering_graph(
                     # this fresh bounded evidence; historical reads remain in the audit.
                     current = current.model_copy(update={"tool_results": tool_results})
                     envelope = build_context(role, current, role.value)
-                    envelope = envelope.model_copy(update={"tool_results": planned_results})
+                    envelope = envelope.model_copy(
+                        update={"tool_results": planned_results, "project_facts": facts}
+                    )
                     candidate = agents[role]._apply_candidate(
                         developer_apply_targets, planned_results, current.specification,
                         current.architecture, envelope,

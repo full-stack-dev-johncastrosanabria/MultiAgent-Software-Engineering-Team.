@@ -17,6 +17,8 @@ class ContextEnvelope(StrictModel):
     rag_evidence: list[RetrievedEvidence] = Field(default_factory=list)
     tool_results: list[ToolResult] = Field(default_factory=list)
     remediation_feedback: str | None = None
+    # Declared versions and the original tests' imports (project_facts.py).
+    project_facts: str = ""
     output_schema: str = ""
     allowed_tools: list[str] = Field(default_factory=list)
     model_profile: str = ""

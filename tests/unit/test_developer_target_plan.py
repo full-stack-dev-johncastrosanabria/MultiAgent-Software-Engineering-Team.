@@ -394,3 +394,19 @@ def test_shared_test_fixtures_of_the_component_are_always_read():
     candidate = plan_candidate(paths, authored=set())
     _, reads = validate_target_plan(candidate, proposed_plan(candidate), all_paths=set(paths))
     assert "api/tests/conftest.py" in reads
+
+
+def test_the_planner_and_the_author_both_receive_project_facts(tmp_path):
+    repository = setup_repository(tmp_path)
+    (tmp_path / PATHS[0]).write_text(
+        "[project]\nname = 'example'\nversion = '0.1'\ndependencies = ['flask==3.0.0']\n")
+    runtime = NaturalRuntime()
+    graph = build_engineering_graph(repository_mcp=repository, model_runtime=runtime)
+    graph.nodes["Developer"].invoke({
+        "run_id": "facts", "requirement": REQUIREMENT,
+        "repository_context": {"apply_changes": True, "authorized": True},
+    })
+    assert len(runtime.calls) == 2
+    for _, envelope in runtime.calls:
+        assert "flask==3.0.0" in envelope.project_facts
+        assert "def test_original" not in envelope.project_facts
