@@ -160,6 +160,19 @@ def security_route(severity: SecuritySeverity) -> str:
 
 _WRITE_TOOLS = frozenset({"create_file", "update_file"})
 
+_CHAIN_EXHAUSTION_CODES = frozenset({
+    ErrorCode.CLOUD_FALLBACK_UNAVAILABLE,
+    ErrorCode.LLM_AVAILABILITY_ERROR,
+    ErrorCode.AGENT_TIMEOUT,
+})
+"""The codes a run ends with once no model in its chain produced an artifact.
+
+Grouped because which of the three lands last depends on how the chain is
+ordered, not on what went wrong: under `cloud_first` the same cloud refusal that
+would be recorded as `CLOUD_FALLBACK_UNAVAILABLE` arrives as
+`LLM_AVAILABILITY_ERROR` instead.
+"""
+
 _CONTENT_REJECTION_CATEGORIES = frozenset({
     "governed_contradiction",
     "ineffective_remediation",
@@ -184,25 +197,69 @@ def _stagnated(state: EngineeringState) -> bool:
     )
 
 
-def _last_failed_generation(state: EngineeringState) -> ModelExecutionInfo | None:
-    """The most recent model attempt that produced no artifact."""
-    return next((item for item in reversed(state.model_usage) if item.error), None)
+def _generations_of_the_final_failure(state: EngineeringState) -> list[ModelExecutionInfo]:
+    """Every model attempt belonging to the failure that ended the run.
+
+    That is the trailing run of failed attempts: the moment a stage produced an
+    artifact it recorded an attempt with no error, so everything after the last
+    such attempt was tried, and failed, on the way to this stop. Scoping it this
+    way keeps a rejection that a later retry recovered from out of the verdict,
+    and keeps every link of the exhausted chain inside it.
+    """
+    tail: list[ModelExecutionInfo] = []
+    for info in reversed(state.model_usage):
+        if not info.error:
+            break
+        tail.append(info)
+    tail.reverse()
+    return tail
 
 
 def _content_was_rejected(state: EngineeringState) -> bool:
-    """Whether the last exhausted attempt was refused for what it said.
+    """Whether any link of the failed chain answered and had its answer refused.
+
+    Reading only the newest attempt was not enough, for a structural reason:
+    under `cloud_first` the cloud is the *primary* runtime and the local model
+    the secondary, so a cloud refusal is recorded first and an ordinary local
+    outage lands on top of it. Which runtime happens to record last is a
+    configuration accident; whether any link refused what we asked it to write
+    is not. So the question is put to the whole failure.
 
     `governed_fields_diff` and `violated_rule` are only ever set on a governed
     contradiction, so their presence is proof on its own; `error_category`
     covers the truncated and schema-invalid generations, which name no field.
     """
-    info = _last_failed_generation(state)
-    if info is None:
-        return False
-    return (
+    return any(
         info.governed_fields_diff is not None
         or info.violated_rule is not None
         or info.error_category in _CONTENT_REJECTION_CATEGORIES
+        for info in _generations_of_the_final_failure(state)
+    )
+
+
+_INFRASTRUCTURE_PREFIX = f"{ErrorCode.INFRASTRUCTURE_ERROR.value}:"
+
+
+def _infrastructure_never_started(state: EngineeringState) -> bool:
+    """Whether the result that blocked the run was a dependency that never came up.
+
+    `preserve_tool_result` folds every UNAVAILABLE result into `MCP_ERROR`, so
+    the error code alone cannot separate a silent MCP server from a database
+    that failed to start -- which is the distinction `ErrorCode` already draws
+    with `INFRASTRUCTURE_ERROR`, and draws for precisely this reason. The runner
+    stamps that code as the leading token of the blocking result's error.
+    Reading it reads a typed code that travels in a string field, the same
+    contract the graph already relies on when it classifies a runtime failure;
+    it does not read prose about what went wrong.
+    """
+    blocking = next(
+        (item for item in reversed(state.tool_results) if item.status is ToolStatus.UNAVAILABLE),
+        None,
+    )
+    return (
+        blocking is not None
+        and blocking.error is not None
+        and blocking.error.startswith(_INFRASTRUCTURE_PREFIX)
     )
 
 
@@ -271,6 +328,8 @@ def classify_stop_cause(state: EngineeringState, *, max_iterations: int) -> Stop
         return StopCause.UNKNOWN
     last = state.errors[-1]
     if last.code is ErrorCode.MCP_ERROR:
+        if _infrastructure_never_started(state):
+            return StopCause.INFRASTRUCTURE_UNAVAILABLE
         return StopCause.MCP_UNAVAILABLE
     if last.code is ErrorCode.TOOL_ERROR:
         if _authored_changes_were_never_written(state):
@@ -280,15 +339,22 @@ def classify_stop_cause(state: EngineeringState, *, max_iterations: int) -> Stop
         return StopCause.UNKNOWN
     if last.code is ErrorCode.LLM_QUALITY_ERROR:
         return StopCause.LLM_QUALITY_REJECTED
-    if last.code is ErrorCode.CLOUD_FALLBACK_UNAVAILABLE:
-        # This code says the chain ran out, not why it was entered, and
-        # `cloud.py` raises it for refused content too. Two typed signals
-        # recover the difference: the graph copies the local failure's
-        # retryability onto this error, and only a quality failure is
-        # unretryable; and the attempt itself recorded what the cloud refused.
-        if not last.retryable or _content_was_rejected(state):
+    if last.code in _CHAIN_EXHAUSTION_CODES:
+        # None of these three codes says why the chain was entered, and the last
+        # one recorded is only the last link to fail. A refusal anywhere in the
+        # chain outranks them: the provider answered and this system rejected
+        # what it said, which is a different run to repair than an outage. The
+        # misclassification runs deeper than it looks -- `cloud.py` raises a
+        # governed contradiction as `CLOUD_FALLBACK_UNAVAILABLE`, and the graph
+        # classifies that message by prefix, so under `cloud_first` a refusal by
+        # the primary cloud model is recorded as `LLM_AVAILABILITY_ERROR`.
+        if _content_was_rejected(state):
             return StopCause.LLM_QUALITY_REJECTED
-        return StopCause.PROVIDER_CHAIN_EXHAUSTED
-    if last.code in {ErrorCode.LLM_AVAILABILITY_ERROR, ErrorCode.AGENT_TIMEOUT}:
+        # Second signal, and only meaningful on this code: the graph copies the
+        # primary failure's retryability onto the fallback error, and only a
+        # quality failure is unretryable. The other two are always recorded
+        # retryable, so reading it there would prove nothing.
+        if last.code is ErrorCode.CLOUD_FALLBACK_UNAVAILABLE and not last.retryable:
+            return StopCause.LLM_QUALITY_REJECTED
         return StopCause.PROVIDER_CHAIN_EXHAUSTED
     return StopCause.UNKNOWN

@@ -89,6 +89,23 @@ def _attempt(*, error: str, category: str | None, **extra) -> ModelExecutionInfo
     )
 
 
+def _produced_an_artifact() -> ModelExecutionInfo:
+    """An attempt that worked: what separates one failure from the next."""
+    return ModelExecutionInfo(
+        agent=AgentRole.DEVELOPER, provider="ollama", requested_model="local",
+        actual_model="local", model_profile="LOCAL", degraded=False, latency_ms=1,
+        structured_output_success=True, error=None,
+    )
+
+
+def _unavailable_tool(name: str, error: str) -> ToolResult:
+    return ToolResult(
+        tool_name=name, allowed_role=AgentRole.DEVELOPER,
+        status=ToolStatus.UNAVAILABLE, input_summary="services",
+        output_summary="", duration_ms=1, error=error,
+    )
+
+
 def test_an_approved_review_that_never_raised_the_flag_is_approved() -> None:
     state = _state(review=_decision(ReviewerStatus.APPROVED), iteration=1)
 
@@ -276,6 +293,142 @@ def test_a_cloud_side_governed_contradiction_is_also_a_quality_rejection() -> No
     assert cause is not StopCause.PROVIDER_CHAIN_EXHAUSTED
 
 
+def test_a_cloud_first_refusal_survives_an_ordinary_local_outage_on_top_of_it() -> None:
+    """A-09 in the configuration that hid it: `cloud_first`.
+
+    `apply_run` hands the cloud in as the primary runtime and the local model as
+    the secondary, so the refusal is recorded first and a plain local outage --
+    which records no category, because the local runtime never stamps one -- is
+    recorded after it. The refusal also arrives mislabelled: `cloud.py` raises a
+    governed contradiction as CLOUD_FALLBACK_UNAVAILABLE, and the graph
+    classifies that message by prefix, so it is filed as LLM_AVAILABILITY_ERROR.
+    Reading only the newest attempt made the verdict depend on the bookkeeping of
+    the runtime that was not at fault.
+    """
+    state = _state(
+        human_review_required=True,
+        errors=[
+            _error(
+                ErrorCode.LLM_AVAILABILITY_ERROR,
+                "CLOUD_FALLBACK_UNAVAILABLE: governed fields differ: objective",
+                retryable=True,
+            ),
+            _error(
+                ErrorCode.CLOUD_FALLBACK_UNAVAILABLE,
+                "LLM_AVAILABILITY_ERROR: ConnectError", retryable=True,
+            ),
+        ],
+        model_usage=[
+            _attempt(
+                error="CLOUD_FALLBACK_UNAVAILABLE: governed fields differ: objective",
+                category="governed_contradiction",
+                governed_fields_diff=["objective"],
+            ),
+            _attempt(error="LLM_AVAILABILITY_ERROR: ConnectError", category=None),
+        ],
+    )
+
+    cause = classify_stop_cause(state, max_iterations=3)
+
+    assert cause is StopCause.LLM_QUALITY_REJECTED
+    assert cause is not StopCause.PROVIDER_CHAIN_EXHAUSTED
+
+
+def test_a_cloud_first_refusal_with_no_local_behind_it_is_still_a_refusal() -> None:
+    """The same stop with no secondary configured.
+
+    Nothing follows the refusal, so the last error keeps the availability code
+    the prefix check gave it. Trusting that code alone reported a run we stopped
+    on our own terms as a provider that fell over.
+    """
+    state = _state(
+        human_review_required=True,
+        errors=[_error(
+            ErrorCode.LLM_AVAILABILITY_ERROR,
+            "CLOUD_FALLBACK_UNAVAILABLE: target plan rejected: path outside inventory",
+            retryable=True,
+        )],
+        model_usage=[
+            _attempt(
+                error="CLOUD_FALLBACK_UNAVAILABLE: target plan rejected",
+                category="governed_contradiction",
+                violated_rule="path outside inventory",
+            ),
+        ],
+    )
+
+    assert classify_stop_cause(state, max_iterations=3) is StopCause.LLM_QUALITY_REJECTED
+
+
+def test_a_refusal_a_later_retry_recovered_from_does_not_colour_a_real_outage() -> None:
+    """The widened search is scoped to the failure that ended the run.
+
+    An earlier cycle was refused and then succeeded; the run died later, of an
+    outage. Counting that spent rejection would be the mirror of A-09 -- a
+    provider outage filed as our own refusal -- so the attempt that produced an
+    artifact closes the failure before it.
+    """
+    state = _state(
+        human_review_required=True,
+        errors=[_error(
+            ErrorCode.LLM_AVAILABILITY_ERROR, "LLM_AVAILABILITY_ERROR: ConnectError",
+            retryable=True,
+        )],
+        model_usage=[
+            _attempt(
+                error="CLOUD_FALLBACK_UNAVAILABLE: governed fields differ: objective",
+                category="governed_contradiction",
+                governed_fields_diff=["objective"],
+            ),
+            _produced_an_artifact(),
+            _attempt(error="LLM_AVAILABILITY_ERROR: ConnectError", category=None),
+        ],
+    )
+
+    assert (
+        classify_stop_cause(state, max_iterations=3) is StopCause.PROVIDER_CHAIN_EXHAUSTED
+    )
+
+
+def test_a_dependency_that_never_started_is_not_reported_as_a_silent_mcp_server() -> None:
+    """`ErrorCode` separates these two; the stop cause has to as well.
+
+    `preserve_tool_result` folds every UNAVAILABLE result into MCP_ERROR, so
+    without reading the result itself a database that would not come up is filed
+    against the MCP layer -- and remediation goes looking at the code under test
+    instead of at the environment.
+    """
+    state = _state(
+        human_review_required=True,
+        tool_results=[_unavailable_tool(
+            "run_tests", "INFRASTRUCTURE_ERROR: database never became healthy"
+        )],
+        errors=[_error(
+            ErrorCode.MCP_ERROR,
+            "run_tests: INFRASTRUCTURE_ERROR: database never became healthy",
+            retryable=False,
+        )],
+    )
+
+    cause = classify_stop_cause(state, max_iterations=3)
+
+    assert cause is StopCause.INFRASTRUCTURE_UNAVAILABLE
+    assert cause is not StopCause.MCP_UNAVAILABLE
+
+
+def test_an_unavailable_server_that_is_not_infrastructure_stays_an_mcp_outage() -> None:
+    state = _state(
+        human_review_required=True,
+        tool_results=[_unavailable_tool("read_file", "repository server did not answer")],
+        errors=[_error(
+            ErrorCode.MCP_ERROR, "read_file: repository server did not answer",
+            retryable=False,
+        )],
+    )
+
+    assert classify_stop_cause(state, max_iterations=3) is StopCause.MCP_UNAVAILABLE
+
+
 def test_a_rate_limited_chain_really_is_an_exhausted_provider_chain() -> None:
     state = _state(
         human_review_required=True,
@@ -405,6 +558,48 @@ def test_an_exhausted_chain_carries_its_cause_into_the_evidence(
 
     assert evidence["final_status"] == "HUMAN_REVIEW_REQUIRED"
     assert evidence["stop_cause"] == StopCause.PROVIDER_CHAIN_EXHAUSTED.value
+    assert evidence["destructive_authorization_blocked"] is False
+
+
+def test_the_blocked_write_flag_is_derived_from_the_cause_not_matched_on_text(
+    tmp_path, monkeypatch
+) -> None:
+    """One fact, one vocabulary.
+
+    The evidence dict recomputed this by searching an error detail for the words
+    "destructive operation", one key after recording the typed cause. The state
+    below carries the cause and no such wording anywhere, so the flag can only be
+    true if it was derived rather than matched.
+    """
+    from engineering_team.apply_run import run_on_project
+    from engineering_team.config import Settings
+
+    project = tmp_path / "project"
+    project.mkdir()
+    blocked = {
+        "run_id": "blocked",
+        "final_status": "HUMAN_REVIEW_REQUIRED",
+        "stop_cause": StopCause.DESTRUCTIVE_AUTHORIZATION_BLOCKED.value,
+        "implementation": _applied_implementation(),
+        "errors": [_error(
+            ErrorCode.TOOL_ERROR,
+            "the guardrail refused an unauthorised write",
+            retryable=False,
+        )],
+    }
+    monkeypatch.setattr(
+        "engineering_team.apply_run.execute_on_project",
+        lambda *a, **k: (blocked, SimpleNamespace(trace_id="t", live=False), 0.01, False),
+    )
+
+    evidence = run_on_project(
+        Settings(delivery_backend="none"),
+        project_path=project,
+        specification="add endpoint",
+    )
+
+    assert not any("destructive operation" in item for item in evidence["errors"])
+    assert evidence["destructive_authorization_blocked"] is True
 
 
 def test_an_approved_run_names_its_cause_too_instead_of_leaving_it_empty() -> None:

@@ -22,7 +22,7 @@ from typing import Any
 
 from engineering_team.components import Component, components_in
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import ErrorCode, ReviewerStatus, ToolStatus
+from engineering_team.contracts.enums import ReviewerStatus, StopCause, ToolStatus
 from engineering_team.contracts.models import ToolResult
 from engineering_team.delivery import (
     BRANCH_NAMESPACE,
@@ -681,9 +681,14 @@ def run_on_project(
             if (prerequisite := state.get("infrastructure_prerequisite")) is not None
             else None
         ),
-        "destructive_authorization_blocked": any(
-            item.code is ErrorCode.TOOL_ERROR and "destructive operation" in item.detail
-            for item in errors
+        # Derived from the cause the graph named, not recomputed by searching the
+        # error text for "destructive operation". Two vocabularies for one fact
+        # is what let a refused answer be filed as a provider outage, and this
+        # dict has no business repeating the mistake one key after recording the
+        # fix. An apply run is never interactive, so the guardrail's refusal ends
+        # the run at the node that names it and the two agree by construction.
+        "destructive_authorization_blocked": (
+            state.get("stop_cause") == StopCause.DESTRUCTIVE_AUTHORIZATION_BLOCKED.value
         ),
     }
     # Optional post-APPROVED delivery (ADR 6). Default delivery_backend remains

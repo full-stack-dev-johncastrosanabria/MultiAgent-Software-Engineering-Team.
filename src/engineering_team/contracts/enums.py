@@ -80,12 +80,25 @@ class StopCause(StrEnum):
     ITERATION_LIMIT = "iteration_limit"
     STAGNATION = "stagnation"
     MCP_UNAVAILABLE = "mcp_unavailable"
+    # A dependency the project needs never came up. Not in the vocabulary this
+    # task started from, and added because its absence made the instrument lie:
+    # every UNAVAILABLE tool result folds into ErrorCode.MCP_ERROR, so a
+    # database that never started was reported as a silent MCP server.
+    # INFRASTRUCTURE_ERROR above exists to draw exactly this distinction, and a
+    # stop cause that cannot draw it points remediation at the code under test
+    # instead of at the environment.
+    INFRASTRUCTURE_UNAVAILABLE = "infrastructure_unavailable"
     # The provider answered and this system refused the content: a governed
     # contradiction, a rejected target plan, a truncated generation. Folding
-    # these into PROVIDER_CHAIN_EXHAUSTED is exactly the A-09 defect -- one in
-    # four "chain unavailable" events in the 2026-09-16 campaign was ours.
+    # these into PROVIDER_CHAIN_EXHAUSTED is exactly the A-09 defect. Measured,
+    # not inferred: of the 299 Langfuse observations whose statusMessage begins
+    # with CLOUD_FALLBACK_UNAVAILABLE in the 2026-09-16 campaign, 72 (24%) were
+    # our own quality rejections. The count and its method are recorded in
+    # .superpowers/sdd/2026-09-17-audit160926-plan-2-fase1/progress.md,
+    # "Hallazgo del controlador: A-09 medido, no inferido".
     LLM_QUALITY_REJECTED = "llm_quality_rejected"
-    # Same name apply_run.py already gives this outcome in its evidence dict.
+    # apply_run.py derives its evidence flag of the same name from this value,
+    # so one run cannot report the outcome two ways.
     DESTRUCTIVE_AUTHORIZATION_BLOCKED = "destructive_authorization_blocked"
     WRITE_FAILED = "write_failed"
     # Never produced inside the graph: a crashed run never reaches the node
