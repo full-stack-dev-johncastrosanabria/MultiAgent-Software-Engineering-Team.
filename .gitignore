@@ -13,6 +13,7 @@ build/
 workspace/runs/
 workspace/evaluation/
 workspace/*.log
+workspace/model-health.json
 rag/chroma/
 langfuse-local/
 evaluation/reports/generated/

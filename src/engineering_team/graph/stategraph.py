@@ -523,6 +523,24 @@ def build_engineering_graph(
                 required_mcp_missing |= preserve_tool_result(
                     result, role, errors, tool_results, quality_mcp
                 )
+                health = getattr(model_runtime, "health", None)
+                implementation = current.implementation
+                if (
+                    health is not None and implementation is not None
+                    and implementation.action_mode is ActionMode.APPLIED
+                    and result.status in {ToolStatus.SUCCESS, ToolStatus.FAIL}
+                ):
+                    # The suite judges the code the latest successful Developer
+                    # call wrote; a model whose code keeps failing drops back.
+                    author = next((
+                        usage for usage in reversed(current.model_usage)
+                        if usage.agent is AgentRole.DEVELOPER and usage.structured_output_success
+                    ), None)
+                    if author is not None:
+                        health.record_authoring(
+                            AgentRole.DEVELOPER, author.provider, author.requested_model,
+                            passed=result.status is ToolStatus.SUCCESS,
+                        )
             if quality_mcp is not None and role is AgentRole.SECURITY:
                 operations = [
                     getattr(quality_mcp, name) for name in (

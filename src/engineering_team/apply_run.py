@@ -342,12 +342,17 @@ def execute_on_project(
     )
 
     cloud_first = bool(settings.cloud_enabled and not settings.local_first)
+    from engineering_team.llm.model_health import ModelHealth
+
+    health = ModelHealth(settings.model_health_path) if settings.model_health_path else None
     if cloud_first:
-        primary_runtime: Any = CloudModelRuntime(settings, trace=trace, primary=True)
+        primary_runtime: Any = CloudModelRuntime(settings, trace=trace, primary=True, health=health)
         secondary_runtime: Any | None = LocalModelRuntime(settings, trace=trace)
     else:
         primary_runtime = LocalModelRuntime(settings, trace=trace)
-        secondary_runtime = CloudModelRuntime(settings, trace=trace) if settings.cloud_enabled else None
+        secondary_runtime = (
+            CloudModelRuntime(settings, trace=trace, health=health) if settings.cloud_enabled else None
+        )
 
     retriever = build_retriever(settings, settings.rag_persist_directory, reindex=True)
     # An apply run must execute the project's complete default suite unless the

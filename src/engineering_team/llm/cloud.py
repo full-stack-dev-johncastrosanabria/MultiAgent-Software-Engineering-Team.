@@ -22,6 +22,7 @@ from engineering_team.guardrails.secrets import (
 from engineering_team.llm.prompting import build_role_prompts, governed_output_schema
 from engineering_team.models.context import ContextEnvelope
 
+from .model_health import ModelHealth
 from .registry import ModelSelection
 from .runtime import _ineffective_remediation_error, _preserves_governed_facts
 
@@ -398,8 +399,10 @@ class CloudModelRuntime:
     def __init__(
         self, settings: Settings, *, client: httpx.Client | None = None,
         trace: Any | None = None, primary: bool = False,
+        health: ModelHealth | None = None,
     ) -> None:
         self.settings = settings
+        self.health = health
         self.router = CloudRouter(settings)
         self.budget = CloudBudget(settings, unlimited=primary)
         self._rotation: dict[AgentRole, int] = {}
@@ -408,6 +411,14 @@ class CloudModelRuntime:
         self.primary = primary
         self.attempts: list[ModelExecutionInfo] = []
         self._unavailable_until: dict[tuple[str, str], float] = {}
+
+    def _remember(self, info: ModelExecutionInfo) -> None:
+        self.attempts.append(info)
+        if self.health is not None:
+            self.health.record_attempt(
+                info.agent, info.provider, info.requested_model,
+                None if info.structured_output_success else (info.error_category or "invalid_response"),
+            )
 
     def rotate_chain(self, role: AgentRole, offset: int) -> None:
         """Start this role's chain `offset` models later, wrapping around.
@@ -434,6 +445,8 @@ class CloudModelRuntime:
         _deadline: float | None = None,
     ) -> tuple[BaseModel, ModelExecutionInfo]:
         chain = self.router.selection_chain(role)
+        if self.health is not None:
+            chain = self.health.ordered(role, chain)
         offset = self._rotation.get(role, 0) % len(chain) if chain else 0
         chain = chain[offset:] + chain[:offset]
         developer = role is AgentRole.DEVELOPER
@@ -609,7 +622,7 @@ class CloudModelRuntime:
                 structured_output_success=False, error=error,
                 http_status=status, error_category=category, retryable=retryable,
             )
-            self.attempts.append(info)
+            self._remember(info)
             if self.trace is not None:
                 self.trace.record(
                     f"{role.value} cloud {'primary' if self.primary else 'fallback'}",
@@ -666,7 +679,7 @@ class CloudModelRuntime:
                 ),
                 retryable=True,
             )
-            self.attempts.append(info)
+            self._remember(info)
             if self.trace is not None:
                 self.trace.record(
                     f"{role.value} cloud {'primary' if self.primary else 'fallback'}",
@@ -704,7 +717,7 @@ class CloudModelRuntime:
             latency_ms=int((time.perf_counter() - started) * 1000), usage=usage,
             structured_output_success=True,
         )
-        self.attempts.append(info)
+        self._remember(info)
         if self.trace is not None:
             self.trace.record(
                 f"{role.value} cloud {'primary' if self.primary else 'fallback'}",

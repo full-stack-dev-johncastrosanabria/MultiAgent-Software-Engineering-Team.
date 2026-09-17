@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     # 2026-09-16. A shared 45 s request timeout cut every slower success short.
     developer_llm_timeout_seconds: float = Field(default=120, gt=0)
     developer_role_timeout_seconds: float = Field(default=360, gt=0)
+    # Recent per-role outcomes of every cloud model; error-prone ones are tried
+    # last. Empty disables the ledger.
+    model_health_path: str = "workspace/model-health.json"
     ollama_timeout_seconds: float = Field(default=600, gt=0)
     gemini_api_key: str | None = None
     gemini_api_key_2: str | None = None
