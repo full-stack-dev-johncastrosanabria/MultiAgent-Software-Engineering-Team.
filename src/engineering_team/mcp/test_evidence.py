@@ -139,7 +139,29 @@ def _method_excerpt(source: str, method: str) -> str:
         cursor += 1
     if depth:
         return ""
-    return uncommented[match.start():cursor][:_MAX_EXCERPT]
+    return uncommented[_declaration_start(masked, match.start()):cursor].lstrip()[:_MAX_EXCERPT]
+
+
+_ANNOTATION_LINE = re.compile(r"@[\w.]+(?:\s*\(.*\))?|\[[^\[\]]*\]")
+
+
+def _declaration_start(masked: str, signature: int) -> int:
+    """Include the test's own annotations: its display name is part of it.
+
+    Only lines directly above the signature that are annotations (`@DisplayName`)
+    or attributes (`[Fact(DisplayName = ...)]`) are taken; a blank line, a brace
+    or anything else ends the declaration, so a neighbour's never leaks in.
+    """
+    line_start = masked.rfind("\n", 0, signature) + 1
+    if re.search(r"[{};]", masked[line_start:signature]):
+        return signature
+    cursor = line_start
+    while cursor > 0:
+        previous_start = masked.rfind("\n", 0, cursor - 1) + 1
+        if not _ANNOTATION_LINE.fullmatch(masked[previous_start:cursor - 1].strip()):
+            break
+        cursor = previous_start
+    return cursor
 
 
 def _class_source(source: str, class_name: str) -> str:

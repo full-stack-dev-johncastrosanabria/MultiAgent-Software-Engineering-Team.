@@ -1,5 +1,49 @@
 # Historia documental
 
+## 2026-09-17 — Auditoría del sistema y corrección de documentación desfasada
+
+La [auditoría del 2026-09-16](audit160926/README.md) midió ASET contra
+«Building effective agents» de Anthropic, la guía «Harness Engineering» de
+LunarResearcher y el método de doce capas, con ocho auditores independientes,
+el export de Langfuse de la campaña del 16 de septiembre, los reportes crudos de
+ghcycle y una ejecución completa de la suite. Veredicto: ningún trabajo aceptado
+con el arnés actual; los bloqueos dominantes son del arnés y de la disponibilidad
+de modelos, no del razonamiento. La documentación no había acompañado treinta
+commits: se corrigieron el límite de remediación («tercer rechazo»), la lista de
+proveedores, la superficie de la CLI, los valores de configuración y los conteos
+de README, arquitectura, operaciones y pruebas; se añadió una corrección fechada
+a la [decisión 8](architecture/decisions/0008-security-evidence-per-stack.md) y
+una nota a la [decisión 17](architecture/decisions/0017-the-project-lives-in-the-run.md);
+el [estado](status.md) registra la campaña del 16 de septiembre y las
+afirmaciones sin artefacto. Las auditorías fechadas se registran como páginas
+activas en la comprobación documental; sus anexos, como papeles de trabajo.
+
+## 2026-09-16 — Developer escribe sin rutas nombradas y las cadenas de modelos crecen
+
+Los requisitos humanos no nombran archivos; Developer planifica ahora destinos
+acotados que Python valida (`37c7400`) y recibe los hechos declarados del stack
+(`92742b7`). Se añadieron siete proveedores compatibles con OpenAI y un historial
+local de salud por modelo que relega, sin retirar, a los que fallan (`4ff4ae2`).
+La rotación de modelos en remediaciones posteriores (`d8cd3f3`) se revirtió
+(`31defca`) tras empeorar dos corridas medidas. Treinta y un commits se
+intercalaron con diecisiete corridas en seco sin registrar el commit de cada una.
+Las corridas de ese día y sus límites están en [estado](status.md).
+
+## 2026-09-14 — Evidencia completa de escáneres y procedencia de advisories
+
+El transporte retiene hasta 4 MiB por stream para escáneres estructurados y la
+excepción de dependencias previas exige advisories confirmados (`d6b503c`,
+`90ba069`). Detalle y verificación en [estado](status.md).
+
+## 2026-09-13 — Campaña GitHub: resultados y aceptación incumplida
+
+La campaña `gh-run-testing` conserva los resultados del CLI real sobre
+FlaskApiProduct, spring-demo, PropFlow y Banking. El [estado de la campaña](status.md#campaña-github-del-2026-09-13--aceptación-no-cumplida)
+es el propietario de la matriz por etapa, la adjudicación de hallazgos y los
+límites de evidencia. Se corrige expresamente la lectura de un PASS de delivery
+en seco como entrega real: con `skipped=true` no hubo PR. La medición terminada
+no equivale a las seis etapas verdes exigidas por el plan.
+
 ## 2026-09-11 — El compose entregado se valida antes de llegar al revisor
 
 `delivery_check.validate_delivered_compose` resuelve el archivo `delivery`

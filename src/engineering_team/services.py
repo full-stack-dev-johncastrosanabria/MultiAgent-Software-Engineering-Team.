@@ -199,13 +199,25 @@ _PROJECT_NAME = re.compile(r"[^a-z0-9-]+")
 _CONFIG_GLOBS = (
     "**/application.yml", "**/application.yaml", "**/application.properties",
     "**/appsettings.json", "**/config.py",
+    # A .NET connection string never names its engine; the EF provider package
+    # does (topology._DOTNET_PROVIDER). Read after the configuration files so the
+    # file budget reaches those first.
+    "**/*.csproj", "**/*.fsproj", "**/*.vbproj",
 )
+_PROJECT_FILE_SUFFIXES = frozenset({".csproj", ".fsproj", ".vbproj"})
 _MAX_CONFIG_FILES = 40
 _MAX_CONFIG_BYTES = 256 * 1024
 _SKIP_DIRECTORIES = frozenset({
     "node_modules", "target", "bin", "obj", ".venv", "venv", "dist", "build",
     ".git", "__pycache__",
 })
+
+
+def _is_test_project(relative: Path) -> bool:
+    """A test project's provider is a test double, not the application's service."""
+    return relative.stem.endswith(("Test", "Tests")) or any(
+        part.casefold() in {"test", "tests"} for part in relative.parts[:-1]
+    )
 
 
 def configuration_sources(root: Path) -> dict[str, str]:
@@ -216,6 +228,8 @@ def configuration_sources(root: Path) -> dict[str, str]:
             if len(sources) >= _MAX_CONFIG_FILES:
                 return sources
             if any(part in _SKIP_DIRECTORIES for part in path.parts):
+                continue
+            if path.suffix in _PROJECT_FILE_SUFFIXES and _is_test_project(path.relative_to(root)):
                 continue
             try:
                 if path.stat().st_size > _MAX_CONFIG_BYTES:

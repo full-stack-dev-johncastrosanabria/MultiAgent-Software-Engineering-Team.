@@ -11,6 +11,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from engineering_team.config import Settings
+from engineering_team.contracts.developer_plan import DeveloperTargetPlan, validate_target_plan
 from engineering_team.contracts.enums import ActionMode, AgentRole
 from engineering_team.contracts.models import (
     ImplementationResult,
@@ -74,7 +75,7 @@ class LocalModelRuntime:
         schema_type: type[BaseModel], candidate: dict[str, Any],
     ) -> tuple[BaseModel, ModelExecutionInfo]:
         selection = self.router.local_for(role)
-        output_schema = governed_output_schema(schema_type)
+        output_schema = governed_output_schema(schema_type, candidate)
         system_prompt, user_prompt = build_role_prompts(
             role, envelope, output_schema, candidate
         )
@@ -95,7 +96,10 @@ class LocalModelRuntime:
                         "stream": False,
                         "think": False,
                         "format": output_schema,
-                        "options": {"temperature": 0, "num_predict": 2048},
+                        "options": {
+                            "temperature": 0,
+                            "num_predict": 16000 if role is AgentRole.DEVELOPER else 2048,
+                        },
                     },
                 )
                 response.raise_for_status()
@@ -164,6 +168,13 @@ class LocalModelRuntime:
                 )
                 if repair_attempt < self.settings.max_local_repairs:
                     repair_attempt += 1
+                    if isinstance(parsed, DeveloperTargetPlan):
+                        user_prompt += (
+                            "\nRepair target plan: preserve the governed inventory exactly, "
+                            "choose at least one existing implementation source, preserve "
+                            "original tests and propose only valid bounded test paths."
+                        )
+                        continue
                     user_prompt = (
                         "Repair governed artifact contradiction. Return only this candidate "
                         "artifact as JSON, preserving every key and value exactly:\n"
@@ -272,6 +283,13 @@ def _preserves_governed_facts(candidate: dict[str, Any], parsed: BaseModel) -> b
     """Prevent schema-valid model output from weakening deterministic evidence."""
     actual = parsed.model_dump(mode="json")
     model_name = type(parsed).__name__
+    if isinstance(parsed, DeveloperTargetPlan):
+        try:
+            governed = DeveloperTargetPlan.model_validate(candidate)
+            validate_target_plan(governed, parsed, all_paths=set(governed.inventory_paths))
+        except ValueError:
+            return False
+        return True
     if model_name == "ArchitectureProposal":
         # Architecture is deterministically derived from bounded repository and
         # RAG evidence. A model may validate its shape, but it must not rewrite

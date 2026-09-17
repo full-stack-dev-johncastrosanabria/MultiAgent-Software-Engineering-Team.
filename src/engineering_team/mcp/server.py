@@ -81,9 +81,11 @@ def build_quality_server(
     timeout_seconds: float = 60,
     *,
     settings: Settings | None = None,
+    workspace_root: str | Path | None = None,
 ) -> MCPServer:
     backend = QualityMCP(
-        root, timeout_seconds=timeout_seconds, settings=settings or Settings()
+        root, timeout_seconds=timeout_seconds, settings=settings or Settings(),
+        workspace_root=workspace_root,
     )
     server = MCPServer(name="engineering-team-quality", log_level="ERROR")
 
@@ -165,6 +167,7 @@ def main() -> None:
         )
         server = build_quality_server(
             quality_root, args.timeout,
+            workspace_root=Path(args.root),
             settings=settings_from_arguments(
                 runner=args.runner, image=args.image, stack=args.stack,
                 run_daemon_image=args.run_daemon_image,

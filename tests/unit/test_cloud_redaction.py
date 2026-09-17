@@ -9,6 +9,8 @@ requirements belong to the same system and contradicted each other.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from engineering_team.guardrails.secrets import (
@@ -101,6 +103,33 @@ def test_the_marker_is_recognised_where_it_lands_not_only_at_a_line_end() -> Non
     require_safe_cloud_context(redacted)
 
 
+def test_the_marker_survives_an_escaped_payload() -> None:
+    """The prompt a role is sent is JSON, so repository text arrives with its
+    newlines escaped. `[REDACTED]\\nurl` puts a backslash where the marker's
+    exemption expected a line end, so the checker refused the redactor's own
+    output -- and every project with a `password:` line in its config died at
+    its first Architecture call, before one tool ran."""
+    payload = '{"file": "application.yaml", "text": "password: hunter2\\nurl: local"}'
+
+    redacted = redacted_for_cloud(payload)
+
+    assert "hunter2" not in redacted
+    require_safe_cloud_context(redacted)
+
+
+def test_the_marker_is_accepted_when_prose_follows_it() -> None:
+    """Redact the whole unquoted value, including prose, before checking it.
+
+    This does not exempt a marker followed by an unredacted credential.
+    """
+    line = "password: hunter2 as documented in the deployment guide"
+
+    redacted = redacted_for_cloud(line)
+
+    assert "hunter2" not in redacted
+    require_safe_cloud_context(redacted)
+
+
 def test_documentation_loses_the_value_not_the_emphasis() -> None:
     """`**Password:** `123456`` put markdown where the pattern expected the
     secret, so the asterisks were redacted and the credential survived."""
@@ -119,3 +148,67 @@ def test_a_credential_written_as_prose_is_not_detected() -> None:
 
     assert redacted_for_cloud(prose) == prose
     require_safe_cloud_context(prose)
+
+
+# spring-demo's own docs, 2026-09-16: Architecture's cloud call was refused after
+# redaction and the whole run crashed without a report.
+@pytest.mark.parametrize("text", [
+    'Then run:\nexport DB_PASSWORD="secret1"\n',
+    "docker run -d \\\n  -e MYSQL_ROOT_PASSWORD=secret1 \\\n  mysql:8.0\n",
+])
+def test_documented_shell_credentials_are_redacted_so_the_check_passes(text):
+    redacted = redacted_for_cloud(text)
+    assert "secret1" not in redacted
+    require_safe_cloud_context(redacted)
+    require_safe_cloud_context("Repository data: " + json.dumps({"content": redacted}))
+
+
+def test_a_value_after_a_continuation_marker_is_still_refused():
+    with pytest.raises(ValueError):
+        require_safe_cloud_context("password=[REDACTED] \\ secret2")
+
+
+def test_a_refused_cloud_context_is_a_run_error_not_a_crash(monkeypatch):
+    import httpx
+
+    from engineering_team.config import Settings
+    from engineering_team.contracts.enums import AgentRole
+    from engineering_team.llm import cloud
+    from engineering_team.llm.cloud import CloudModelRuntime
+    from tests.unit.test_cloud_runtime import cloud_envelope, product_candidate
+
+    def refuse(_):
+        raise ValueError("sensitive content is not allowed in cloud context")
+
+    monkeypatch.setattr(cloud, "require_safe_cloud_context", refuse)
+    settings = Settings(_env_file=None, cloud_enabled=True, mistral_api_key="fixture",
+                        cloud_chain_product="mistral:mistral-small-latest")
+    transport = httpx.MockTransport(lambda _: pytest.fail("prompt was sent"))
+    with httpx.Client(transport=transport) as client, pytest.raises(
+        RuntimeError, match="CLOUD_FALLBACK_UNAVAILABLE: sensitive content"
+    ):
+        CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
+            AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+
+
+def test_an_html_decorated_credential_is_redacted_not_its_closing_tag():
+    """PropFlow's login page: <strong>Password:</strong> Demo123! redacted the tag
+    and left the password in the prompt (the checker refused it)."""
+    text = "<p><strong>Password:</strong> Demo123!</p>"
+    redacted = redacted_for_cloud(text)
+    assert "Demo123!" not in redacted
+    require_safe_cloud_context(redacted)
+
+
+def test_a_redacted_cli_value_followed_by_another_flag_is_accepted():
+    """Banking's README: docker run -e POSTGRES_PASSWORD=... -p 5432:5432 postgres."""
+    text = "docker run -d --name db -e POSTGRES_PASSWORD=secret1 -p 5432:5432 postgres:16"
+    redacted = redacted_for_cloud(text)
+    assert "secret1" not in redacted
+    require_safe_cloud_context(redacted)
+
+
+@pytest.mark.parametrize("text", ["password=[REDACTED] secret2", "password=[REDACTED] -secret2"])
+def test_text_after_a_marker_that_is_not_a_flag_is_still_refused(text):
+    with pytest.raises(ValueError):
+        require_safe_cloud_context(text)

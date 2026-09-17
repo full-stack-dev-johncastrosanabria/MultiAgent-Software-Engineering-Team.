@@ -45,6 +45,18 @@ command, unavailable advisory service, scanner error, or detected policy-level
 finding does not become success: the `ToolResult` fails or is unavailable and
 the deterministic Security/Reviewer gates block approval.
 
+*Correction, 2026-09-17: the approval half of this paragraph no longer holds
+for one case. When every failing tool is a dependency scan whose advisories the
+producer confirmed, and the change modifies no dependency manifest, Security
+records the findings as residual baseline risk (`HIGH`, status `PASS`) and the
+Reviewer may approve with them listed as problems (`agents/security.py`,
+`agents/reviewer.py`). The scanner `ToolResult` still fails and stays visible;
+a scanner error, missing command, unconfirmed or truncated report, or a touched
+manifest still blocks. The exception was introduced on 2026-09-07 and has
+required confirmed advisories since 2026-09-14. It has no record of its own;
+the audit of 2026-09-16 (`docs/audit160926/`) recommends one, and also found
+that the unchanged scan is re-run on every remediation cycle.*
+
 Python keeps its existing preparation path because its scanner is part of the
 locked ASET quality toolchain. Non-Python profiles do not provision Python.
 

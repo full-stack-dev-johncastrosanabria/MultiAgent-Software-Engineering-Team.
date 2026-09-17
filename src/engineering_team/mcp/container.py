@@ -27,6 +27,8 @@ from pathlib import Path, PurePosixPath
 from engineering_team.docker_labels import label_arguments
 from engineering_team.mcp.command import (
     _OUTPUT_LIMIT,
+    _STRUCTURED_OUTPUT_LIMIT,
+    CommandOutput,
     CommandRequest,
     _BoundedOutput,
     _remaining,
@@ -258,6 +260,7 @@ class ContainerRunner:
             f"type=bind,source={self.workspace},target={WORKSPACE_MOUNT}",
             "--mount",
             f"type=volume,source={self._volume},target={ENVIRONMENT_MOUNT}",
+            *self._metadata_mount(),
             "--workdir",
             str(self._container_path(request.cwd)),
         ]
@@ -280,6 +283,22 @@ class ContainerRunner:
         args.append(self.image)
         args.extend(request.args)
         return args
+
+    def _metadata_mount(self) -> list[str]:
+        """Repository metadata, visible but never writable from inside.
+
+        Delivery runs git on the host in this same checkout. A hook or a
+        `core.sshCommand` written by a dependency's install script would run
+        there, outside the container boundary. A symlinked `.git` is not
+        followed to wherever it points.
+        """
+        metadata = Path(self.workspace) / ".git"
+        if metadata.is_symlink() or not (metadata.is_dir() or metadata.is_file()):
+            return []
+        return [
+            "--mount",
+            f"type=bind,source={metadata},target={WORKSPACE_MOUNT / '.git'},readonly",
+        ]
 
     def _primary_network(self, request: CommandRequest) -> str:
         """The network the container starts on.
@@ -381,8 +400,9 @@ class ContainerRunner:
         self, name: str, args: list[str], request: CommandRequest
     ) -> subprocess.CompletedProcess[str]:
         timeout = _remaining(request.deadline)
-        stdout_buffer = _BoundedOutput(_OUTPUT_LIMIT)
-        stderr_buffer = _BoundedOutput(_OUTPUT_LIMIT)
+        output_limit = _STRUCTURED_OUTPUT_LIMIT if request.structured_output else _OUTPUT_LIMIT
+        stdout_buffer = _BoundedOutput(output_limit)
+        stderr_buffer = _BoundedOutput(output_limit)
         created = self._quiet(args, timeout=max(1.0, min(timeout, 120.0)))
         if created is None or created.returncode != 0:
             detail = "" if created is None else created.stderr.strip()[-400:]
@@ -441,11 +461,19 @@ class ContainerRunner:
                 output=stdout_buffer.text(),
                 stderr=stderr_buffer.text(),
             )
-        return subprocess.CompletedProcess(
+        # Capture completion before reading either buffer. A reader finishing
+        # between the two snapshots must not make an incomplete snapshot look
+        # complete to a structured-output consumer.
+        readers_incomplete = any(reader.is_alive() for reader in readers)
+        return CommandOutput(
             list(request.args),
             process.returncode,
             stdout_buffer.text(),
             stderr_buffer.text(),
+            output_truncated=(
+                stdout_buffer.truncated or stderr_buffer.truncated
+                or readers_incomplete
+            ),
         )
 
     @staticmethod
@@ -454,6 +482,9 @@ class ContainerRunner:
             for chunk in iter(lambda: stream.read(4096), b""):
                 buffer.append(chunk)
         except (OSError, ValueError):
+            # A terminated reader is not proof of EOF. Its prefix may even be
+            # valid JSON while later error diagnostics were never received.
+            buffer.truncated = True
             return
         finally:
             try:

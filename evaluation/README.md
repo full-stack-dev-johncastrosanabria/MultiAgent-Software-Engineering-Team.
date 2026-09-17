@@ -7,6 +7,8 @@
 | Run the standard scenario suite | `scripts/run_evaluation.py` |
 | Shared scenario definitions | `scenarios.py` |
 | Run a multistack trial | `benchmarks/multistack/run_trial.py` |
+| Measure the full GitHub cycle against real repositories | `benchmarks/ghcycle/run_cycle.py` (scored results in `results/`, raw reports in the git-ignored `results/raw/`) |
+| Verify decisions 14, 16, 17 and 18 against a real Docker daemon | `benchmarks/adr14/`, `benchmarks/adr16/`, `benchmarks/adr17/`, `benchmarks/adr18/` |
 | Inspect benchmark inputs and fixtures | `benchmarks/README.md` |
 | Review selected report snapshots | `reports/curated/` |
 | Inspect reports from individual runs | `reports/runs/` |

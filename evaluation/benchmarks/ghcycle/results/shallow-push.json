@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct.git",
+  "branch": "aset/probe-66a827f781994a308e344e7e255875ae",
+  "is_shallow": true,
+  "commit": "ca86261d0d3127727fd8966fd886e384da412edb",
+  "changed_files": [
+    ".aset-probe/3cc8865f7cdd4e16a1106970515b9abf.txt"
+  ],
+  "push_returncode": 0,
+  "push_output": "remote: \nremote: Create a pull request for 'aset/probe-66a827f781994a308e344e7e255875ae' on GitHub by visiting:        \nremote:      https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct/pull/new/aset/probe-66a827f781994a308e344e7e255875ae        \nremote: \nTo https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct.git\n * [new branch]      HEAD -> aset/probe-66a827f781994a308e344e7e255875ae",
+  "cleanup_returncode": 0,
+  "cleanup_output": "To https://github.com/full-stack-dev-johncastrosanabria/FlaskApiProduct.git\n - [deleted]         aset/probe-66a827f781994a308e344e7e255875ae",
+  "remote_ref_absent": true,
+  "checkout_removed": true,
+  "passed": true,
+  "verdict": "shallow push accepted and cleaned"
+}

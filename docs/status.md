@@ -1,5 +1,257 @@
 # Estado y límites de evidencia
 
+## Estado vigente (auditoría del 2026-09-16)
+
+Base: `gh-run-testing` @ `92742b7`. Resume el veredicto actual por capacidad;
+las secciones fechadas que siguen conservan la evidencia de cada medición. El
+detalle, las cifras y el método están en la
+[auditoría del 2026-09-16](audit160926/README.md).
+
+| Capacidad | Última evidencia | Veredicto | Pendiente |
+|---|---|---|---|
+| Cambio aceptado sobre un repositorio real con el arnés actual | 26 corridas ghcycle (2026-09-12 a 16) y 16 trazas raíz de Langfuse | **Fallando**: 0 aprobadas, 0 PR; toda corrida termina en `HUMAN_REVIEW_REQUIRED` | Bloqueos estructurales C-01 a C-04 de la auditoría |
+| Aceptación histórica | `evaluation/reports/apply-debugger-flask-writes*.json` (2026-09-03, arnés anterior) | 3 de 8 APPROVED en FlaskApiProduct, con todos los subpuntajes en 100; calidad no calibrada | Comparar ese arnés con el actual |
+| Entrega gobernada de PR | Tests con backends de push y PR falsos | **No verificado** en vivo; sin test negativo para revisión no aprobada | — |
+| Plan de destinos de Developer para requisitos sin rutas (`37c7400`) | 15 de 16 corridas en seco del 09-16 escribieron 1–3 archivos | Verificado que escribe; ninguna escritura aprobó tests y revisión | — |
+| Riesgo previo de dependencias como baseline (F-8) | 44 escaneos trazados con el mismo conjunto de CVEs; 39 de 42 decisiones de Security lo clasificaron como baseline | Verificado en Flask y en Spring solo después de `b99c939`; **el escaneo se repite en cada ciclo** y el texto del escáner llega a Developer como diagnóstico | Escaneo de baseline único y fuera de la remediación |
+| Hechos declarados del stack (`92742b7`) | Ninguna corrida | **No verificado** | — |
+| Ledger de salud de modelos (`4ff4ae2`) | Ninguna corrida; `workspace/model-health.json` no existe | **No verificado** | — |
+| Disponibilidad de las cadenas de modelos | 290 de 478 generaciones fallidas; 13 de 24 corridas con reporte crudo pararon por cadena agotada | **Fallando** | Lista de proveedores aprobados y tope de gasto |
+| Fallback local Ollama en modo nube | 0 de 26 intentos | **Fallando** | Preflight o retiro |
+| Suite de tests en `92742b7` | 2026-09-17, entorno aislado, sin daemon Docker: 1270 tests, 1221 PASS, 26 FAIL, 23 SKIP | Los 26 fallos dependen del daemon; los tests con Docker **no se validaron** en esta fecha | Guardas `skipif` y ejecución con daemon |
+| Sandbox de contenedor, contención de rutas, escritura autorizada, entrega con dos llaves, redacción antes de la nube | Código y tests; revisión de seguridad del 2026-09-16 | Verificado en código | Salida de código fuente a proveedores sin política |
+| Decisiones 16, 17 y 18 contra daemon real | `results/` de `adr16/`, `adr17/` y `adr18/` en `evaluation/benchmarks/` (2026-09-11): 5/5, 9/9, 11/11 | Verificado en esa fecha; los JSON no registran commit y los cambios del 09-16 en servicios y workspace no se re-verificaron | — |
+| Scorer `run_cycle.py` | Revisión del 2026-09-16 | Parcialmente confiable: infraestructura y entrega aprueban vacíamente en seco, `clone` significa «existe un reporte», no registra commit | Ver auditoría, sección de evidencia |
+
+## Campaña GitHub del 2026-09-13 — aceptación no cumplida
+
+La campaña `gh-run-testing` mide FlaskApiProduct, spring-demo, PropFlow y
+Banking con el CLI real y checkout temporal del host. **No demuestra las seis
+etapas verdes en los cuatro repositorios.** Los resultados conservados están en
+[`ghcycle/results`](../evaluation/benchmarks/ghcycle/results/); los reportes
+crudos permanecen locales e ignorados por Git. `delivered` expresa que se pidió
+entrega, no que se haya abierto un PR.
+
+La ampliación del 2026-09-13 incluye corregir los defectos y repetir los cuatro
+ciclos hasta verificar las seis etapas y los PR. Sustituye el alcance anterior
+que excluía F-7, F-8 y F-9. La tabla conserva la medición de `eaeee71`; las
+correcciones posteriores no convierten esos resultados en aprobados.
+
+### Corridas en seco del 2026-09-13 al 2026-09-16
+
+Tras `90ba069` se repitieron corridas en seco sin entrega: once sobre
+FlaskApiProduct (`flaskapiproduct-dry-20260916a` a `k`), seis sobre spring-demo
+(`spring-demo-dry-20260916a` a `f`) y una sobre PropFlow
+(`propflow-fixes-dry-20260913`). **Sus JSON puntuados no están versionados** y
+dos no tienen reporte crudo. Ninguna completa las seis etapas: execute y spec
+fallan en las dieciocho; delivery figura en verde solo por estar omitida, e
+infraestructura aprueba sin ejercitarse. `clone` falla en dos, pero en
+`spring-demo-dry-20260916c` la causa real fue un
+`ValueError: sensitive content is not allowed in cloud context` no capturado
+durante la tercera pasada de Architecture, no el clon; en
+`propflow-fixes-dry-20260913`, la resolución DNS de github.com en un sandbox.
+
+Las dieciséis con reporte crudo terminan en `HUMAN_REVIEW_REQUIRED`; cuatro
+agotan las cinco iteraciones. `run_security_scan` falla en quince y `run_tests`
+en trece. spring-demo-b y spring-demo-d tuvieron `run_tests` verde en todas sus
+iteraciones y fueron rechazadas por la compuerta de cobertura léxica. Entre
+corridas cambiaron proveedores, remediación y contexto de Developer: treinta y un
+commits intercalados, cuatro de ellos durante una corrida, y ningún resultado
+registra su commit. Cada resultado vale solo para el código con que corrió; los
+tres últimos commits (`4ff4ae2`, `31defca`, `92742b7`) no tienen corrida. El
+análisis por causa, proveedor y rol está en la
+[auditoría](audit160926/02-evidencia-y-metricas.md).
+
+### Correcciones posteriores a la medición
+
+F-7 conserva el directorio de comandos y el intérprete de cada componente,
+pero monta la raíz del repositorio para resolver referencias a módulos hermanos.
+Rechaza componentes externos, incluidos escapes por enlaces simbólicos, antes
+de crear infraestructura. F-9 informa únicamente claves de protocolo conocidas
+de un `KeyError`; los argumentos arbitrarios quedan redactados también en la
+cadena de excepciones.
+
+Verificación del 2026-09-13: 156 pruebas focales pasan con las variables de
+`Settings` y la carga de `.env` desactivadas solo dentro del proceso de prueba.
+Las 19 regresiones nuevas fallan cargando los módulos de `eaeee71` en memoria.
+Una prueba adicional con Docker y la imagen local de Python 3.13 confirma
+lectura de un módulo hermano y rechazo de lectura fuera del repositorio.
+La revisión de código y seguridad de F-7/F-9 no encontró problemas materiales.
+Esto verifica las correcciones acotadas; todavía no verifica los cuatro ciclos.
+
+El 2026-09-14, el runner corregido ejecutó los 71 tests originales de Banking
+en Docker: 71 pasan, sin fallos ni omisiones y sin modificar el repositorio
+objetivo. La restauración y compilación resolvieron sus proyectos hermanos.
+Una prueba separada del frontend original de FlaskApiProduct completó seis
+builds consecutivos con el montaje del repositorio; no reprodujo el fallo
+intermitente de Node. Ese muestreo no demuestra que el problema haya desaparecido.
+
+F-8 tiene una causa comprobada por separado: la agregación de resultados pierde
+`scans_dependencies`, que usa Security para clasificar vulnerabilidades de
+manifiestos sin cambios como riesgo previo visible. Esa política ya existe;
+no requiere desactivar el gate. Los fallos de tests de las corridas anteriores
+son independientes: `build_context` filtra esas herramientas del contexto de
+Security. La auditoría de vulnerabilidades Python sigue sin equivalencia con
+`npm audit`: su perfil ejecuta `pip check` y Ruff.
+
+La corrección conserva la procedencia en la agregación y en los reportes
+cacheados. La excepción para dependencias previas exige además evidencia
+estructurada de advisories confirmados; un fallo del instalador o un reporte
+incompleto no basta. Los hallazgos siguen visibles y el escáner conserva su
+resultado de fallo. La revisión independiente detectó y se corrigió un caso
+adicional de .NET que aceptaba errores internos con salida cero. Ocho regresiones
+reprodujeron el fallo antes del arreglo; después pasan las 73 pruebas focales.
+La suite integrada del 2026-09-14 terminó con 1038 pruebas aprobadas y 17 omitidas;
+esa ejecución comenzó antes del último ajuste de .NET, cubierto por las focales.
+*(Nota del 2026-09-17: no se conserva log, XML ni commit de esa ejecución ni de
+las selecciones focales citadas en esta sección; no son reproducibles tal como
+están escritas. La ejecución sobre `92742b7` figura en el estado vigente.)*
+La revisión independiente aprobó ese ajuste y verificó 48 pruebas adicionales.
+La primera repetición, `flaskapiproduct-corrected-20260914a`, conserva clone,
+infraestructura e higiene en verde; ejecución, spec y entrega siguen rojas.
+Sus tres iteraciones ejecutaron los 62 tests originales del backend con éxito.
+El cliente falló con `ENOTDIR`/`ENOENT` durante npm y luego sin detalle.
+La traza y una reproducción independiente confirman que el runner recorta a
+4096 bytes un JSON de npm audit de 10890 bytes antes de validar su procedencia;
+además se mezclaba stderr con el JSON. El transporte corregido retiene hasta
+4 MiB por stream para escáneres estructurados, mantiene los diagnósticos cortos
+y rechaza evidencia truncada o incompleta. La reproducción Docker del 14 de
+septiembre confirmó los advisories con el JSON completo y mantuvo el escáner
+en FAIL. La revisión independiente del 16 de septiembre aprobó el cambio tras
+corregir también errores de lectura de tuberías: 111 pruebas focales pasan y
+ocho pruebas de integración se omiten sin su imagen configurada.
+
+La misma traza demostró otra causa: los requisitos de la campaña no nombran
+archivos y Developer solo activaba la autoría con destinos explícitos. Las tres
+propuestas quedaron en `PROPOSED`, sin `file_contents`. Ningún PR nuevo quedó
+entregado. *(Corrección del 2026-09-16: `37c7400` añade un plan de destinos
+(`DeveloperTargetPlan`) que Python valida contra el inventario del repositorio
+antes de leer o escribir, sin editar tests originales. En 15 de las 16 corridas
+en seco del 16 de septiembre con reporte crudo, Developer escribió entre uno y
+tres archivos en el checkout temporal; ninguna aprobó tests y revisión.)*
+
+### Medición conservada
+
+Corrección fechada del cierre del ledger: `delivery.passed=true` junto con
+`skipped=true` significa entrega **omitida**. No prueba delivery. Asimismo,
+`infrastructure` verde en seco no prueba un PR de infraestructura ni su apilado.
+El marcador de [`run_cycle.py`](../evaluation/benchmarks/ghcycle/run_cycle.py)
+permanece intacto; esta tabla distingue esas condiciones al interpretar sus JSON.
+
+| Evidencia | Clone | Infraestructura | Execute | Spec | Delivery | Higiene Docker |
+|---|---|---|---|---|---|---|
+| [FlaskApiProduct, entrega](../evaluation/benchmarks/ghcycle/results/flaskapiproduct.json) | PASS | PASS, sin motor externo | FAIL | FAIL | FAIL, sin PR | PASS |
+| [spring-demo, seco](../evaluation/benchmarks/ghcycle/results/spring-demo-dry.json) | PASS | PASS, detecta mysql | FAIL | FAIL | OMITIDA | PASS |
+| [spring-demo, entrega](../evaluation/benchmarks/ghcycle/results/spring-demo.json) | PASS | FAIL, sin rama de infraestructura | FAIL | FAIL | FAIL, sin PR | PASS |
+| [PropFlow, seco](../evaluation/benchmarks/ghcycle/results/propflow-dry.json) | PASS | PASS, sin motor externo | FAIL | FAIL | OMITIDA | PASS |
+| [PropFlow, entrega](../evaluation/benchmarks/ghcycle/results/propflow.json) | PASS | PASS, sin motor externo | FAIL | FAIL | FAIL, sin PR | PASS |
+| [Banking, seco](../evaluation/benchmarks/ghcycle/results/banking-dry.json) | PASS | PASS, detecta postgres | FAIL | FAIL | OMITIDA | PASS |
+| [Banking, entrega](../evaluation/benchmarks/ghcycle/results/banking.json) | PASS | FAIL, sin rama de infraestructura | FAIL | FAIL | FAIL, sin PR | PASS |
+
+Estos siete resultados terminan en `HUMAN_REVIEW_REQUIRED`, con revisor
+`REJECTED`, cero archivos aplicados y cero herramientas `UNAVAILABLE`. Los
+conteos de herramientas son respectivamente 97, 31, 36, 102, 103, 95 y 67. Que las
+herramientas hayan corrido no implica que los tests hayan pasado.
+
+MySQL fue observado `healthy` durante el trabajo Maven en spring-demo según la
+captura del ledger. Banking detectó postgres desde
+`src/Banking.Api/appsettings.json`; durante la nueva corrida
+`apply-614f9bca-0b9a-42d0-850a-bd40e11fb83a`, `docker ps` mostró postgres
+`healthy` junto al contenedor Node, ambos etiquetados con ese run y
+`aset.project=project`. PropFlow declara SQLite, por lo que la expectativa
+inicial de MySQL era incorrecta. La ausencia actual de los
+cuatro checkouts indicados por los reportes crudos fue comprobada de nuevo; esa
+comprobación usa las rutas reales, no solamente `/tmp`.
+
+### Adjudicación de hallazgos de ghcycle
+
+Los identificadores F-7, F-8 y F-9 se reutilizaron en el ledger. Aquí designan
+los tres hallazgos de su último cierre; las variantes anteriores se conservan
+con un sufijo descriptivo. La tabla describe la medición original; los avances
+vigentes están en la sección de correcciones anterior. Las referencias de línea corresponden a la base
+`8baf9af` más el arreglo de redacción que ya estaba preparado al reanudar.
+
+| Hallazgo | Etapa y repos afectados | Adjudicación |
+|---|---|---|
+| F-7, aislamiento entre componentes; absorbe F-6 | Execute, PropFlow y Banking | Defecto de producto; trabajo aparte. `ProjectReference` sale del montaje: PropFlow omite `PropFlow.Application`; Banking informa `CS0246` para `ICurrentUser`, `FavoriteService` y `AccountStatus`. El camino de contenedor usa `apply_run.py:226-233`; `:134-136` es el brazo alternativo. `mcp/container.py:258` monta la raíz recibida. El riesgo para JVM/Node es inferido, no una reproducción adicional. *Nota del 2026-09-17: no hubo nueva corrida ghcycle de PropFlow ni Banking tras la corrección, y la ejecución de los 71 tests de Banking no dejó artefacto.* |
+| F-8 y F-1, vulnerabilidades previas; F-1', perfil Python | Security/review, cuatro repos | Los escáneres reportan dependencias vulnerables; decisión pendiente sobre baseline frente al cambio. No se desactiva el gate. La asimetría del perfil Python se adjudica con esa política. No está demostrado que un scan rojo aislado impida siempre cualquier entrega: en estas corridas también fallan tests. *Actualización del 2026-09-17: la política está implementada en `agents/security.py` desde el 2026-09-07 y exige advisories confirmados desde el 2026-09-14; en Maven solo funcionó tras `b99c939` (spring-demo-a siguió rechazada por seguridad). Reviewer puede aprobar con esos hallazgos visibles; la [decisión 8](architecture/decisions/0008-security-evidence-per-stack.md) lleva una corrección fechada.* |
+| F-9, fallback sin clave | Diagnóstico, spring-demo | Deuda de producto aparte: `llm/cloud.py:469` conserva el tipo de excepción, no la clave del `KeyError`. Un futuro detalle debe pasar por redacción. |
+| F-2, testing puntuado pese a fallos | Review, FlaskApiProduct | Defecto de coherencia de evidencia/revisión; trabajo aparte. No convierte los tests fallidos en aprobados. |
+| F-3, caché no escribible y `ENOTDIR` | Execute, FlaskApiProduct | Defecto de entorno/contenedor; trabajo aparte. La atribución inicial de `ENOTDIR` a una ruta equivocada fue retirada; no queda demostrado que F-7 explique ese error. |
+| F-4, archivos ajenos a la spec | Spec, FlaskApiProduct | Trabajo aparte: separar propuestas del agente y modificaciones de herramientas, como `client/package-lock.json`. No hay PR de esta campaña sobre el que afirmar contaminación efectiva. |
+| F-5, motivos ausentes en `tool_outcomes` | Diagnóstico, FlaskApiProduct | Arreglado en la campaña por `ca7d57d` y `056cb75`; persisten las limitaciones siguientes. |
+| F-7-diagnóstico y F-11, salida vacía o cola insuficiente | Diagnóstico, FlaskApiProduct y spring-demo | Trabajo aparte: un componente puede no aportar motivo; el extracto de 600 caracteres de Maven conserva autoconfiguración y pierde la causa. No atribuir el test Spring fallido a MySQL sin evidencia. |
+| F-8-variabilidad, propuestas distintas con igual spec | Spec, FlaskApiProduct | Variabilidad observada, no defecto determinista demostrado. Trabajo de evaluación aparte; no se exige identidad textual al modelo. |
+| F-9-higiene, verificación sobre `/tmp` | Higiene, cuatro repos | Corregida la verificación manual para usar las rutas reales. El JSON mide recursos Docker etiquetados; checkout y secretos requieren controles adicionales. |
+| F-12, `aset.project=project` | Infraestructura/etiquetas, spring-demo | Defecto de identidad de proyecto; trabajo aparte. La colisión entre repos simultáneos es una consecuencia estática, no provocada en esta campaña serial. |
+| F-13, redactor rechazado por el propio guardrail | Cloud/Architecture, spring-demo | Arreglado en `3bca34a`: redactar literales JSON decodificados y reconocer el marcador completo. La corrida real posterior alcanzó 36 resultados de herramientas. |
+| Recursos antiguos sin etiqueta y checkout tras `SIGKILL` | Higiene | No justifican una ADR nueva: el barrido protege recursos sin `aset.owner=aset`; el checkout temporal no garantiza limpieza ante `SIGKILL`. Se retira el candidato a ADR del ledger. |
+
+No hay una entrada F-10 definida en este ledger; no se inventa para completar
+la numeración. Los defectos ya corregidos del arnés —puntuación falsa de execute,
+reporte crudo obsoleto, consulta Docker fallida tratada como vacío y redacción
+insuficiente— conservan sus commits y tests; no se reabren ni se altera el
+marcador para obtener verde.
+
+### Límites de aceptación
+
+La [sonda superficial](../evaluation/benchmarks/ghcycle/results/shallow-push.json)
+cerró la Task 2: GitHub aceptó el push desde `--depth 1`; se verificaron el
+borrado de la rama temporal y la desaparición del checkout. El único archivo
+del commit estaba bajo `.aset-probe/`. Esto prueba transporte Git, no la
+entrega gobernada ni la aceptación de una spec. El
+[script](../evaluation/benchmarks/ghcycle/probe_shallow_push.py) usa una condición
+sobre el commit remoto tanto al crear como al borrar la rama; cuatro tests
+cubren éxito, rechazo, timeout y una rama movida por otro actor.
+
+No hay PR funcional de esta campaña verificado ni apilado funcional sobre
+infraestructura, y tampoco una verificación por diff de PR que demuestre la
+conservación de los tests originales. Los PR anteriores de FlaskApiProduct no
+son evidencia de estas corridas. La corrección de F-7, F-8 y F-9 está incluida
+en la ampliación posterior; la aceptación sigue pendiente de nuevas corridas.
+
+Este trabajo no cambia la situación de `VolumeWorkspace` descrita abajo:
+el CLI clona a un temporal del host; no valida el clon dentro de volumen ni
+`extract` previo al teardown en un run real. Tampoco regenera los reportes del
+trial de la decisión 14, que viven en `evaluation/reports/runs/adr14-trial-*`
+*(corregido el 2026-09-17: la ruta citada antes,
+`evaluation/benchmarks/adr14/results/report.json`, no existe en el árbol ni en
+el historial de Git)*. Las comprobaciones anteriores
+de otras ramas conservan su fecha y alcance, y no sustituyen la aceptación de
+esta campaña.
+
+### Verificación del cierre
+
+La suite indicada por la Task 7 se ejecutó con Python 3.14.7, quitando las
+variables exportadas cuyos nombres derivan de `Settings.model_fields` y fijando
+después `DELIVERY_BACKEND=none`, sin modificar `.env`. Primera pasada en sandbox:
+952 PASS, 26 FAIL y 20 SKIP. Los 26 fallos dependían del daemon Docker no
+accesible desde ese sandbox; repetidos con acceso al daemon, **26 PASS** en
+549.35 segundos. Resultado por lotes: **978 PASS, 20 SKIP, ningún fallo
+pendiente** de esa selección; los omitidos no cuentan como integración validada.
+
+Los cuatro tests nuevos de la sonda pasan aparte. Las comprobaciones
+documentales y el contrato de calidad pasan (8); junto con redacción y
+guardrails suman 71 PASS. Ruff sobre los archivos de código cambiados no
+reporta hallazgos; sobre `src/engineering_team` conserva los dos preexistentes:
+SIM103 en `agents/security.py` y PYI034 en `CompositeQuality.__enter__` de
+`mcp/quality.py` *(citados antes por número de línea, que ya se movió)*.
+
+La comprobación final, después de Banking, devuelve cero recursos Docker
+etiquetados no pertenecientes a caché (contenedores, volúmenes, redes e imágenes,
+con el mismo filtro del corredor). Los checkouts y sus directorios padres de
+las cuatro corridas con entrega fueron eliminados, y no hay directorios
+`aset-checkout-*` en el temporal real ni en `/private/tmp`. Los ocho JSON de
+resultados pasan la comprobación de redacción idempotente; esos JSON y los dos
+documentos de cierre no contienen coincidencias con las credenciales
+configuradas. Los reportes crudos permanecen ignorados por Git.
+
+## Comprobaciones del 2026-09-08 (reorganización documental)
+
+*Encabezado fechado el 2026-09-17: antes se titulaba «Comprobaciones de esta
+revisión» y los párrafos de base y evaluación aparecían dentro del cierre de la
+campaña del 2026-09-13, al que no pertenecen.*
+
 Base inspeccionada: `4294b9ef5904bed3b239a06c95e77491437b9aed`, rama `grok-multistack-validation`. Reorganización aprobada el 2026-09-08; los cambios posteriores a esa base se verifican en el worktree.
 
 La aplicación bancaria de evaluación está ubicada en `demo-projects/sample_app/`. Es un objetivo de prueba y demo, no parte del paquete principal; el runtime y sus scripts apuntan explícitamente a esa ruta. La ruta anterior `sample_app/` ya no existe.
@@ -7,8 +259,6 @@ La aplicación bancaria de evaluación está ubicada en `demo-projects/sample_ap
 La evaluación está organizada en `evaluation/`: escenarios compartidos en la raíz, runners e inputs en `benchmarks/`, snapshots seleccionados en `reports/curated/`, reportes por ejecución en `reports/runs/`, salida transitoria en `reports/generated/` y evidencia histórica en `evidence/archived/`. Esta reorganización conserva los payloads y cambia únicamente sus rutas y consumidores.
 
 La reorganización de `evaluation/` fue verificada con los tests de multistack, snapshots de evidencia, documentación y demo: 14 tests pasan. El lint del runner multistack conserva un aviso preexistente de imports no ordenados; no se modificó lógica de evaluación.
-
-## Comprobaciones de esta revisión
 
 | Comprobación | Resultado |
 |---|---|
@@ -86,7 +336,9 @@ un run controlado. Sustentan las decisiones
 [16](architecture/decisions/0016-every-docker-resource-carries-its-run.md),
 [17](architecture/decisions/0017-the-project-lives-in-the-run.md) y
 [18](architecture/decisions/0018-missing-infrastructure-is-a-blocking-prerequisite.md),
-**ninguna de las cuales está implementada**.
+**ninguna de las cuales está implementada**. *(Corrección fechada: la 16 quedó
+implementada el mismo día y la 17 y la 18, parcialmente, el 2026-09-11; ver
+abajo.)*
 
 | Medición | Antes | Después de la limpieza |
 |---|---|---|
@@ -221,6 +473,12 @@ crudos en `evaluation/benchmarks/adr17/results/measurement.json`.
 | 200 lecturas | 0.363 s | 0.022 s | 0.031 s |
 | 200 escrituras | 0.014 s | 0.054 s | 0.000 s |
 
+*Nota del 2026-09-17: los «0.000 s» del volumen no son costo cero medido. Son
+valores netos negativos recortados a cero, porque la mediana de la operación
+quedó por debajo de la del contenedor vacío (por ejemplo, listado 0.1252 s frente
+a 0.1545 s); indican costo por debajo del ruido. Los JSON de resultados no
+registran fecha ni commit.*
+
 El hallazgo que cambia la lectura: **arrancar el contenedor cuesta ~0.15 s y ese
 coste es idéntico en los dos montajes**, de modo que domina todo lo demás. Una
 vez restado, el volumen queda en o por debajo del ruido en tres de las cuatro
@@ -236,7 +494,10 @@ lanzar 200 procesos es caro en macOS y barato en Linux.
 96 directorios que motivaron la decisión 17 **no se han reducido por este
 cambio**. Lo que existe es el contrato, sus dos implementaciones, la medición y
 la extracción previa al teardown (`VolumeWorkspace.extract`), sin la cual borrar
-el volumen sería peor que lo de hoy. La migración es trabajo aparte.
+el volumen sería peor que lo de hoy. La migración es trabajo aparte. *(Nota del
+2026-09-16: los componentes `node` ejecutan sus comandos sobre un volumen nativo
+por runner, `mcp/workspace_runner.py`; no es `VolumeWorkspace` y el proyecto sigue
+en el host.)*
 
 De la decisión 18, tampoco hay todavía una corrida real: lo verificado es la
 suite, no un `aset-*` contra un proyecto sin compose que haya abierto de verdad
@@ -407,7 +668,7 @@ ejecutara. `mcp/run_daemon.py` crea la red `--internal` y el daemon rootless;
 fuerza `needs_network=False` en la fase de test cuando hay daemon y antepone una
 preparación con red. El daemon no es un default silencioso: exige
 `quality_run_daemon_image` pinneada por digest junto a `quality_runner=container`,
-y `config.py:47-59` rechaza cualquier otra combinación. `QUALITY_RUNNER=process`
+y `Settings.validate_run_daemon` en `config.py` rechaza cualquier otra combinación. `QUALITY_RUNNER=process`
 sigue siendo el camino por defecto y `.env.example` no cambió. *(Corrección del
 2026-09-10: esa última frase caducó con la [decisión 15](architecture/decisions/0015-container-only.md).
 `container` es el default y el único valor admitido, y `.env.example` sí
@@ -520,14 +781,39 @@ Que `order-ms` pasa bajo el daemon del run está medido, pero por el runner de
 [`adr14/verify_run_daemon.py`](../evaluation/benchmarks/adr14/verify_run_daemon.py),
 no por esta ruta.
 
+## Proveedores de modelos (2026-09-16)
+
+Se añadieron xKiro, Vyce, TokenForge, NVIDIA, Kilo, Cohere y Cloudflare Workers
+AI como proveedores compatibles con OpenAI. Su inclusión en las cadenas por rol se
+basa en sondas del 2026-09-16 con tareas de ASET, de dos a cuatro muestras por
+rol, documentadas solo en comentarios de `llm/cloud.py` y en los mensajes de
+`762ec08`, `52c5560` y `004b612`; no hay un script versionado que las reproduzca.
+TokenForge no figura en ninguna cadena.
+
+La traza de Langfuse del 16–17 de septiembre (478 generaciones) mide otra cosa:
+éxito estructurado de cohere 58/63, mistral codestral 64/87, groq 46/95, xkiro
+8/38, vyce 3/11, openrouter 4/56, google 1/25, cloudflare 3/4, kilo 1/3, nvidia
+0/1 y Ollama local 0/26; mistral-medium, cabeza de la cadena de Architecture,
+recibió 429 en 46 de 46 intentos. **No verificado:** disponibilidad sostenida,
+cuotas y latencia bajo carga. Que un modelo esté en la cadena no demuestra que
+responda.
+
+Con la nube habilitada, fragmentos redactados del repositorio, el código escrito
+por Developer y los hallazgos de escáneres llegan al proveedor que la cadena
+seleccione, incluidas pasarelas de terceros; no existe lista de proveedores
+permitidos por proyecto ni tope de gasto, y el costo no se registra (una sola de
+478 generaciones tiene precio, asignado por Langfuse). Ver
+[operaciones](operations.md) y la
+[auditoría](audit160926/08-seguridad-y-politica.md).
+
 ## SpecKit retirado
 
 Los 40 archivos restantes de `.specify/` (Markdown, scripts, configuración, manifests, cachés, templates y workflows) fueron archivados tras autorización explícita. Sus bytes y hashes están en [specify-manifest.json](deprecated/specify-manifest.json); no queda una instalación activa de SpecKit en el repositorio. Esta retirada no afecta los recursos de ejecución de ASET conservados.
 
 ## Recursos operativos conservados
 
-- Seis `system.md`: cargados por [prompting.py](../src/engineering_team/llm/prompting.py).
-- Seis `user.md`: no se encontró referencia literal en la búsqueda acotada de Python/TOML bajo `src/`, `scripts/` y `tests/`; no se descartó consumo indirecto o externo.
+- Seis `system.md`: cargados por [prompting.py](../src/engineering_team/llm/prompting.py). Los de Testing y Reviewer nunca se envían, porque esos roles no invocan modelo.
+- Seis `user.md`: no se encontró referencia literal en la búsqueda acotada de Python/TOML bajo `src/`, `scripts/` y `tests/`; no se descartó consumo indirecto o externo. *(Nota del 2026-09-17: `prompting.py` lee solo `system.md` y construye el mensaje de usuario en código; decidir si se retiran o se conectan.)*
 - Seis Markdown de `knowledge/`: entrada de [RAG](../src/engineering_team/rag/__init__.py), no fuente de verdad sobre el harness.
 - Tres casos Markdown de multistack: entradas de [run_trial.py](../evaluation/benchmarks/multistack/run_trial.py).
 - README de la demo bancaria: [demo.py](../demo-projects/banca-demo-support/demo.py) y [probe_models.py](../demo-projects/banca-demo-support/probe_models.py) usan [read_cases](../demo-projects/banca-demo-support/support.py) para extraer sus siete casos. El usuario confirmó conservarlo como entrada operativa en su ruta original, sin separar los casos. Existe además copia histórica; su narrativa no adquiere autoridad documental.
@@ -544,5 +830,8 @@ Su contenido no se certifica como documentación vigente. Cambiarlo puede cambia
 | README y evidencia narrativa anteriores | Propietarios del mapa | Verificar cada afirmación antes de redactar contenido nuevo |
 | Notas de demos, frontend y bitácoras experimentales | [Operaciones](operations.md), [testing](testing.md) y Git | Solo información útil, actual y con propietario claro |
 | `src/engineering_team/mcp/runner.py` y su suite `tests/mcp/test_process_sandbox.py` (backend de proceso: `sandbox-exec`, Bubblewrap, rechazo de Windows) | `ContainerRunner` en [container.py](../src/engineering_team/mcp/container.py), única implementación de `CommandRunner` | Sólo por una decisión nueva que traiga la evidencia de plataforma que hoy falta, no como fallback silencioso ([decisión 15](architecture/decisions/0015-container-only.md)) |
+| Rotar la cadena de Developer a otro modelo en remediaciones posteriores (`d8cd3f3`, revertido por `31defca`) | Relegar por fallos registrados ([model_health.py](../src/engineering_team/llm/model_health.py)), aún sin corrida | Solo con medición que muestre mejora: en `apply-470d0440` y `apply-892eee7d` la rotación subió los tests fallidos a diez. La remediación sin cambios todavía cambia de modelo dentro de la cadena; ver la [auditoría](audit160926/05-doce-capas.md) |
+| Proveedor SambaNova | Ninguno | Un nivel gratuito verificable: todo su catálogo respondió HTTP 402 |
+| Modelos excluidos listados en `llm/cloud.py` (gpt-oss-120b gratuito de OpenRouter, nemotron-3-ultra, inkling, glm-5.2, gemma-4, ministral-3b, mistral-large, gemini-2.5-flash, gemini-3.1-flash-lite) | Cadenas vigentes | Nueva sonda con la forma real de la petición |
 
 La decisión está en [historia](history.md); los originales permanecen en el [archivo](deprecated/README.md), fuera de la navegación habitual.

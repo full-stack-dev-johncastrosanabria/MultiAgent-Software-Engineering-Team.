@@ -386,6 +386,20 @@ def environment_variables_example(dependencies: tuple[Dependency, ...]) -> str:
     return "\n".join(lines)
 
 
+def _service_credentials(dependency: Dependency) -> tuple[str, str]:
+    """The account the derived service actually starts with.
+
+    derive_compose renders the declared values or `aset`. MySQL creates only
+    root (MYSQL_ROOT_PASSWORD), so a declared non-root user does not exist there.
+    """
+    password = dependency.password or "aset"
+    if dependency.engine == "mysql":
+        return "root", password
+    if dependency.engine == "postgres":
+        return dependency.user or "aset", password
+    return dependency.user, dependency.password
+
+
 def environment_overrides(
     dependencies: tuple[Dependency, ...], stack: str, *,
     hosts: dict[str, str] | None = None,
@@ -399,15 +413,18 @@ def environment_overrides(
     for dependency in dependencies:
         engine = ENGINES[dependency.engine]
         host = (hosts or {}).get(dependency.engine, engine.service)
+        user, password = _service_credentials(dependency)
         if stack == "jvm" and engine.jdbc_scheme:
             overrides.append((
                 "SPRING_DATASOURCE_URL",
                 f"jdbc:{engine.jdbc_scheme}://{host}:{engine.port}/{dependency.database}",
             ))
-            if dependency.user:
-                overrides.append(("SPRING_DATASOURCE_USERNAME", dependency.user))
-            if dependency.password:
-                overrides.append(("SPRING_DATASOURCE_PASSWORD", dependency.password))
+            # Always both: a project default of an empty password is exactly what
+            # the derived service refuses.
+            if user:
+                overrides.append(("SPRING_DATASOURCE_USERNAME", user))
+            if password:
+                overrides.append(("SPRING_DATASOURCE_PASSWORD", password))
         elif stack == "jvm" and dependency.engine == "mongo":
             uri = f"mongodb://{host}:{engine.port}/{dependency.database}"
             overrides.extend((
@@ -417,13 +434,13 @@ def environment_overrides(
         elif stack == "dotnet" and dependency.engine == "postgres":
             connection = (
                 f"Host={host};Port={engine.port};Database={dependency.database};"
-                f"Username={dependency.user};Password={dependency.password}"
+                f"Username={user};Password={password}"
             )
             overrides.append(("ConnectionStrings__Default", connection))
         elif stack == "dotnet" and dependency.engine == "mysql":
             connection = (
                 f"server={host};port={engine.port};database={dependency.database};"
-                f"user={dependency.user};password={dependency.password};"
+                f"user={user};password={password};"
             )
             overrides.append(("ConnectionStrings__DefaultConnection", connection))
     return tuple(overrides)

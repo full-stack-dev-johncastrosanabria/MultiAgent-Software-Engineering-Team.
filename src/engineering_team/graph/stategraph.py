@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any, TypedDict
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -14,6 +15,12 @@ from engineering_team.agents.product import ProductAgent
 from engineering_team.agents.reviewer import ReviewerAgent
 from engineering_team.agents.security import SecurityAgent
 from engineering_team.agents.testing import TestingAgent
+from engineering_team.contracts.developer_plan import (
+    DeveloperTargetPlan,
+    is_manifest,
+    plan_candidate,
+    validate_target_plan,
+)
 from engineering_team.contracts.enums import (
     ActionMode,
     AgentRole,
@@ -26,6 +33,7 @@ from engineering_team.contracts.models import FinalReport, WorkflowError
 from engineering_team.contracts.state import EngineeringState
 from engineering_team.guardrails.validation import require_explicit_destructive_authorization
 from engineering_team.models.context import build_context
+from engineering_team.project_facts import project_facts
 from engineering_team.repository_evidence import (
     ARCHITECTURE_ENVELOPE_BYTES,
     MAX_ARCHITECTURE_RAG_ITEMS,
@@ -253,6 +261,8 @@ def build_engineering_graph(
             architecture_visible_paths: set[str] = set()
             architecture_retrieval_ran = False
             developer_apply_targets: list[str] = []
+            developer_inventory_complete = False
+            planned_write_paths: set[str] | None = None
             if retriever is not None and role in {
                 AgentRole.ARCHITECTURE, AgentRole.SECURITY, AgentRole.TESTING
             }:
@@ -353,6 +363,10 @@ def build_engineering_graph(
                     # report on itself.
                     architecture_ranked_count = len(ranked)
                 elif role is AgentRole.DEVELOPER and result.status is ToolStatus.SUCCESS:
+                    developer_inventory_complete = not any(
+                        line.startswith("# truncated:")
+                        for line in result.output_summary.splitlines()
+                    )
                     listed_paths = [
                         line.strip().replace("\\", "/")
                         for line in result.output_summary.splitlines()
@@ -505,10 +519,31 @@ def build_engineering_graph(
                         metadata={"agent": role.value, "status": retriever.last_status},
                     )
             if quality_mcp is not None and role is AgentRole.TESTING:
+                setter = getattr(quality_mcp, "set_changed_paths", None)
+                if callable(setter) and current.implementation is not None:
+                    setter(current.implementation.changed_files)
                 result = quality_mcp.run_tests(role, test_paths)
                 required_mcp_missing |= preserve_tool_result(
                     result, role, errors, tool_results, quality_mcp
                 )
+                health = getattr(model_runtime, "health", None)
+                implementation = current.implementation
+                if (
+                    health is not None and implementation is not None
+                    and implementation.action_mode is ActionMode.APPLIED
+                    and result.status in {ToolStatus.SUCCESS, ToolStatus.FAIL}
+                ):
+                    # The suite judges the code the latest successful Developer
+                    # call wrote; a model whose code keeps failing drops back.
+                    author = next((
+                        usage for usage in reversed(current.model_usage)
+                        if usage.agent is AgentRole.DEVELOPER and usage.structured_output_success
+                    ), None)
+                    if author is not None:
+                        health.record_authoring(
+                            AgentRole.DEVELOPER, author.provider, author.requested_model,
+                            passed=result.status is ToolStatus.SUCCESS,
+                        )
             if quality_mcp is not None and role is AgentRole.SECURITY:
                 operations = [
                     getattr(quality_mcp, name) for name in (
@@ -560,91 +595,205 @@ def build_engineering_graph(
                 # This makes the orchestrator, rather than model context order, the
                 # final authority on a remediation's writable scope.
                 candidate = candidate.model_copy(update={"changed_files": developer_apply_targets})
-            if role in {AgentRole.TESTING, AgentRole.REVIEWER}:
-                # Testing and Reviewer are deterministic gates over real MCP evidence.
-                # Calling a model here adds latency without improving the result.
-                output = candidate
-            elif model_runtime is not None:
-                for stage_attempt in range(model_stage_retries + 1):
-                    attempt_start = len(model_runtime.attempts)
-                    try:
-                        output, model_info = model_runtime.invoke_artifact(role, envelope, candidate)
-                        attempts = model_runtime.attempts[attempt_start:]
-                        model_usage.extend(attempts or [model_info])
-                        break
-                    except RuntimeError as exc:
-                        model_usage.extend(model_runtime.attempts[attempt_start:])
-                        message = str(exc)
-                        if message.startswith(ErrorCode.LLM_QUALITY_ERROR.value):
-                            code = ErrorCode.LLM_QUALITY_ERROR
-                        elif message.startswith(ErrorCode.AGENT_TIMEOUT.value):
-                            code = ErrorCode.AGENT_TIMEOUT
-                        else:
-                            code = ErrorCode.LLM_AVAILABILITY_ERROR
-                        errors.append(WorkflowError(
-                            code=code, source_stage=role.value, retryable=True, detail=message,
-                        ))
-                        if trace is not None:
-                            trace.record(
-                                code.value, level="ERROR", status_message=message,
-                                metadata={"agent": role.value, "stage_attempt": stage_attempt + 1},
-                            )
 
-                        retryable = code in {
-                            ErrorCode.LLM_AVAILABILITY_ERROR, ErrorCode.AGENT_TIMEOUT,
-                        }
-                        if cloud_runtime is not None:
-                            cloud_attempt_start = len(getattr(cloud_runtime, "attempts", []))
-                            try:
-                                output, cloud_info = cloud_runtime.invoke_artifact(
-                                    role,
-                                    envelope,
-                                    candidate,
-                                    fallback_reason=code.value,
-                                )
-                                model_usage.append(cloud_info)
-                                break
-                            except RuntimeError as cloud_exc:
-                                model_usage.extend(
-                                    getattr(cloud_runtime, "attempts", [])[cloud_attempt_start:]
-                                )
-                                errors.append(WorkflowError(
-                                    code=ErrorCode.CLOUD_FALLBACK_UNAVAILABLE,
-                                    source_stage=role.value, retryable=retryable,
-                                    detail=str(cloud_exc),
-                                ))
-                                if trace is not None:
-                                    trace.record(
-                                        "cloud fallback error", level="ERROR",
-                                        status_message=str(cloud_exc),
-                                        metadata={"agent": role.value, "stage_attempt": stage_attempt + 1},
-                                    )
-
-                        if retryable and stage_attempt < model_stage_retries:
+            def invoke_candidate(candidate, envelope):
+                if role in {AgentRole.TESTING, AgentRole.REVIEWER}:
+                    # Testing and Reviewer are deterministic gates over real MCP evidence.
+                    # Calling a model here adds latency without improving the result.
+                    output = candidate
+                elif model_runtime is not None:
+                    for stage_attempt in range(model_stage_retries + 1):
+                        attempt_start = len(model_runtime.attempts)
+                        try:
+                            output, model_info = model_runtime.invoke_artifact(role, envelope, candidate)
+                            attempts = model_runtime.attempts[attempt_start:]
+                            model_usage.extend(attempts or [model_info])
+                            break
+                        except RuntimeError as exc:
+                            model_usage.extend(model_runtime.attempts[attempt_start:])
+                            message = str(exc)
+                            if message.startswith(ErrorCode.LLM_QUALITY_ERROR.value):
+                                code = ErrorCode.LLM_QUALITY_ERROR
+                            elif message.startswith(ErrorCode.AGENT_TIMEOUT.value):
+                                code = ErrorCode.AGENT_TIMEOUT
+                            else:
+                                code = ErrorCode.LLM_AVAILABILITY_ERROR
+                            errors.append(WorkflowError(
+                                code=code, source_stage=role.value, retryable=True, detail=message,
+                            ))
                             if trace is not None:
                                 trace.record(
-                                    "model stage retry", level="WARNING",
-                                    status_message=message,
-                                    metadata={"agent": role.value, "next_attempt": stage_attempt + 2},
+                                    code.value, level="ERROR", status_message=message,
+                                    metadata={"agent": role.value, "stage_attempt": stage_attempt + 1},
                                 )
-                            continue
 
-                        fallback_patch: dict[str, Any] = {
-                            "route_history": [*current.route_history, role.value],
-                            "errors": errors, "model_usage": model_usage,
-                            "rag_evidence": rag_evidence, "tool_results": tool_results,
-                            "human_review_required": True,
-                            "trace_id": trace.trace_id if trace is not None else current.trace_id,
-                        }
-                        if cloud_runtime is not None and hasattr(cloud_runtime, "budget"):
-                            fallback_patch["cloud_escalations_by_agent"] = {
-                                item.value: count
-                                for item, count in cloud_runtime.budget.by_agent.items()
+                            retryable = code in {
+                                ErrorCode.LLM_AVAILABILITY_ERROR, ErrorCode.AGENT_TIMEOUT,
                             }
-                            fallback_patch["cloud_escalations_run"] = cloud_runtime.budget.run_count
-                        return fallback_patch
-            else:
-                output = candidate
+                            if cloud_runtime is not None:
+                                cloud_attempt_start = len(getattr(cloud_runtime, "attempts", []))
+                                try:
+                                    output, cloud_info = cloud_runtime.invoke_artifact(
+                                        role,
+                                        envelope,
+                                        candidate,
+                                        fallback_reason=code.value,
+                                    )
+                                    model_usage.append(cloud_info)
+                                    break
+                                except RuntimeError as cloud_exc:
+                                    model_usage.extend(
+                                        getattr(cloud_runtime, "attempts", [])[cloud_attempt_start:]
+                                    )
+                                    errors.append(WorkflowError(
+                                        code=ErrorCode.CLOUD_FALLBACK_UNAVAILABLE,
+                                        source_stage=role.value, retryable=retryable,
+                                        detail=str(cloud_exc),
+                                    ))
+                                    if trace is not None:
+                                        trace.record(
+                                            "cloud fallback error", level="ERROR",
+                                            status_message=str(cloud_exc),
+                                            metadata={"agent": role.value, "stage_attempt": stage_attempt + 1},
+                                        )
+
+                            if retryable and stage_attempt < model_stage_retries:
+                                if trace is not None:
+                                    trace.record(
+                                        "model stage retry", level="WARNING",
+                                        status_message=message,
+                                        metadata={"agent": role.value, "next_attempt": stage_attempt + 2},
+                                    )
+                                continue
+
+                            fallback_patch: dict[str, Any] = {
+                                "route_history": [*current.route_history, role.value],
+                                "errors": errors, "model_usage": model_usage,
+                                "rag_evidence": rag_evidence, "tool_results": tool_results,
+                                "human_review_required": True,
+                                "trace_id": trace.trace_id if trace is not None else current.trace_id,
+                            }
+                            if cloud_runtime is not None and hasattr(cloud_runtime, "budget"):
+                                fallback_patch["cloud_escalations_by_agent"] = {
+                                    item.value: count
+                                    for item, count in cloud_runtime.budget.by_agent.items()
+                                }
+                                fallback_patch["cloud_escalations_run"] = cloud_runtime.budget.run_count
+                            return None, fallback_patch
+                else:
+                    output = candidate
+                return output, None
+
+            if (
+                role is AgentRole.DEVELOPER
+                and repository_mcp is not None
+                and model_runtime is not None
+                and current.repository_context.get("apply_changes")
+                and current.repository_context.get("authorized")
+                and not developer_apply_targets
+            ):
+                previous_authored = set(
+                    getattr(current.implementation, "file_contents", {}) or {}
+                )
+                planner_candidate = plan_candidate(
+                    DeveloperAgent.rank_paths(
+                        sorted(existing_repo_paths), [], DeveloperAgent.search_terms(
+                            current.specification, current.architecture, current.requirement,
+                            remediation_feedback(current),
+                        ),
+                    ),
+                    authored=previous_authored,
+                )
+                # Declared versions and the original tests' imports: authors
+                # wrote Spring Boot 3 tests after reading a Boot 4 pom as raw XML.
+                fact_sources: dict[str, dict[str, str]] = {"manifests": {}, "tests": {}}
+                manifest_paths = sorted(
+                    (path for path in planner_candidate.inventory_paths if is_manifest(path)
+                     or PurePosixPath(path).name == "pyproject.toml"),
+                    key=lambda path: (path.count("/"), path),
+                )[:6]
+                test_paths_for_facts = [
+                    path for path in planner_candidate.protected_test_paths
+                    if PurePosixPath(path).name != "conftest.py"
+                ][:4]
+                for kind, paths in (("manifests", manifest_paths), ("tests", test_paths_for_facts)):
+                    for path in paths:
+                        read = repository_mcp.read_file(role, path)
+                        preserve_tool_result(read, role, errors, tool_results, repository_mcp)
+                        if read.status is ToolStatus.SUCCESS:
+                            fact_sources[kind][path] = read.output_summary
+                facts = project_facts(fact_sources["manifests"], original_tests=fact_sources["tests"])
+                envelope = envelope.model_copy(update={"project_facts": facts})
+                proposed, failure = invoke_candidate(planner_candidate, envelope)
+                if failure is not None:
+                    return failure
+                try:
+                    if not isinstance(proposed, DeveloperTargetPlan):
+                        raise TypeError("target planner returned the wrong contract")
+                    developer_apply_targets, planned_reads = validate_target_plan(
+                        planner_candidate, proposed, all_paths=existing_repo_paths,
+                    )
+                    planned_write_paths = set(developer_apply_targets)
+                    if proposed.new_files and not developer_inventory_complete:
+                        raise ValueError("cannot prove new targets absent from a truncated inventory")
+                    total_read_bytes = 0
+                    planned_results = []
+                    for path in planned_reads:
+                        read = repository_mcp.read_file(role, path)
+                        read = read.model_copy(update={"input_summary": f"path={path}"})
+                        failed = preserve_tool_result(
+                            read, role, errors, tool_results, repository_mcp, strict=True
+                        )
+                        if failed:
+                            raise ValueError("planned source evidence could not be read")
+                        total_read_bytes += len(read.output_summary.encode("utf-8"))
+                        if total_read_bytes > 192 * 1024:
+                            raise ValueError("planned source evidence exceeds the read budget")
+                        planned_results.append(read)
+                    # Read every existing edit target in full. The author sees exactly
+                    # this fresh bounded evidence; historical reads remain in the audit.
+                    current = current.model_copy(update={"tool_results": tool_results})
+                    envelope = build_context(role, current, role.value)
+                    envelope = envelope.model_copy(
+                        update={"tool_results": planned_results, "project_facts": facts}
+                    )
+                    candidate = agents[role]._apply_candidate(
+                        developer_apply_targets, planned_results, current.specification,
+                        current.architecture, envelope,
+                    )
+                    if trace is not None:
+                        trace.record(
+                            "Developer target plan", output=proposed.model_dump(mode="json"),
+                            metadata={"agent": role.value, "validated": True},
+                        )
+                except (TypeError, ValueError) as exc:
+                    errors.append(WorkflowError(
+                        code=ErrorCode.LLM_QUALITY_ERROR, source_stage=role.value,
+                        retryable=False, detail=f"Developer target plan rejected: {exc}",
+                    ))
+                    return {
+                        "route_history": [*current.route_history, role.value],
+                        "errors": errors, "tool_results": tool_results,
+                        "model_usage": model_usage, "human_review_required": True,
+                        "trace_id": trace.trace_id if trace is not None else current.trace_id,
+                    }
+            output, failure = invoke_candidate(candidate, envelope)
+            if failure is not None:
+                return failure
+            if planned_write_paths is not None and (
+                set(getattr(output, "changed_files", [])) != planned_write_paths
+                or set(getattr(output, "file_contents", {})) != planned_write_paths
+                or getattr(output, "action_mode", None) is not ActionMode.APPLIED
+            ):
+                errors.append(WorkflowError(
+                    code=ErrorCode.LLM_QUALITY_ERROR, source_stage=role.value,
+                    retryable=False, detail="Developer author changed the validated target scope",
+                ))
+                return {
+                    "route_history": [*current.route_history, role.value],
+                    "errors": errors, "tool_results": tool_results,
+                    "model_usage": model_usage, "human_review_required": True,
+                }
             if (
                 role is AgentRole.DEVELOPER
                 and repository_mcp is not None

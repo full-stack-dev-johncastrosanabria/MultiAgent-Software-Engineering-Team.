@@ -1,0 +1,46 @@
+{
+  "repository": "https://github.com/full-stack-dev-johncastrosanabria/PropFlow.git",
+  "delivered": false,
+  "clone_depth": 1,
+  "cli_returncode": 0,
+  "cli_stderr_tail": "Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n",
+  "stages": {
+    "clone": {
+      "passed": true,
+      "detail": "the run produced evidence, so it had a checkout to work in"
+    },
+    "infrastructure": {
+      "passed": true,
+      "detail": "null",
+      "branch": null,
+      "error": null
+    },
+    "execute": {
+      "passed": false,
+      "detail": "102 tool outcomes, 0 unavailable, 12 failed, run exited asking for human review before TESTING closed",
+      "unavailable": [],
+      "failed_by_tool": {
+        "run_security_scan": 5,
+        "run_tests": 5,
+        "scan_dependencies": 2
+      }
+    },
+    "spec": {
+      "passed": false,
+      "detail": "0 files written, reviewer said REJECTED",
+      "files_written": []
+    },
+    "delivery": {
+      "passed": true,
+      "pull_request": null,
+      "branch": null,
+      "error": null,
+      "skipped": true
+    },
+    "hygiene": {
+      "passed": true,
+      "leftover_labelled_resources": []
+    }
+  },
+  "all_stages_passed": false
+}

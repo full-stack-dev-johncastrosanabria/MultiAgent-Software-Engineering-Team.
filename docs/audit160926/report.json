@@ -1,0 +1,867 @@
+{
+  "schema_version": "ecc.agent-architecture-audit.report.v1",
+  "audit": {
+    "date": "2026-09-16/17",
+    "base": "gh-run-testing@92742b7",
+    "location": "docs/audit160926/"
+  },
+  "executive_verdict": {
+    "overall_health": "high_risk",
+    "primary_failure_mode": "Las capas del arnés terminan corridas y desvían la remediación antes de un veredicto de ingeniería: bucle de remediación no convergente por Architecture sin diagnóstico para Developer, detector de estancamiento ciego, compuerta de aceptación léxica y cadenas de modelos gratuitas agotadas; 0 de 26 corridas aceptadas.",
+    "most_urgent_fix": "Restringir las cadenas a proveedores aprobados con tope de gasto y hacer atribuible la medición; después quitar las llamadas eco, enviar siempre el diagnóstico de tests a Developer, volver consultivas la razón de cobertura y la compuerta léxica, y detectar repeticiones por clase de fallo."
+  },
+  "scope": {
+    "target_name": "ASET — Autonomous Engineering Team",
+    "model_stack": [
+      "groq openai/gpt-oss-120b",
+      "mistral codestral-latest, mistral-medium, mistral-small",
+      "cohere command-a-03-2025",
+      "openrouter nemotron-3-super gratuito",
+      "xkiro deepseek-v4-pro, deepseek-v4.1-flash, qwen3-coder-plus, codestral-2508",
+      "vyce agnes-3.0-flash, deepseek-v4",
+      "kilo nemotron-3-super",
+      "cloudflare @cf gpt-oss-120b, nemotron-3-120b",
+      "nvidia nemotron-3-super",
+      "google gemini-3.5/3.6-flash",
+      "ollama qwen3.5:9b/4b"
+    ],
+    "layers_to_audit": [
+      "system_prompt",
+      "session_history",
+      "long_term_memory",
+      "distillation",
+      "active_recall",
+      "tool_selection",
+      "tool_execution",
+      "tool_interpretation",
+      "answer_shaping",
+      "platform_rendering",
+      "hidden_repair_loops",
+      "persistence"
+    ],
+    "reference_frameworks": [
+      "Anthropic, Building effective agents (2024-12)",
+      "LunarResearcher, Harness Engineering (X, 2026-09-06)",
+      "ECC agent-architecture-audit"
+    ]
+  },
+  "metrics": {
+    "accepted_runs": "0/26",
+    "reviewer_approvals": "0/42",
+    "failed_generations": "290/478",
+    "stops_by_provider_exhaustion": "13/24",
+    "repeated_failure_transitions": "22/27",
+    "wall_clock_on_failed_attempts": "33%",
+    "tests": "1270 total: 1221 pass, 26 fail (Docker daemon absent), 23 skip"
+  },
+  "findings": [
+    {
+      "id": "C-01",
+      "severity": "critical",
+      "title": "El diagnóstico de tests no llega al único rol que edita código cuando Reviewer enruta por Architecture",
+      "mechanism": "`models/context.py:149-150` adjunta diagnósticos solo si `return_to == rol`; 26 de 42 transiciones fueron a Architecture; 34 prompts de Developer sin diagnóstico",
+      "source_layer": "L4",
+      "root_cause": "El diagnóstico de tests no llega al único rol que edita código cuando Reviewer enruta por Architecture",
+      "evidence_refs": [
+        "models/context.py:149-150"
+      ],
+      "confidence": 0.9,
+      "verification": "P, X",
+      "recommended_fix": "Adjuntar siempre los diagnósticos de tests a Developer, con independencia de la ruta"
+    },
+    {
+      "id": "C-02",
+      "severity": "critical",
+      "title": "La remediación por Architecture no puede converger: la suficiencia exige leer ≥50 % de los candidatos rankeados y la ventana visible ronda 7 archivos, mientras la retroalimentación agranda el denominador",
+      "mechanism": "`repository_evidence.py:16-26, 501, 513-552`; `graph/stategraph.py:468-490`; `agents/reviewer.py:241-265`; decisión 7; traza `a2cb449e2a`: de 27 a 67 candidatos, cobertura del 26 % al 10 %",
+      "source_layer": "L11",
+      "root_cause": "La remediación por Architecture no puede converger: la suficiencia exige leer ≥50 % de los candidatos rankeados y la ventana visible ronda 7 archivos, mientras la retroalimentación agranda el denominador",
+      "evidence_refs": [
+        "repository_evidence.py:16-26, 501, 513-552",
+        "graph/stategraph.py:468-490",
+        "agents/reviewer.py:241-265"
+      ],
+      "confidence": 0.9,
+      "verification": "P, X",
+      "recommended_fix": "Decisión nueva que refine la 7: medir cobertura contra las lecturas planificadas o fronteras requeridas; enrutar a Architecture solo si la pasada anterior aumentó fronteras visibles"
+    },
+    {
+      "id": "C-03",
+      "severity": "critical",
+      "title": "El detector de estancamiento hashea texto volátil y los fallos repetidos corren hasta el tope",
+      "mechanism": "`graph/routers.py:17-26`; traza `a2cb449e2a`: 5 revisiones, 1 motivo, 5 huellas; 22 de 27 transiciones repitieron clase y se detectaron 7; spring-e: 4 diffs idénticos sin detección",
+      "source_layer": "L11",
+      "root_cause": "El detector de estancamiento hashea texto volátil y los fallos repetidos corren hasta el tope",
+      "evidence_refs": [
+        "graph/routers.py:17-26"
+      ],
+      "confidence": 0.85,
+      "verification": "P, X",
+      "recommended_fix": "Huella = (categoría, ids de tests fallidos ordenados, primer tipo de error o símbolo, hash del diff)"
+    },
+    {
+      "id": "C-04",
+      "severity": "critical",
+      "title": "La compuerta de cobertura léxica rechaza suites verdes: palabras de ≥6 letras de reglas redactadas por el LLM de Product, en idioma variable, deben aparecer en nombres de tests",
+      "mechanism": "`agents/testing.py:70-92`; `agents/reviewer.py:363-408`; spring-demo-d con `run_tests` verde 5/5 rechazada; tres commits del 09-16 enseñaron las palabras al modelo en lugar de corregir la compuerta",
+      "source_layer": "L1",
+      "root_cause": "La compuerta de cobertura léxica rechaza suites verdes: palabras de ≥6 letras de reglas redactadas por el LLM de Product, en idioma variable, deben aparecer en nombres de tests",
+      "evidence_refs": [
+        "agents/testing.py:70-92",
+        "agents/reviewer.py:363-408"
+      ],
+      "confidence": 0.85,
+      "verification": "P, X",
+      "recommended_fix": "Contrato de aceptación del operador con ids de test por obligación; la cobertura léxica, solo consultiva"
+    },
+    {
+      "id": "A-01",
+      "severity": "high",
+      "title": "Llamadas LLM que solo pueden hacer eco (Architecture y Security) cuestan 53 minutos de modelo y terminan corridas",
+      "mechanism": "`llm/runtime.py:293-297, 336-374`; 81/81 éxitos idénticos al candidato; 4 de 17 trazas murieron ahí",
+      "source_layer": "L11",
+      "root_cause": "Llamadas LLM que solo pueden hacer eco (Architecture y Security) cuestan 53 minutos de modelo y terminan corridas",
+      "evidence_refs": [
+        "llm/runtime.py:293-297, 336-374"
+      ],
+      "confidence": 0.95,
+      "verification": "P, X",
+      "recommended_fix": "Añadir ambos roles a la exclusión de `graph/stategraph.py:600-603`, o hacer la llamada consultiva"
+    },
+    {
+      "id": "A-02",
+      "severity": "high",
+      "title": "La disponibilidad de modelos decide la mayoría de los resultados; configuraciones crónicamente caídas siguen en las cadenas; fallback local sin preflight; presupuesto ilimitado en modo nube",
+      "mechanism": "13 de 24 paradas por cadena agotada; mistral-medium 46/46 con 429; Ollama 0/26; `llm/cloud.py:407`",
+      "source_layer": "L11",
+      "root_cause": "La disponibilidad de modelos decide la mayoría de los resultados; configuraciones crónicamente caídas siguen en las cadenas; fallback local sin preflight; presupuesto ilimitado en modo nube",
+      "evidence_refs": [
+        "llm/cloud.py:407"
+      ],
+      "confidence": 0.85,
+      "verification": "P, X",
+      "recommended_fix": "Uno o dos proveedores fiables y aprobados por rol, preflight, tope de intentos y gasto"
+    },
+    {
+      "id": "A-03",
+      "severity": "high",
+      "title": "Sin checkpoint ni reanudación; la revisión humana es terminal, sin motivo legible y mezcla caída de proveedor, fallo de infraestructura y rechazo",
+      "mechanism": "`graph/stategraph.py:1030-1033`; `runs/store.py:26`; `run_api.py:119-127`",
+      "source_layer": "harness: ABE A1 · HE§5, §12",
+      "root_cause": "Sin checkpoint ni reanudación; la revisión humana es terminal, sin motivo legible y mezcla caída de proveedor, fallo de infraestructura y rechazo",
+      "evidence_refs": [
+        "graph/stategraph.py:1030-1033",
+        "runs/store.py:26",
+        "run_api.py:119-127"
+      ],
+      "confidence": 0.9,
+      "verification": "X",
+      "recommended_fix": "Checkpointer persistente por `run_id`, endpoint de reanudación y estado final tipado"
+    },
+    {
+      "id": "A-04",
+      "severity": "high",
+      "title": "Orden de chequeos invertido y escaneo de seguridad repetido en cada ciclo; el atajo `testing_only` es inalcanzable porque `\"api\"` aparece en «no API change declared»",
+      "mechanism": "`agents/developer.py:350, 375-378, 460, 506-509`; `graph/stategraph.py:1000-1011`; 44 escaneos con el mismo conjunto de CVEs, 13–18 % del reloj",
+      "source_layer": "harness: HE§7, §19",
+      "root_cause": "Orden de chequeos invertido y escaneo de seguridad repetido en cada ciclo; el atajo `testing_only` es inalcanzable porque `\"api\"` aparece en «no API change declared»",
+      "evidence_refs": [
+        "agents/developer.py:350, 375-378, 460, 506-509",
+        "graph/stategraph.py:1000-1011"
+      ],
+      "confidence": 0.9,
+      "verification": "P, X",
+      "recommended_fix": "Escaneo de baseline único antes de escribir; re-escaneo solo si cambia un manifiesto; compilar y testear antes de Security; señal de superficie por palabra completa"
+    },
+    {
+      "id": "A-05",
+      "severity": "high",
+      "title": "El recibo de cambios reporta el primer diff, no el final",
+      "mechanism": "`apply_run.py:634-637` toma el primer `get_diff`, que es acumulativo; 7 de 15 recibos no coinciden con `changed_files`",
+      "source_layer": "harness: HE§13",
+      "root_cause": "El recibo de cambios reporta el primer diff, no el final",
+      "evidence_refs": [
+        "apply_run.py:634-637"
+      ],
+      "confidence": 0.9,
+      "verification": "P, X",
+      "recommended_fix": "Tomar el último `get_diff`; test con dos diffs"
+    },
+    {
+      "id": "A-06",
+      "severity": "high",
+      "title": "Salida de código fuente a proveedores sin nivel de confianza, lista permitida ni tope de gasto",
+      "mechanism": "`llm/cloud.py:32-45, 67-158`; solo `cloud_enabled` global (`config.py:25`)",
+      "source_layer": "harness: HE§9",
+      "root_cause": "Salida de código fuente a proveedores sin nivel de confianza, lista permitida ni tope de gasto",
+      "evidence_refs": [
+        "llm/cloud.py:32-45, 67-158",
+        "config.py:25"
+      ],
+      "confidence": 0.85,
+      "verification": "P, X",
+      "recommended_fix": "`cloud_allowed_providers` obligatorio por proyecto; pasarelas no revisadas con opt-in; costo registrado"
+    },
+    {
+      "id": "A-07",
+      "severity": "high",
+      "title": "Instalación de dependencias del repositorio objetivo con red a internet",
+      "mechanism": "`mcp/quality.py:975-1047`; `mcp/container.py:303-314`",
+      "source_layer": "harness: HE§4",
+      "root_cause": "Instalación de dependencias del repositorio objetivo con red a internet",
+      "evidence_refs": [
+        "mcp/quality.py:975-1047",
+        "mcp/container.py:303-314"
+      ],
+      "confidence": 0.7,
+      "verification": "P",
+      "recommended_fix": "Salida limitada a registros; `--ignore-scripts` donde sea compatible"
+    },
+    {
+      "id": "A-08",
+      "severity": "high",
+      "title": "El barrido Docker trata fallos de consulta y de borrado como «nada que limpiar»",
+      "mechanism": "`docker_labels.py:92-128`; `apply_run.py:211`; restos en flask-a y flask-k",
+      "source_layer": "harness: HE§12",
+      "root_cause": "El barrido Docker trata fallos de consulta y de borrado como «nada que limpiar»",
+      "evidence_refs": [
+        "docker_labels.py:92-128",
+        "apply_run.py:211"
+      ],
+      "confidence": 0.85,
+      "verification": "P",
+      "recommended_fix": "Distinguir consulta fallida, vacío y borrado fallido; registrar el reporte"
+    },
+    {
+      "id": "A-09",
+      "severity": "high",
+      "title": "Error de cadena sin tipo: se conserva el error del último modelo, los fallos de calidad se reportan como disponibilidad y el reintento de etapa reenvía la misma entrada; 400 y 413 no enfrían",
+      "mechanism": "`llm/cloud.py:585-602, 622-628, 679-693`; `graph/stategraph.py:614-667`; 12 de 26 fallos de etapa ocultaban fallos de calidad; 10 de 16 reintentos fallaron otra vez",
+      "source_layer": "L11, L8",
+      "root_cause": "Error de cadena sin tipo: se conserva el error del último modelo, los fallos de calidad se reportan como disponibilidad y el reintento de etapa reenvía la misma entrada; 400 y 413 no enfrían",
+      "evidence_refs": [
+        "llm/cloud.py:585-602, 622-628, 679-693",
+        "graph/stategraph.py:614-667"
+      ],
+      "confidence": 0.9,
+      "verification": "X",
+      "recommended_fix": "`ChainFailure` tipado con categorías; reintentar solo si una condición de disponibilidad cambió"
+    },
+    {
+      "id": "A-10",
+      "severity": "high",
+      "title": "La destilación convierte riesgo de baseline en «aserción fallida» y borra el error real",
+      "mechanism": "`agents/reviewer.py:210-220`; `models/context.py:163-206` conserva la cola de 2000 bytes; 42 % del diagnóstico de Developer son advisories; en 17 de 33 prompts falta el error de compilación",
+      "source_layer": "L4",
+      "root_cause": "La destilación convierte riesgo de baseline en «aserción fallida» y borra el error real",
+      "evidence_refs": [
+        "agents/reviewer.py:210-220",
+        "models/context.py:163-206"
+      ],
+      "confidence": 0.85,
+      "verification": "P, X",
+      "recommended_fix": "Sobre tipado `{regresiones, fallos_nuevos, errores_de_compilación, riesgo_baseline}`; el riesgo de baseline nunca va a Developer"
+    },
+    {
+      "id": "A-11",
+      "severity": "high",
+      "title": "El scorer ghcycle produce etapas vacías o mal atribuidas y resultados no atribuibles",
+      "mechanism": "`evaluation/benchmarks/ghcycle/run_cycle.py:109-118, 171-180, 239-246`; 21/26 aprobados vacíos; caída de guardarraíl puntuada como clone",
+      "source_layer": "harness: HE§18",
+      "root_cause": "El scorer ghcycle produce etapas vacías o mal atribuidas y resultados no atribuibles",
+      "evidence_refs": [
+        "evaluation/benchmarks/ghcycle/run_cycle.py:109-118, 171-180, 239-246"
+      ],
+      "confidence": 0.85,
+      "verification": "P, X",
+      "recommended_fix": "Registrar commit, especificación, cadena y horas; «no ejercitado» distinto de «aprobado»; causa de parada"
+    },
+    {
+      "id": "A-12",
+      "severity": "high",
+      "title": "La evidencia de diagnóstico pierde información donde vive la causa raíz",
+      "mechanism": "`apply_run.py:565, 597` (600 caracteres); `mcp/quality.py:713` (4000); diff capado; herramientas con `latencyMs=0`",
+      "source_layer": "L8",
+      "root_cause": "La evidencia de diagnóstico pierde información donde vive la causa raíz",
+      "evidence_refs": [
+        "apply_run.py:565, 597",
+        "mcp/quality.py:713"
+      ],
+      "confidence": 0.85,
+      "verification": "X",
+      "recommended_fix": "Extraer bloques de error (Maven `[ERROR]`, Surefire) en la herramienta, desde el inicio"
+    },
+    {
+      "id": "A-13",
+      "severity": "high",
+      "title": "El gate de tests depende de un daemon Docker vivo y falla en lugar de omitirse; el hook de pre-commit no está instalado",
+      "mechanism": "26 fallos sin daemon, 5 de ellos unitarios con mocks; `.git/hooks` solo con `*.sample`",
+      "source_layer": "harness: HE§11",
+      "root_cause": "El gate de tests depende de un daemon Docker vivo y falla en lugar de omitirse; el hook de pre-commit no está instalado",
+      "evidence_refs": [
+        ".git/hooks",
+        "*.sample"
+      ],
+      "confidence": 0.9,
+      "verification": "E, P",
+      "recommended_fix": "`skipif` que compruebe el daemon; parchear `require_available` en tests con mocks; hook versionado e instalable"
+    },
+    {
+      "id": "A-14",
+      "severity": "high",
+      "title": "La documentación no acompañó 31 commits: afirmaciones erróneas sobre proveedores, límite de iteraciones, CLI y resolución de destinos; decisión 8 contradicha",
+      "mechanism": "Ver documentación",
+      "source_layer": "harness: HE§11, §14",
+      "root_cause": "La documentación no acompañó 31 commits: afirmaciones erróneas sobre proveedores, límite de iteraciones, CLI y resolución de destinos; decisión 8 contradicha",
+      "evidence_refs": [
+        "Ver documentación"
+      ],
+      "confidence": 0.9,
+      "verification": "P, X",
+      "recommended_fix": "Corregido en documentos; falta la regla de que un `feat:` actualice su propietario"
+    },
+    {
+      "id": "M-02",
+      "severity": "medium",
+      "title": "Formato de salida con sobrecarga: archivos completos como cadenas JSON, sin espacio para razonar mientras el prompt pide «ejecutar mentalmente»",
+      "mechanism": "`llm/prompting.py:94-128`; `llm/runtime.py:97`; `llm/cloud.py:535-547`; mediana 190 `\\n` escapados",
+      "source_layer": "harness: ABE ACI",
+      "root_cause": "Formato de salida con sobrecarga: archivos completos como cadenas JSON, sin espacio para razonar mientras el prompt pide «ejecutar mentalmente»",
+      "evidence_refs": [
+        "llm/prompting.py:94-128",
+        "llm/runtime.py:97",
+        "llm/cloud.py:535-547"
+      ],
+      "confidence": 0.7,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-03",
+      "severity": "medium",
+      "title": "Ajuste sin métrica de resultado: una corrida por cambio, cuatro commits durante corridas, rotación revertida a los 52 minutos con n=2",
+      "mechanism": "git log del 09-16; `d8cd3f3` → `31defca`",
+      "source_layer": "harness: ABE S · HE§14, §15",
+      "root_cause": "Ajuste sin métrica de resultado: una corrida por cambio, cuatro commits durante corridas, rotación revertida a los 52 minutos con n=2",
+      "evidence_refs": [
+        "git log del 09-16; `d8cd3f3` → `31defca`"
+      ],
+      "confidence": 0.85,
+      "verification": "X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-05",
+      "severity": "medium",
+      "title": "Telemetría ciega: 264 de 290 generaciones fallidas sin prompt ni respuesta; `fallback_used` siempre falso; costo en 1 de 478; herramientas sin tiempo; revisión humana sin motivo",
+      "mechanism": "`llm/cloud.py:607, 615-621, 672-678`",
+      "source_layer": "L11",
+      "root_cause": "Telemetría ciega: 264 de 290 generaciones fallidas sin prompt ni respuesta; `fallback_used` siempre falso; costo en 1 de 478; herramientas sin tiempo; revisión humana sin motivo",
+      "evidence_refs": [
+        "llm/cloud.py:607, 615-621, 672-678"
+      ],
+      "confidence": 0.9,
+      "verification": "P, X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-06",
+      "severity": "medium",
+      "title": "Ledger de salud de modelos sin validar: clave sin stack, fallos de entorno contados como autoría, sin decaimiento, última escritura gana, ruta relativa, errores de E/S silenciosos",
+      "mechanism": "`llm/model_health.py:26-39, 86-87, 101-138`; `config.py:93`; sin corrida",
+      "source_layer": "L3, L12",
+      "root_cause": "Ledger de salud de modelos sin validar: clave sin stack, fallos de entorno contados como autoría, sin decaimiento, última escritura gana, ruta relativa, errores de E/S silenciosos",
+      "evidence_refs": [
+        "llm/model_health.py:26-39, 86-87, 101-138",
+        "config.py:93"
+      ],
+      "confidence": 0.75,
+      "verification": "P, X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-07",
+      "severity": "medium",
+      "title": "Brecha de conocimiento del stack: imports de Spring Boot 3 repetidos; el arreglo es solo prompt y no tiene corrida; el RAG recupera estándares de C#/.NET para Java",
+      "mechanism": "`project_facts.py:28-40`; 23 de 23 recuperaciones de Testing en Spring",
+      "source_layer": "harness: HE§3, §11",
+      "root_cause": "Brecha de conocimiento del stack: imports de Spring Boot 3 repetidos; el arreglo es solo prompt y no tiene corrida; el RAG recupera estándares de C#/.NET para Java",
+      "evidence_refs": [
+        "project_facts.py:28-40"
+      ],
+      "confidence": 0.75,
+      "verification": "X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-08",
+      "severity": "medium",
+      "title": "El contrato de tarea es un artefacto del LLM: especificación de tests anexada como texto libre; reglas de demo en `ProductAgent`",
+      "mechanism": "`apply_run.py:322-323`; `agents/product.py:14-19`",
+      "source_layer": "harness: HE§2",
+      "root_cause": "El contrato de tarea es un artefacto del LLM: especificación de tests anexada como texto libre; reglas de demo en `ProductAgent`",
+      "evidence_refs": [
+        "apply_run.py:322-323",
+        "agents/product.py:14-19"
+      ],
+      "confidence": 0.8,
+      "verification": "X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-09",
+      "severity": "medium",
+      "title": "Los fallos de entorno no tienen recuperación: `WorkspaceSyncError` termina una corrida de 13 minutos",
+      "mechanism": "`graph/stategraph.py:218-246, 561-570`; flask-k",
+      "source_layer": "harness: HE§10",
+      "root_cause": "Los fallos de entorno no tienen recuperación: `WorkspaceSyncError` termina una corrida de 13 minutos",
+      "evidence_refs": [
+        "graph/stategraph.py:218-246, 561-570"
+      ],
+      "confidence": 0.75,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-10",
+      "severity": "medium",
+      "title": "Redacción acotada por patrones conocidos",
+      "mechanism": "`guardrails/secrets.py:140-142`; commits `41463de`, `78b487e`",
+      "source_layer": "harness: HE§9",
+      "root_cause": "Redacción acotada por patrones conocidos",
+      "evidence_refs": [
+        "guardrails/secrets.py:140-142"
+      ],
+      "confidence": 0.75,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-11",
+      "severity": "medium",
+      "title": "Rutas de runs de la Run API sin autenticación ni guardia de loopback",
+      "mechanism": "`run_api.py:279-360` frente a `project_api.py:35`",
+      "source_layer": "harness: HE§9",
+      "root_cause": "Rutas de runs de la Run API sin autenticación ni guardia de loopback",
+      "evidence_refs": [
+        "run_api.py:279-360",
+        "project_api.py:35"
+      ],
+      "confidence": 0.6,
+      "verification": "P",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-12",
+      "severity": "medium",
+      "title": "Una suite Python con todos los tests omitidos cuenta como camino feliz",
+      "mechanism": "`agents/testing.py:164-170`; `mcp/quality.py:638-647`",
+      "source_layer": "harness: HE§7",
+      "root_cause": "Una suite Python con todos los tests omitidos cuenta como camino feliz",
+      "evidence_refs": [
+        "agents/testing.py:164-170",
+        "mcp/quality.py:638-647"
+      ],
+      "confidence": 0.5,
+      "verification": "P (parcial)",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-13",
+      "severity": "medium",
+      "title": "`except` amplio en la cadena de nube puede disfrazar defectos internos",
+      "mechanism": "`llm/cloud.py:629`",
+      "source_layer": "L11",
+      "root_cause": "`except` amplio en la cadena de nube puede disfrazar defectos internos",
+      "evidence_refs": [
+        "llm/cloud.py:629"
+      ],
+      "confidence": 0.5,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-14",
+      "severity": "medium",
+      "title": "La redacción hacia la nube alcanza archivos que Developer debe reescribir y nada impide escribir `[REDACTED]`; no observado en diffs",
+      "mechanism": "`llm/cloud.py:496-497`; `graph/stategraph.py:826-835`; 18 de 90 prompts",
+      "source_layer": "L9",
+      "root_cause": "La redacción hacia la nube alcanza archivos que Developer debe reescribir y nada impide escribir `[REDACTED]`; no observado en diffs",
+      "evidence_refs": [
+        "llm/cloud.py:496-497",
+        "graph/stategraph.py:826-835"
+      ],
+      "confidence": 0.8,
+      "verification": "P",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-15",
+      "severity": "medium",
+      "title": "La redacción por nombre de clave oculta el veredicto `authorization` de Security en trazas y eventos",
+      "mechanism": "`observability/langfuse.py:14-24`; `run_events.py:21-25, 71, 98`; 42 de 42",
+      "source_layer": "L10",
+      "root_cause": "La redacción por nombre de clave oculta el veredicto `authorization` de Security en trazas y eventos",
+      "evidence_refs": [
+        "observability/langfuse.py:14-24",
+        "run_events.py:21-25, 71, 98"
+      ],
+      "confidence": 0.85,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-16",
+      "severity": "medium",
+      "title": "En fallo JVM se descartan los resultados Surefire; el parser de fallos solo entiende pytest",
+      "mechanism": "`mcp/quality.py:1163-1168`; `testing_evidence.py:42-56`",
+      "source_layer": "L7, L8",
+      "root_cause": "En fallo JVM se descartan los resultados Surefire; el parser de fallos solo entiende pytest",
+      "evidence_refs": [
+        "mcp/quality.py:1163-1168",
+        "testing_evidence.py:42-56"
+      ],
+      "confidence": 0.7,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-17",
+      "severity": "medium",
+      "title": "Contexto duplicado y sobredimensionado; sin presupuesto de bytes por proveedor",
+      "mechanism": "Valores gobernados cuatro veces; planificador hasta 84 KB; 18 de 21 llamadas de Developer a Groq rechazadas por tamaño",
+      "source_layer": "L2, L5",
+      "root_cause": "Contexto duplicado y sobredimensionado; sin presupuesto de bytes por proveedor",
+      "evidence_refs": [
+        "Valores gobernados cuatro veces; planificador hasta 84 KB; 18 de 21 llamadas de Developer a Groq rechazadas por tamaño"
+      ],
+      "confidence": 0.8,
+      "verification": "X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-18",
+      "severity": "medium",
+      "title": "Reparación local a ciegas que puede convertir una autoría en eco",
+      "mechanism": "`llm/runtime.py:150-153, 169-183, 211-218`",
+      "source_layer": "L11",
+      "root_cause": "Reparación local a ciegas que puede convertir una autoría en eco",
+      "evidence_refs": [
+        "llm/runtime.py:150-153, 169-183, 211-218"
+      ],
+      "confidence": 0.85,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-19",
+      "severity": "medium",
+      "title": "Autor y planificador cambian de modelo en silencio durante la remediación",
+      "mechanism": "`llm/cloud.py:577-581, 679-685`; traza `1885fc593d`",
+      "source_layer": "L11",
+      "root_cause": "Autor y planificador cambian de modelo en silencio durante la remediación",
+      "evidence_refs": [
+        "llm/cloud.py:577-581, 679-685"
+      ],
+      "confidence": 0.85,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-20",
+      "severity": "medium",
+      "title": "El estado contenía conteos sin artefacto, afirmaciones exageradas (F-8) o sin nueva corrida (F-7), una referencia rota y no registraba la campaña del 09-16",
+      "mechanism": "Ver evidencia",
+      "source_layer": "harness: HE§13, §18",
+      "root_cause": "El estado contenía conteos sin artefacto, afirmaciones exageradas (F-8) o sin nueva corrida (F-7), una referencia rota y no registraba la campaña del 09-16",
+      "evidence_refs": [
+        "Ver evidencia"
+      ],
+      "confidence": 0.8,
+      "verification": "P, X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-21",
+      "severity": "medium",
+      "title": "Una negativa del guardarraíl de nube hace caer la corrida sin reporte",
+      "mechanism": "`spring-demo-dry-20260916c.json` (`cli_stderr_tail`); traza `b798793c96`",
+      "source_layer": "L11",
+      "root_cause": "Una negativa del guardarraíl de nube hace caer la corrida sin reporte",
+      "evidence_refs": [
+        "spring-demo-dry-20260916c.json"
+      ],
+      "confidence": 0.8,
+      "verification": "P",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-22",
+      "severity": "medium",
+      "title": "Regresión no documentada: el único trabajo aceptado en un repositorio externo (3/8 el 09-03) no se cita ni se comparó con el arnés actual",
+      "mechanism": "`evaluation/reports/apply-debugger-flask-writes-v4/v7/v8.json`",
+      "source_layer": "harness: HE§14, §18",
+      "root_cause": "Regresión no documentada: el único trabajo aceptado en un repositorio externo (3/8 el 09-03) no se cita ni se comparó con el arnés actual",
+      "evidence_refs": [
+        "evaluation/reports/apply-debugger-flask-writes-v4/v7/v8.json"
+      ],
+      "confidence": 0.8,
+      "verification": "P",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-23",
+      "severity": "medium",
+      "title": "Invariantes críticos sin test: negativos de entrega, límite en modo nube, reglas gobernadas de Security/Testing/Reviewer, redacción en el cuerpo HTTP",
+      "mechanism": "Pruebas",
+      "source_layer": "harness: HE§9, §11",
+      "root_cause": "Invariantes críticos sin test: negativos de entrega, límite en modo nube, reglas gobernadas de Security/Testing/Reviewer, redacción en el cuerpo HTTP",
+      "evidence_refs": [
+        "Pruebas"
+      ],
+      "confidence": 0.75,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-24",
+      "severity": "medium",
+      "title": "Aislamiento de tests ad hoc: sin `conftest.py`, `.env` real, claves de Langfuse del entorno, rutas relativas",
+      "mechanism": "44 de 116 `Settings(`; `observability/langfuse.py:128-133`",
+      "source_layer": "harness: HE§11",
+      "root_cause": "Aislamiento de tests ad hoc: sin `conftest.py`, `.env` real, claves de Langfuse del entorno, rutas relativas",
+      "evidence_refs": [
+        "observability/langfuse.py:128-133"
+      ],
+      "confidence": 0.8,
+      "verification": "E",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-25",
+      "severity": "medium",
+      "title": "Tests de snapshot que osifican artefactos y pueden sobrescribir un fixture",
+      "mechanism": "`tests/e2e/test_multimodel_evidence.py:16, 29-33`",
+      "source_layer": "harness: HE§18",
+      "root_cause": "Tests de snapshot que osifican artefactos y pueden sobrescribir un fixture",
+      "evidence_refs": [
+        "tests/e2e/test_multimodel_evidence.py:16, 29-33"
+      ],
+      "confidence": 0.8,
+      "verification": "E",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "M-26",
+      "severity": "medium",
+      "title": "Hechos duplicados que divergen y comprobaciones documentales que verifican estructura, no verdad",
+      "mechanism": "`tests/integration/test_documentation.py`",
+      "source_layer": "harness: HE§11",
+      "root_cause": "Hechos duplicados que divergen y comprobaciones documentales que verifican estructura, no verdad",
+      "evidence_refs": [
+        "tests/integration/test_documentation.py"
+      ],
+      "confidence": 0.85,
+      "verification": "X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-02",
+      "severity": "low",
+      "title": "Heurísticas con forma de benchmark dentro de agentes de producción; `security_hitl` inalcanzable; HITL de seguridad por listas de palabras",
+      "mechanism": "`agents/product.py:14-19`; `agents/security.py:141-183`; `mcp/quality.py:1296-1302`",
+      "source_layer": "harness",
+      "root_cause": "Heurísticas con forma de benchmark dentro de agentes de producción; `security_hitl` inalcanzable; HITL de seguridad por listas de palabras",
+      "evidence_refs": [
+        "agents/product.py:14-19",
+        "agents/security.py:141-183",
+        "mcp/quality.py:1296-1302"
+      ],
+      "confidence": 0.8,
+      "verification": "X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-03",
+      "severity": "low",
+      "title": "Artefactos muertos: seis `user.md`, `system.md` de Testing y Reviewer, `tokenforge` sin cadena, `allowed_tools` sin renderizar, `guardrails/routes.py`, `guardrails/timeouts.py`, `build_walking_graph`",
+      "mechanism": "`llm/prompting.py:63-64`",
+      "source_layer": "harness",
+      "root_cause": "Artefactos muertos: seis `user.md`, `system.md` de Testing y Reviewer, `tokenforge` sin cadena, `allowed_tools` sin renderizar, `guardrails/routes.py`, `guardrails/timeouts.py`, `build_walking_graph`",
+      "evidence_refs": [
+        "llm/prompting.py:63-64"
+      ],
+      "confidence": 0.9,
+      "verification": "P, X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-04",
+      "severity": "low",
+      "title": "ACI MCP sin docstrings, rol declarado por el llamador, `search_code` sin límite ni líneas",
+      "mechanism": "`mcp/server.py:30-122`; `mcp/repository.py:117-121`",
+      "source_layer": "harness",
+      "root_cause": "ACI MCP sin docstrings, rol declarado por el llamador, `search_code` sin límite ni líneas",
+      "evidence_refs": [
+        "mcp/server.py:30-122",
+        "mcp/repository.py:117-121"
+      ],
+      "confidence": 0.9,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-05",
+      "severity": "low",
+      "title": "Colección RAG compartida reconstruida en cada corrida; 6 consultas idénticas; 30 % vacías",
+      "mechanism": "`apply_run.py:357`; `rag/__init__.py:20-27`",
+      "source_layer": "harness",
+      "root_cause": "Colección RAG compartida reconstruida en cada corrida; 6 consultas idénticas; 30 % vacías",
+      "evidence_refs": [
+        "apply_run.py:357",
+        "rag/__init__.py:20-27"
+      ],
+      "confidence": 0.7,
+      "verification": "X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-07",
+      "severity": "low",
+      "title": "Daemon dind con `seccomp` y `systempaths` sin confinar",
+      "mechanism": "`mcp/run_daemon.py:78-90`",
+      "source_layer": "harness",
+      "root_cause": "Daemon dind con `seccomp` y `systempaths` sin confinar",
+      "evidence_refs": [
+        "mcp/run_daemon.py:78-90"
+      ],
+      "confidence": 0.5,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-08",
+      "severity": "low",
+      "title": "Comprobación de secretos de la entrega más estrecha que la redacción",
+      "mechanism": "`delivery.py:26-29, 213-247`",
+      "source_layer": "harness",
+      "root_cause": "Comprobación de secretos de la entrega más estrecha que la redacción",
+      "evidence_refs": [
+        "delivery.py:26-29, 213-247"
+      ],
+      "confidence": 0.5,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-09",
+      "severity": "low",
+      "title": "Getters cacheados sin marca de obsolescencia; un registro inválido aborta la Run API; `diff` y `validation_result` libres en modo APPLIED",
+      "mechanism": "`mcp/quality.py:1100-1119`; `runs/store.py:194-200`; `llm/runtime.py:298-325`",
+      "source_layer": "harness",
+      "root_cause": "Getters cacheados sin marca de obsolescencia; un registro inválido aborta la Run API; `diff` y `validation_result` libres en modo APPLIED",
+      "evidence_refs": [
+        "mcp/quality.py:1100-1119",
+        "runs/store.py:194-200",
+        "llm/runtime.py:298-325"
+      ],
+      "confidence": 0.7,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-10",
+      "severity": "low",
+      "title": "Higiene de evidencia: JSON duplicados byte a byte, 1747 trazas versionadas sin describir, snapshots de otra máquina, JSON de decisiones sin fecha ni commit",
+      "mechanism": "`evaluation/reports/`, `evaluation/evidence/archived/`",
+      "source_layer": "harness",
+      "root_cause": "Higiene de evidencia: JSON duplicados byte a byte, 1747 trazas versionadas sin describir, snapshots de otra máquina, JSON de decisiones sin fecha ni commit",
+      "evidence_refs": [
+        "evaluation/reports/",
+        "evaluation/evidence/archived/"
+      ],
+      "confidence": 0.7,
+      "verification": "P",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-11",
+      "severity": "low",
+      "title": "Fallos de entorno no separados de las métricas de producto",
+      "mechanism": "Bind mount, `WorkspaceSyncError`, DNS, permisos Docker",
+      "source_layer": "harness",
+      "root_cause": "Fallos de entorno no separados de las métricas de producto",
+      "evidence_refs": [
+        "Bind mount, `WorkspaceSyncError`, DNS, permisos Docker"
+      ],
+      "confidence": 0.8,
+      "verification": "X",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-12",
+      "severity": "low",
+      "title": "Ruff con 3 hallazgos y reglas implícitas; sin verificador de tipos; `run_cycle.main()` sin test",
+      "mechanism": "Ver pruebas",
+      "source_layer": "harness",
+      "root_cause": "Ruff con 3 hallazgos y reglas implícitas; sin verificador de tipos; `run_cycle.main()` sin test",
+      "evidence_refs": [
+        "Ver pruebas"
+      ],
+      "confidence": 0.8,
+      "verification": "E",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    },
+    {
+      "id": "B-13",
+      "severity": "low",
+      "title": "`PROJECT_STATE.md` con roles sombra desfasados; citas por número de línea que se pudren; mezcla de idiomas sin convención",
+      "mechanism": "`.gitignore:26`",
+      "source_layer": "harness",
+      "root_cause": "`PROJECT_STATE.md` con roles sombra desfasados; citas por número de línea que se pudren; mezcla de idiomas sin convención",
+      "evidence_refs": [
+        ".gitignore:26"
+      ],
+      "confidence": 0.75,
+      "verification": "S",
+      "recommended_fix": "Ver 12-plan-de-remediacion.md"
+    }
+  ],
+  "merged_ids": {
+    "M-01": "A-10",
+    "M-04": "A-09",
+    "B-01": "A-03"
+  },
+  "ordered_fix_plan": [
+    {
+      "order": 0,
+      "goal": "Contener: cadenas con proveedores aprobados, código congelado por campaña, ledger desactivado, modelos que nunca responden fuera",
+      "why_now": "La salida de código no tiene política y la disponibilidad detiene 13 de 24 corridas",
+      "expected_effect": "Menos paradas por proveedor y resultados atribuibles"
+    },
+    {
+      "order": 1,
+      "goal": "Medición confiable: scorer atribuible, recibo correcto, telemetría útil, gate de tests honesto, conjunto de reproducción, calibración de Reviewer",
+      "why_now": "Sin medición atribuible no se distingue mejora de ruido",
+      "expected_effect": "Cada cambio se evalúa contra fallos grabados y una aceptación calibrada"
+    },
+    {
+      "order": 2,
+      "goal": "Borrar y desbloquear: llamadas eco, diagnóstico a Developer, enrutado por fronteras, contrato de aceptación, huella por clase, baseline de seguridad única, fallo de cadena tipado",
+      "why_now": "Son los bloqueos estructurales verificados (C-01 a C-04, A-01, A-04, A-09, A-10)",
+      "expected_effect": "El bucle evaluador-optimizador recibe la verdad del entorno y termina cuando no hay progreso"
+    },
+    {
+      "order": 3,
+      "goal": "Experimento discriminante: ASET recortado frente a un agente de código de control con mismo commit, modelo y compuertas, y criterio fijado antes",
+      "why_now": "El consejo no pudo decidir entre remediar el workflow o rediseñar sin ese dato",
+      "expected_effect": "Decisión basada en trabajo aceptado, no en actividad"
+    },
+    {
+      "order": 4,
+      "goal": "Decidir y completar: resto de la remediación o decisión hacia un único agente de código",
+      "why_now": "Depende del resultado de la fase 3",
+      "expected_effect": "Complejidad ganada por fallos observados"
+    }
+  ]
+}

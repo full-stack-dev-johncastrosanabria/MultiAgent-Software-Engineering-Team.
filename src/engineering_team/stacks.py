@@ -248,6 +248,7 @@ PROFILES: dict[str, StackProfile] = {
                 "DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz"
             ),
             "-DfailBuildOnCVSS=7",
+            "-Dformat=JSON",
             "-DfailOnError=true",
             # A Java component has no .NET assemblies, and the analyzer that
             # would read them needs a dotnet runtime this image does not carry.
@@ -377,7 +378,7 @@ PROFILES: dict[str, StackProfile] = {
         # manifest instead of quietly resolving something else.
         install_template=("npm", "ci", "--cache", f"{ENVIRONMENT}/npm"),
         dependency_template=("npm", "ls", "--all"),
-        security_template=("npm", "audit", "--omit=dev", "--audit-level=high"),
+        security_template=("npm", "audit", "--omit=dev", "--audit-level=high", "--json"),
         environment=(("npm_config_cache", f"{ENVIRONMENT}/npm"),),
         test_needs_network=True,
         security_needs_network=True,

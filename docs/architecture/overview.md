@@ -9,7 +9,7 @@ lo que se ejecutó realmente pertenece únicamente al [estado](../status.md).
 ```mermaid
 flowchart LR
   subgraph EN["Entradas"]
-    CLI["cli.py<br/>run · run-project · reset-project"]
+    CLI["cli.py<br/>run · run-project · reset-project · docker-sweep"]
     API["run_api.py<br/>Run API + WebSocket"]
     FE["frontend/<br/>React + Vite"]
   end
@@ -29,7 +29,8 @@ flowchart LR
   subgraph MO["Modelos"]
     RT["llm/router.py · runtime.py"]
     OL["llm/ollama.py<br/>local"]
-    CL["llm/cloud.py<br/>groq · mistral · openrouter · google"]
+    CL["llm/cloud.py<br/>cadenas por rol · OpenAI-compatible + Google"]
+    MH["llm/model_health.py<br/>historial local por modelo"]
   end
 
   subgraph TO["Herramientas (MCP, stdio)"]
@@ -61,6 +62,7 @@ flowchart LR
   AG --> RT
   RT --> OL
   RT --> CL
+  CL --> MH
   AG --> SRV
   SRV --> RMCP
   SRV --> QMCP
@@ -82,8 +84,11 @@ herramientas producen evidencia; ninguno de los dos elige el siguiente paso.
 
 ## Entradas
 
-La [CLI](../../src/engineering_team/cli.py) expone `run`, `run-project` y
-`reset-project`. `run-project` delega en
+La [CLI](../../src/engineering_team/cli.py) expone `run`, `run-project`,
+`reset-project` y `docker-sweep`. `run-project` trabaja sobre una ruta o, con
+`--repo`, sobre un clon temporal
+([ephemeral_checkout.py](../../src/engineering_team/ephemeral_checkout.py)) que se
+elimina al terminar, y delega en
 [run_on_project](../../src/engineering_team/apply_run.py), que obtiene estado y
 traza de ejecución, construye el resultado y condiciona la entrega a
 autorización y configuración.
@@ -124,7 +129,8 @@ flowchart TD
   D -.->|human_review_required| H
   SEC -.->|human_review_required| H
   T -.->|human_review_required| H
-  R -.->|"tercer rechazo · ruta inválida"| H
+  R -->|"2ª huella repetida de implementación"| A
+  R -.->|"límite de iteraciones · huella repetida 3 veces · ruta inválida"| H
 
   H -->|"RESUME e interactive_hitl"| D
   H -->|"si no"| E
@@ -139,8 +145,15 @@ los dos nodos humanos pueden reanudar (`human_decision == "RESUME"`); sin él
 terminan en `END`.
 
 El Reviewer recomienda; la validación determinista elige la arista. La iteración
-sube exactamente una vez por rechazo aceptado, de modo que el tercer rechazo
-termina la automatización y no puede empezar un cuarto ciclo. Los predicados y
+sube exactamente una vez por rechazo; al alcanzar `max_remediation_iterations`
+(`MAX_REMEDIATION_ITERATIONS`, 5 por omisión) el grafo sale a
+`HUMAN_REVIEW_REQUIRED` y no empieza otro ciclo. Además, cada rechazo deja una
+huella (`remediation_fingerprint`): el segundo rechazo consecutivo idéntico de
+implementación vuelve a Architecture en lugar de Developer, y el tercero sale a
+revisión humana antes del límite. La huella se calcula sobre el motivo y los
+problemas del rechazo, incluido texto de diagnóstico que cambia entre ciclos,
+de modo que fallos de la misma clase rara vez producen huellas idénticas; ver la
+[auditoría del 2026-09-16](../audit160926/README.md). Los predicados y
 límites exactos viven en el grafo y en sus
 [tests de enrutado](../../tests/graph/test_routers.py) y
 [de HITL](../../tests/graph/test_hitl.py).
@@ -154,6 +167,33 @@ modelos, herramientas, retriever y traza. La
 por rol y construye contexto.
 [repository_evidence.py](../../src/engineering_team/repository_evidence.py)
 contiene selección y límites de evidencia de archivos.
+
+Solo Product, Architecture, Developer y Security invocan modelos; Testing y
+Reviewer son compuertas deterministas sobre evidencia MCP
+([stategraph.py](../../src/engineering_team/graph/stategraph.py)). Tampoco todas
+las llamadas deciden contenido: la salida del modelo de Architecture debe ser
+idéntica al candidato determinista, y la de Security debe conservar estado,
+severidad, hallazgos y fuentes
+([runtime.py](../../src/engineering_team/llm/runtime.py)). Solo Developer
+escribe contenido que el modelo decide, y Product puede ampliar reglas y
+criterios. [cloud.py](../../src/engineering_team/llm/cloud.py) define una cadena
+ordenada de proveedor y modelo por rol —proveedores compatibles con OpenAI (Groq,
+Mistral, OpenRouter, xKiro, Vyce, TokenForge, NVIDIA, Kilo, Cohere, Cloudflare
+Workers AI) y Google— que `CLOUD_CHAIN_<ROL>` sobreescribe.
+[model_health.py](../../src/engineering_team/llm/model_health.py) lleva un
+registro local (`MODEL_HEALTH_PATH`, ignorado por Git) de los resultados
+recientes de cada modelo por rol y relega al final de su cadena, sin retirarlo,
+al que acumula fallos. Cuando un requisito no nombra archivos, Developer pide
+primero un `DeveloperTargetPlan` que Python valida contra el inventario del
+repositorio antes de leer o escribir
+([developer_plan.py](../../src/engineering_team/contracts/developer_plan.py)): no
+edita tests originales y los archivos nuevos quedan acotados a su componente.
+Planificador y autor reciben además los hechos declarados del proyecto
+—versiones de manifiestos e imports de los tests existentes— desde
+[project_facts.py](../../src/engineering_team/project_facts.py). Developer tiene
+plazos propios (`DEVELOPER_LLM_TIMEOUT_SECONDS`, `DEVELOPER_ROLE_TIMEOUT_SECONDS`).
+Que un proveedor figure en una cadena no demuestra que responda; ver
+[estado](../status.md).
 
 [build_retriever](../../src/engineering_team/rag/__init__.py) compone carga,
 fragmentación, índice y recuperación.
@@ -174,7 +214,12 @@ operaciones de calidad.
 `CommandRunner` y lo que toda ejecución comparte —el comando, su límite de
 salida y su plazo—; [container.py](../../src/engineering_team/mcp/container.py)
 es su única implementación: todo comando de calidad corre dentro de un
-contenedor Docker. El contrato vive aparte porque sobrevivió a la
+contenedor Docker. Para componentes `node`,
+[workspace_runner.py](../../src/engineering_team/mcp/workspace_runner.py)
+especializa ese runner: el repositorio vive en un volumen nativo por runner y
+solo vuelven deltas comprobados, porque el bind mount de Docker Desktop falla con
+la extracción concurrente de npm. En ambos casos `.git` se monta de solo lectura
+dentro del contenedor. El contrato vive aparte porque sobrevivió a la
 implementación que ya no está —el sandbox de proceso con `sandbox-exec` y
 Bubblewrap, retirado en la [decisión 15](decisions/0015-container-only.md)—.
 Esa separación es la [decisión 3](decisions/0003-split-quality-mcp.md), y el

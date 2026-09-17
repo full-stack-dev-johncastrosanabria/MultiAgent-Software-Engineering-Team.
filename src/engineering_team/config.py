@@ -84,12 +84,29 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     llm_timeout_seconds: float = Field(default=60, gt=0)
     cloud_role_timeout_seconds: float = Field(default=120, gt=0)
+    # Developer authors complete files: 33-45 s on the models that succeeded on
+    # 2026-09-16. A shared 45 s request timeout cut every slower success short.
+    developer_llm_timeout_seconds: float = Field(default=120, gt=0)
+    developer_role_timeout_seconds: float = Field(default=360, gt=0)
+    # Recent per-role outcomes of every cloud model; error-prone ones are tried
+    # last. Empty disables the ledger.
+    model_health_path: str = "workspace/model-health.json"
     ollama_timeout_seconds: float = Field(default=600, gt=0)
     gemini_api_key: str | None = None
     gemini_api_key_2: str | None = None
     groq_api_key: str | None = None
     mistral_api_key: str | None = None
     open_router_api_key: str | None = None
+    # OpenAI-compatible gateways, each bound to its own endpoint in llm/cloud.py.
+    x_kiro_api_key: str | None = None
+    vyce_ai_api_key: str | None = None
+    token_forge_api_key: str | None = None
+    nvidia_api_key: str | None = None
+    kilo_api_key: str | None = None
+    cohere_api_key: str | None = None
+    cloudflare_worker_ai_api: str | None = None
+    # Workers AI addresses the account in the URL; a token alone cannot find it.
+    cloudflare_account_id: str | None = None
     # Per-role chain override: "provider:model,provider:model". Empty keeps the
     # defaults in llm/cloud.py, which spread primaries over three providers.
     cloud_chain_product: str = ""

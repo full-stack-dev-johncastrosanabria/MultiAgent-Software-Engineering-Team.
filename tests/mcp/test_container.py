@@ -160,6 +160,28 @@ def test_only_the_workspace_and_the_environment_are_mounted(tmp_path: Path) -> N
     assert not any("docker.sock" in m for m in mounts)
 
 
+def test_repository_metadata_is_mounted_read_only(tmp_path: Path) -> None:
+    """Delivery runs git on the host; code in the container must not plant hooks
+    or configuration (core.sshCommand, credential helpers) in the checkout."""
+    (tmp_path / ".git" / "hooks").mkdir(parents=True)
+    command = _runner(tmp_path)._container_command("c1", _request(tmp_path, "true"))
+    mounts = [command[i + 1] for i, a in enumerate(command) if a == "--mount"]
+    assert (
+        f"type=bind,source={tmp_path / '.git'},target={WORKSPACE_MOUNT / '.git'},readonly"
+        in mounts
+    )
+
+
+def test_a_symlinked_repository_metadata_path_is_not_mounted(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".git").symlink_to(outside, target_is_directory=True)
+    command = _runner(workspace)._container_command("c1", _request(workspace, "true"))
+    assert not any(str(outside) in arg for arg in command)
+
+
 def test_the_container_writes_as_the_host_user(tmp_path: Path) -> None:
     """Otherwise the run workspace ends up owned by root."""
     command = _runner(tmp_path)._container_command("c1", _request(tmp_path, "true"))
@@ -306,6 +328,62 @@ def test_real_container_runs_a_command_and_sees_the_workspace(tmp_path: Path) ->
         assert "from the host" in completed.stdout
     finally:
         runner.close()
+
+
+@integration
+def test_real_component_can_read_a_sibling_but_not_outside_repository(tmp_path: Path) -> None:
+    from engineering_team.config import Settings
+    from engineering_team.mcp.quality import QualityMCP
+
+    # This test exercises the production runner factory, which requires a
+    # pinned image even when the locally selected integration image is a tag.
+    inspected = subprocess.run(
+        ["docker", "image", "inspect", INTEGRATION_IMAGE,
+         "--format", "{{range .RepoDigests}}{{println .}}{{end}}"],
+        capture_output=True, text=True, check=True,
+    )
+    digests = inspected.stdout.split()
+    if not digests:
+        pytest.skip("selected local integration image has no RepoDigest for production pinning")
+
+    repository = tmp_path / "repo"
+    component = repository / "app"
+    sibling = repository / "shared"
+    component.mkdir(parents=True)
+    sibling.mkdir()
+    (sibling / "api.txt").write_text("sibling contract\n", encoding="utf-8")
+    (tmp_path / "outside.txt").write_text("host only", encoding="utf-8")
+    quality = QualityMCP(component, workspace_root=repository, settings=Settings(
+        _env_file=None, quality_container_image=digests[0],
+    ))
+    try:
+        found = quality._runner.execute(_request(component, "cat", "../shared/api.txt"))
+        assert found.returncode == 0
+        assert found.stdout == "sibling contract\n"
+        hidden = quality._runner.execute(_request(component, "cat", "../../outside.txt"))
+        assert hidden.returncode != 0
+    finally:
+        quality.close()
+
+
+@integration
+def test_real_container_cannot_plant_git_hooks_in_the_checkout(tmp_path: Path) -> None:
+    (tmp_path / ".git" / "hooks").mkdir(parents=True)
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    runner = ContainerRunner(tmp_path, image=INTEGRATION_IMAGE, allow_unpinned_image=True)
+    try:
+        head = runner.execute(_request(tmp_path, "cat", ".git/HEAD"))
+        assert head.returncode == 0 and "refs/heads/main" in head.stdout
+        planted = runner.execute(_request(
+            tmp_path, "sh", "-c", "echo 'touch /tmp/owned' > .git/hooks/pre-push",
+        ))
+        assert planted.returncode != 0
+        source = runner.execute(_request(tmp_path, "sh", "-c", "echo ok > source.txt"))
+        assert source.returncode == 0
+    finally:
+        runner.close()
+    assert not (tmp_path / ".git" / "hooks" / "pre-push").exists()
+    assert (tmp_path / "source.txt").read_text(encoding="utf-8") == "ok\n"
 
 
 @integration
@@ -486,3 +564,29 @@ def test_a_host_path_outside_both_mounts_is_still_refused(tmp_path: Path) -> Non
     runner = _runner(tmp_path / "inside")
     with pytest.raises(ValueError, match="outside the mounted workspace"):
         runner._container_command("c1", _request(outside, "true"))
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_runner_reports_truncation_at_the_requested_output_limit(tmp_path, monkeypatch, structured, stream):
+    from engineering_team.mcp.command import _OUTPUT_LIMIT, _STRUCTURED_OUTPUT_LIMIT
+
+    limit = _STRUCTURED_OUTPUT_LIMIT if structured else _OUTPUT_LIMIT
+    runner = _runner(tmp_path)
+
+    class Process:
+        returncode = 0
+
+        def __init__(self, *args, **kwargs):
+            self.stdout = BytesIO(b"x" * (limit + 1) if stream == "stdout" else b"ok")
+            self.stderr = BytesIO(b"x" * (limit + 1) if stream == "stderr" else b"")
+
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(runner, "_quiet", lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""))
+    monkeypatch.setattr(subprocess, "Popen", Process)
+    request = _request(tmp_path, "scan", structured_output=structured)
+    result = runner._run_container("probe", runner._container_command("probe", request), request)
+    assert result.output_truncated
+    assert len(getattr(result, stream).encode()) == limit

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
@@ -22,7 +22,8 @@ from typing import Any
 
 from engineering_team.components import Component, components_in
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import ErrorCode, ReviewerStatus
+from engineering_team.contracts.enums import ErrorCode, ReviewerStatus, ToolStatus
+from engineering_team.contracts.models import ToolResult
 from engineering_team.delivery import (
     BRANCH_NAMESPACE,
     DeliveryRefused,
@@ -32,6 +33,7 @@ from engineering_team.delivery import (
 )
 from engineering_team.docker_labels import project_slug, sweep
 from engineering_team.graph.stategraph import build_engineering_graph
+from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.infrastructure_prerequisite import (
     deliver as deliver_infrastructure,
 )
@@ -109,6 +111,11 @@ def open_project_quality(
     from engineering_team.stacks import profile_for
 
     targets = quality_targets_for(settings, project_root)
+    workspace_root = project_root.resolve()
+    for component in targets:
+        component_root = (project_root / component.path).resolve()
+        if not component_root.is_relative_to(workspace_root):
+            raise ValueError(f"component is outside the mounted workspace: {component_root}")
     container_run = settings.quality_runner == "container" and runner is None
     if container_run:
         return _ProjectInfrastructureQuality(
@@ -142,6 +149,7 @@ def open_project_quality(
         backends.append(
             QualityMCP(
                 component_root,
+                workspace_root=workspace_root,
                 timeout_seconds=timeout_seconds,
                 runner=runner,
                 settings=child_settings,
@@ -194,10 +202,8 @@ class _ProjectInfrastructureQuality:
         self._closed = False
 
     def __enter__(self):
-        from engineering_team.mcp.container import ContainerRunner
-        from engineering_team.mcp.quality import CompositeQuality, QualityMCP
+        from engineering_team.mcp.quality import CompositeQuality
         from engineering_team.services import ServiceStack, ServiceStartupError
-        from engineering_team.stacks import profile_for
 
         try:
             # The sweep runs before anything is started: what a crashed run left
@@ -223,48 +229,61 @@ class _ProjectInfrastructureQuality:
                 )
                 self.daemon.up(time.monotonic() + self.timeout_seconds)
             for component in self.targets:
-                component_root = self.root / component.path
-                child_settings = self.settings.model_copy(update={
-                    "quality_stack": component.stack,
-                    "quality_component_path": component.path,
-                })
-                backend = QualityMCP(
-                    component_root,
-                    timeout_seconds=self.timeout_seconds,
-                    settings=child_settings,
-                    profile=profile_for(component.stack),
-                    component=component.path or ("." if len(self.targets) > 1 else ""),
-                    services=self.services,
-                    run_id=self.run_id,
-                    project=self.project,
-                )
-                self.backends.append(backend)
-                if self.daemon is not None:
-                    if not isinstance(backend._runner, ContainerRunner):
-                        raise RuntimeError(
-                            "QUALITY_RUN_DAEMON_IMAGE requires the container runner"
-                        )
-                    backend._runner.daemon = self.daemon
-                    backend._runner.owns_daemon = False
-                backend._services_started = True
-                backend._runner.network = self.services.network
-                backend._runner.networks = getattr(
-                    self.services,
-                    "networks",
-                    (self.services.network,) if self.services.network else (),
-                )
-                backend.service_environment = self.services.environment_for_component(
-                    component.stack, component_root
-                )
-            self.quality = (
-                self.backends[0] if len(self.backends) == 1 else CompositeQuality(self.backends)
-            )
+                self._add_component(component)
+            # Keep a stable handle even when a new test project is authored.
+            self.quality = CompositeQuality(self.backends, refresh=self.refresh_components)
             return self.quality
         except BaseException as exc:
             self.close()
             if not isinstance(exc, Exception):
                 raise
             raise ServiceStartupError(f"INFRASTRUCTURE_ERROR: {exc}") from exc
+
+    def _add_component(self, component):
+        from engineering_team.mcp.container import ContainerRunner
+        from engineering_team.mcp.quality import QualityMCP
+        from engineering_team.stacks import profile_for
+
+        component_root = (self.root / component.path).resolve()
+        if not component_root.is_relative_to(self.root.resolve()):
+            raise ValueError(f"component is outside the mounted workspace: {component_root}")
+        child_settings = self.settings.model_copy(update={
+            "quality_stack": component.stack,
+            "quality_component_path": component.path,
+        })
+        backend = QualityMCP(
+            component_root, workspace_root=self.root,
+            timeout_seconds=self.timeout_seconds, settings=child_settings,
+            profile=profile_for(component.stack), component=component.path or ".",
+            services=self.services, run_id=self.run_id, project=self.project,
+        )
+        self.backends.append(backend)
+        if self.daemon is not None:
+            if not isinstance(backend._runner, ContainerRunner):
+                raise RuntimeError("QUALITY_RUN_DAEMON_IMAGE requires the container runner")
+            backend._runner.daemon = self.daemon
+            backend._runner.owns_daemon = False
+        backend._services_started = True
+        backend._runner.network = self.services.network
+        backend._runner.networks = getattr(
+            self.services, "networks",
+            (self.services.network,) if self.services.network else (),
+        )
+        backend.service_environment = self.services.environment_for_component(
+            component.stack, component_root
+        )
+
+    def refresh_components(self):
+        """Include newly authored components without removing any original suite."""
+        if self._closed:
+            raise RuntimeError("quality infrastructure is closed")
+        known = {(backend.root, backend.profile.name) for backend in self.backends}
+        for component in quality_targets_for(self.settings, self.root):
+            key = ((self.root / component.path).resolve(), component.stack)
+            if key not in known:
+                self._add_component(component)
+                known.add(key)
+        return self.backends
 
     def close(self):
         if self._closed:
@@ -323,12 +342,17 @@ def execute_on_project(
     )
 
     cloud_first = bool(settings.cloud_enabled and not settings.local_first)
+    from engineering_team.llm.model_health import ModelHealth
+
+    health = ModelHealth(settings.model_health_path) if settings.model_health_path else None
     if cloud_first:
-        primary_runtime: Any = CloudModelRuntime(settings, trace=trace, primary=True)
+        primary_runtime: Any = CloudModelRuntime(settings, trace=trace, primary=True, health=health)
         secondary_runtime: Any | None = LocalModelRuntime(settings, trace=trace)
     else:
         primary_runtime = LocalModelRuntime(settings, trace=trace)
-        secondary_runtime = CloudModelRuntime(settings, trace=trace) if settings.cloud_enabled else None
+        secondary_runtime = (
+            CloudModelRuntime(settings, trace=trace, health=health) if settings.cloud_enabled else None
+        )
 
     retriever = build_retriever(settings, settings.rag_persist_directory, reindex=True)
     # An apply run must execute the project's complete default suite unless the
@@ -411,6 +435,9 @@ def baseline_tests(quality_mcp: Any) -> tuple[str, ...]:
     from engineering_team.contracts.enums import AgentRole
 
     try:
+        set_changed_paths = getattr(quality_mcp, "set_changed_paths", None)
+        if callable(set_changed_paths):
+            set_changed_paths([])
         result = quality_mcp.run_tests(AgentRole.TESTING, _baseline_extra(quality_mcp))
     except (OSError, RuntimeError, TimeoutError, ValueError):
         # A baseline is a convenience, never a precondition: a project whose
@@ -535,6 +562,43 @@ def _deliver_infrastructure_first(
     return delivered
 
 
+ERROR_EXCERPT_LIMIT = 600
+
+
+def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
+    """Name every tool the run invoked, how it ended, and why when it did not.
+
+    The evidence recorded which files were written but never which tools ran,
+    so a tool that degraded to UNAVAILABLE -- a container that did not come up,
+    a venv that could not be built -- left no trace a reader could find.
+
+    Names and statuses alone proved too little: a run whose tests failed every
+    iteration said so and said nothing about why, while the checkout it failed
+    in was already gone. So an excerpt travels too, redacted.
+
+    It has to come from either field. ``error`` is set when the tool was
+    UNAVAILABLE (``mcp.quality`` fills it from the infrastructure error), and
+    also when a composite tool aggregates sub-results that carried their own
+    errors (``mcp/quality.py``'s ``CompositeQuality._aggregate``). A plain FAIL
+    -- the red test run, the scanner that found something -- instead carries
+    its reason in ``output_summary``. Taking only ``error`` would miss that
+    case entirely.
+
+    The tail is what is kept: the reason a tool failed is the last line of the
+    process output far more often than the first. A tool that succeeded carries
+    no excerpt; its output is bulk, not evidence.
+    """
+    outcomes: list[dict[str, str]] = []
+    for item in results:
+        outcome = {"tool": item.tool_name, "status": item.status.value}
+        if item.status is not ToolStatus.SUCCESS:
+            reason = item.error or item.output_summary or ""
+            if reason:
+                outcome["error"] = redact_secrets(reason)[-ERROR_EXCERPT_LIMIT:]
+        outcomes.append(outcome)
+    return outcomes
+
+
 def run_on_project(
     settings: Settings,
     *,
@@ -602,6 +666,7 @@ def run_on_project(
         "errors": [
             f"{item.code.value}: {item.detail}" for item in errors
         ],
+        "tool_outcomes": tool_outcomes(state.get("tool_results", [])),
         "human_review_required": bool(state.get("human_review_required")),
         # ADR 18. A run that ends having delivered infrastructure and no
         # functional code is a success, and anything reading these outcomes has

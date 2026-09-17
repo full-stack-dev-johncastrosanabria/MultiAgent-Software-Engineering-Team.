@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 _OUTPUT_LIMIT = 4096
+_STRUCTURED_OUTPUT_LIMIT = 4 * 1024 * 1024
 
 
 def _remaining(deadline: float) -> float:
@@ -28,17 +29,30 @@ class _BoundedOutput:
     def __init__(self, limit: int = _OUTPUT_LIMIT) -> None:
         self._limit = limit
         self._buffer = bytearray()
+        self.truncated = False
         self._lock = threading.Lock()
 
     def append(self, chunk: bytes) -> None:
         with self._lock:
             self._buffer.extend(chunk)
             if len(self._buffer) > self._limit:
+                self.truncated = True
                 del self._buffer[:-self._limit]
 
     def text(self) -> str:
         with self._lock:
             return bytes(self._buffer).decode("utf-8", errors="replace")
+
+
+class CommandOutput(subprocess.CompletedProcess[str]):
+    """A bounded result that explicitly marks incomplete output evidence."""
+
+    def __init__(
+        self, args: list[str], returncode: int, stdout: str, stderr: str,
+        *, output_truncated: bool = False,
+    ) -> None:
+        super().__init__(args, returncode, stdout, stderr)
+        self.output_truncated = output_truncated
 
 
 @dataclass(frozen=True)
@@ -70,6 +84,13 @@ class CommandRequest:
     A process sandbox has to police this from outside the kernel namespace it is
     protecting, which is what makes it a race. A container backend can ignore the
     flag: the container's lifecycle already bounds every descendant.
+    """
+
+    structured_output: bool = False
+    """Retain up to 4 MiB per stream for machine-readable scanner evidence.
+
+    Ordinary commands retain their 4 KiB diagnostic tails. Even this opt-in is
+    bounded; a runner must mark truncated evidence so consumers can fail closed.
     """
 
 

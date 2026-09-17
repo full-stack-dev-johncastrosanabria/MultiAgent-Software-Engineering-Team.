@@ -72,7 +72,7 @@ def test_native_security_commands_match_the_approved_toolchains() -> None:
         "npm", "ls", "--all",
     ]
     assert profile_for("node").security_command("", "/aset/env") == [
-        "npm", "audit", "--omit=dev", "--audit-level=high",
+        "npm", "audit", "--omit=dev", "--audit-level=high", "--json",
     ]
     assert profile_for("dotnet").dependency_command("", "/aset/env")[:4] == [
         "dotnet", "list", "package", "--include-transitive",

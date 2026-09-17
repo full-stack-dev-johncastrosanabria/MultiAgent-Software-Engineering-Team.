@@ -10,6 +10,8 @@ _SENSITIVE_KEYS = {
     "api_key", "apikey", "secret", "secret_key", "access_token", "password",
     "gemini_api_key", "gemini_api_key_2", "groq_api_key", "langfuse_secret_key",
     "mistral_api_key", "open_router_api_key", "openrouter_api_key",
+    "x_kiro_api_key", "vyce_ai_api_key", "token_forge_api_key", "nvidia_api_key",
+    "kilo_api_key", "cohere_api_key", "cloudflare_worker_ai_api",
 }
 
 
@@ -126,6 +128,15 @@ _TYPE_NAME_PATTERN = (
     r"string|str|number|int|float|bool|boolean|any|unknown|object"
     r"|null|undefined|none|char|varchar|text|uuid|date"
 )
+# `[REDACTED]` is what this module's own redactor emits, so a value that *is*
+# the marker carries nothing. It may be followed by a JSON escape: prompts ship
+# repository text encoded, so `password: x` came back as `[REDACTED]\nurl: ...`
+# with a backslash exactly where a line end was expected. The checker then
+# refused its own redactor's output, and every project with a `password:` line
+# in its config died at its first cloud call, before one tool ran.
+# A space is deliberately not a terminator here -- `password=[REDACTED] secret`
+# stays refused, or the marker becomes a prefix for smuggling one past.
+_REDACTED_VALUE_PATTERN = r"\[REDACTED\](?:$|[\\\r\n;,\"'}\)\]])"
 _SECRET_KEY_PATTERN = (
     r"api[_-]?key(?:[_-]?\d+)?|access[_-]?token|token|password|secret(?:[_-]?key)?"
 )
@@ -136,7 +147,9 @@ _QUOTED_SECRET_VALUE = re.compile(
 # Documentation decorates the key rather than the value: `**Password:** `123456``
 # put emphasis where the regex expected the secret, so the asterisks were
 # redacted and the credential was left in plain sight. Step over the decoration.
-_VALUE_DECORATION = r"(?:[*_`]+[ \t]*)?"
+# HTML does the same: `<strong>Password:</strong> Demo123!` redacted the closing
+# tag and left the password (PropFlow's login page).
+_VALUE_DECORATION = r"(?:(?:[*_`]+|</?[A-Za-z][A-Za-z0-9]*>)[ \t]*)*"
 _UNQUOTED_SECRET_VALUE = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})\s*[=:]\s*{_VALUE_DECORATION}"
     rf"(?!(?:{_TYPE_NAME_PATTERN})\b)[^\s,]+"
@@ -148,8 +161,50 @@ _UNQUOTED_LINE_SECRET_VALUE = re.compile(
 )
 _REDACTED_ASSIGNMENT = re.compile(
     rf"(?i)({_SECRET_KEY_PATTERN})[ \t]*[=:][ \t]*"
-    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n;,"'}\)\]]))'''
+    # A shell line continuation (`-e PASSWORD=[REDACTED] \` at a line end) ends
+    # the value; anything else after the backslash on that line does not.
+    # So does the next option of a command line (`-e PASSWORD=[REDACTED] -p 5432`,
+    # Banking's README): a one-letter flag or a --long flag, never other words.
+    r'''(?:\[REDACTED\](?=[ \t]*(?:$|[\r\n;,"'}\)\]]|\\[ \t]*(?:$|[\r\n]))'''
+    r'''|[ \t]+(?:-[A-Za-z](?=[ \t])|--[A-Za-z][\w-]*(?=[ \t=]|$)))'''
     r'''|(?:"\[REDACTED\]"|'\[REDACTED\]')(?=$|[\s,;}]))'''
+)
+
+# Secrets that give themselves away by shape, no key name required -- the
+# credential a `git`/`gh` failure or a raw header dump embeds free-standing.
+# Redacted before the key=value passes below, since those never fire on a
+# bare token in the first place. These four *can* match inside one another's
+# replacement -- `_URL_CREDENTIAL`'s userinfo group matches the literal
+# `[REDACTED]` left by `_GITHUB_TOKEN` on `https://ghp_xxx@github.com`, giving
+# `https://[REDACTED]@github.com` -- but their relative order still does not
+# matter, because re-running any of them over an already-redacted result is a
+# no-op: the outcome is idempotent, not because the patterns stay clear of
+# each other.
+_GITHUB_TOKEN = re.compile(
+    r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"
+    r"|\bgithub_pat_[A-Za-z0-9_]{20,}\b"
+)
+_ANTHROPIC_KEY = re.compile(r"\bsk-ant-[A-Za-z0-9\-_]{20,}\b")
+# OpenAI-style gateway keys (`sk-...`, xKiro's `sk-xt-...`) and TokenForge's
+# `tf_live_...`: a rejected-key message may echo them back verbatim.
+_GATEWAY_KEY = re.compile(
+    r"\bsk-(?:xt-)?[A-Za-z0-9]{32,}\b|\btf_(?:live|test)_[A-Za-z0-9]{32,}\b"
+    r"|\bnvapi-[A-Za-z0-9_\-]{32,}|\bcfut_[A-Za-z0-9]{32,}"
+    # Kilo issues JWTs as API keys.
+    r"|\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"
+)
+_AWS_ACCESS_KEY = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+# `scheme://user[:pass]@host/...` -- the password half is optional on purpose,
+# because `git@github.com` and `https://user@host` carry no password yet are
+# still the shape a failed clone/push embeds a real token in
+# (`https://ghp_xxx@github.com/...`). This over-redacts plain `user@host`
+# forms that carry no secret at all (`ssh://git@github.com`, `mailto://a@b`),
+# trading a redaction that was not needed for one that is never missed; the
+# host past `@` is the useful part of a failed-push message and stays visible
+# either way.
+_URL_CREDENTIAL = re.compile(
+    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)"
+    r"(?P<userinfo>[^/\s:@]+(?::[^/\s@]*)?)@"
 )
 
 
@@ -186,6 +241,19 @@ def redact_secrets(value: str, known_values: Iterable[str] = ()) -> str:
     def redact_quoted(match: re.Match[str]) -> str:
         quote = '"' if match.group("double") else "'"
         return match.group("prefix") + quote + "[REDACTED]" + quote
+
+    # Shape-based patterns first: a bare token or an embedded URL credential
+    # carries no key name for the passes below to key off. These four *can*
+    # appear inside one another's replacement -- `_URL_CREDENTIAL` matches the
+    # literal `[REDACTED]` that `_GITHUB_TOKEN` leaves behind in a URL's
+    # userinfo -- but their relative order still does not matter, because
+    # re-applying any of them to an already-redacted string is a no-op: the
+    # result is idempotent, not because the passes stay clear of each other.
+    redacted = _GITHUB_TOKEN.sub("[REDACTED]", redacted)
+    redacted = _ANTHROPIC_KEY.sub("[REDACTED]", redacted)
+    redacted = _GATEWAY_KEY.sub("[REDACTED]", redacted)
+    redacted = _AWS_ACCESS_KEY.sub("[REDACTED]", redacted)
+    redacted = _URL_CREDENTIAL.sub(r"\g<scheme>[REDACTED]@", redacted)
 
     # Properties and YAML plain scalars may contain spaces and punctuation.
     # Redact the complete line value before the generic inline-assignment pass;
@@ -229,6 +297,44 @@ def _names_a_credential_file(name: str) -> bool:
     return is_credential_path(name)
 
 
+def _redacted_across_json_literals(text: str) -> str:
+    """Redact inside JSON string literals on their own decoded text.
+
+    Prompts ship repository files JSON-encoded, so a line break arrives as the
+    two characters `\\n`. An unquoted secret value is matched with `[^\\r\\n]*`,
+    which sees no line end there: the value swallowed the escape and the next
+    line with it, and `password: <value>` came back as `password=[REDACTED]`
+    followed by the comment that belonged on the following line. The checker
+    then had to choose between accepting that and accepting
+    `password=[REDACTED] a-real-credential`, which are the same shape.
+
+    `_scan_text` already decodes complete literals before looking; doing the
+    same before redacting removes the choice instead of widening the check.
+    """
+    def literal(match: re.Match[str]) -> str:
+        try:
+            decoded = json.loads(match.group())
+        except ValueError:
+            return match.group()
+        return json.dumps(redact_secrets(decoded), ensure_ascii=False)
+
+    # A quoted value belongs to the key before it. Splitting on literals first put
+    # `export DB_PASSWORD=` and `"secret"` in different pieces, neither of which
+    # redaction recognised, while the checker read the line whole and refused it.
+    text = _QUOTED_SECRET_VALUE.sub(
+        lambda match: match.group("prefix") + ('"[REDACTED]"' if match.group("double") else "'[REDACTED]'"),
+        text,
+    )
+    pieces: list[str] = []
+    last = 0
+    for match in re.finditer(r'"(?:\\.|[^"\\])*"', text):
+        pieces.append(redact_secrets(text[last : match.start()]))
+        pieces.append(literal(match))
+        last = match.end()
+    pieces.append(redact_secrets(text[last:]))
+    return "".join(pieces)
+
+
 def redacted_for_cloud(value: Any) -> Any:
     """The same content with detected secret values replaced, or a refusal.
 
@@ -269,7 +375,7 @@ def redacted_for_cloud(value: Any) -> Any:
     if isinstance(value, set):
         return {redacted_for_cloud(item) for item in value}
     if isinstance(value, str):
-        return redact_secrets(value)
+        return _redacted_across_json_literals(value)
     return value
 
 
@@ -309,7 +415,7 @@ def require_safe_cloud_context(value: Any) -> None:
     # mention as well bought nothing and cost every project that has one.
     if re.search(
         r"(?i)(api[_-]?key(?:[_-]?\d+)?|access[_-]?token|password|secret)"
-        rf"\s*[=:]\s*(?!(?:{_TYPE_NAME_PATTERN})\b)[^\s,]+",
+        rf"\s*[=:]\s*(?!(?:{_TYPE_NAME_PATTERN})\b|{_REDACTED_VALUE_PATTERN})[^\s,]+",
         _scan_text(text),
     ):
         raise ValueError("sensitive content is not allowed in cloud context")

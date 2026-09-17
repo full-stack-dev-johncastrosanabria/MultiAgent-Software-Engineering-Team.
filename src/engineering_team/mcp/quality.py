@@ -4,9 +4,12 @@ import ast
 import atexit
 import importlib.metadata
 import json
+import os
 import re
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -28,6 +31,8 @@ from engineering_team.interpreter import (
 from engineering_team.mcp.command import CommandRequest, CommandRunner
 from engineering_team.mcp.container import ContainerRunner
 from engineering_team.mcp.test_evidence import collect_test_cases, snapshot_reports
+from engineering_team.mcp.test_scope import normalized_changes, undeclared_unchanged_suite
+from engineering_team.mcp.workspace_runner import NativeWorkspaceRunner
 from engineering_team.stacks import INTERPRETER, StackProfile, profile_for
 
 _DISTRIBUTION_NAME = "autonomous-engineering-team"
@@ -51,6 +56,7 @@ _DISTRIBUTION_NAME = "autonomous-engineering-team"
 def build_runner(
     root: Path, settings: Settings, *, interpreter: Any = None,
     run_id: str = "", project: str = "",
+    workspace_root: str | Path | None = None,
 ) -> CommandRunner:
     """Pick the boundary named by configuration, or refuse to guess.
 
@@ -71,6 +77,10 @@ def build_runner(
     choice, and those still decide. Nothing constraining the choice is not the
     same as the choice being impossible.
     """
+    root = Path(root).resolve()
+    workspace = Path(workspace_root).resolve() if workspace_root is not None else root
+    if not root.is_relative_to(workspace):
+        raise ValueError(f"component is outside the mounted workspace: {root}")
     choice = settings.quality_runner
     if choice == "container":
         image = settings.quality_container_image
@@ -91,8 +101,12 @@ def build_runner(
                       run_id=run_id or None, project=project)
             if settings.quality_run_daemon_image else None
         )
-        return ContainerRunner(
-            root, image=image, daemon=daemon, owns_daemon=daemon is not None,
+        # npm's concurrent extraction fails intermittently on a Docker Desktop
+        # bind mount (ENOTDIR/ENOENT on mkdir); node toolchains get a native
+        # volume with checked deltas instead. Other stacks keep the bind mount.
+        runner_type = NativeWorkspaceRunner if settings.quality_stack == "node" else ContainerRunner
+        return runner_type(
+            workspace, image=image, daemon=daemon, owns_daemon=daemon is not None,
             run_id=run_id, project=project,
         )
     raise ValueError(f"unknown quality_runner: {choice!r}")
@@ -135,6 +149,7 @@ class QualityMCP:
         self,
         root: str | Path,
         *,
+        workspace_root: str | Path | None = None,
         timeout_seconds: float = 60,
         runner: CommandRunner | None = None,
         settings: Settings | None = None,
@@ -146,6 +161,13 @@ class QualityMCP:
         project: str = "",
     ) -> None:
         self.root = Path(root).resolve()
+        # Commands and manifests belong to the component. The mount belongs to
+        # the repository, so relative references to sibling modules still work.
+        self.workspace_root = (
+            Path(workspace_root).resolve() if workspace_root is not None else self.root
+        )
+        if not self.root.is_relative_to(self.workspace_root):
+            raise ValueError(f"component is outside the mounted workspace: {self.root}")
         # Which ecosystem's commands to run. An explicit profile (how every
         # existing caller and test selects one) always wins. Failing that, an
         # explicit, non-auto-detected settings.quality_stack (ADR 4) chooses one.
@@ -189,6 +211,7 @@ class QualityMCP:
         self._runner: CommandRunner = runner or build_runner(
             self.root, settings if settings is not None else Settings(),
             run_id=run_id, project=project,
+            workspace_root=self.workspace_root,
         )
         self._environment_lock = threading.RLock()
         self._mutation_lock = threading.Lock()
@@ -212,6 +235,7 @@ class QualityMCP:
         allow_network: bool = False,
         allow_subprocesses: bool = False,
         env: tuple[tuple[str, str], ...] = (),
+        structured_output: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """Hand one command to the runner.
 
@@ -224,6 +248,7 @@ class QualityMCP:
                 cwd=cwd,
                 deadline=deadline,
                 allow_network=allow_network,
+                structured_output=structured_output,
                 allow_subprocesses=allow_subprocesses,
                 env=tuple({**dict(env), **dict(self.service_environment)}.items()),
                 writable_paths=self.profile.toolchain_writable_paths,
@@ -620,12 +645,33 @@ class QualityMCP:
             if phase == "security"
             else None
         )
+        # A unique output directory prevents a previous Maven report from
+        # qualifying a failed or incomplete invocation as advisory findings.
+        if phase == "security" and self.profile.name == "jvm":
+            try:
+                with tempfile.TemporaryDirectory(prefix=".aset-advisories-", dir=cwd or self.root) as directory:
+                    report_dir = Path(directory)
+                    return self._run(
+                        role, tool, [*command, *extra, f"-Dodc.outputDirectory={report_dir.name}"],
+                        allowed, deadline, cwd=cwd or self.root, started=started,
+                        allow_network=needs_network, env=self.profile.env(environment),
+                        unavailable_on_output=unavailable_on_output, scans_dependencies=True,
+                        dependency_findings=lambda output, code: self._jvm_dependency_findings(
+                            report_dir, output, code
+                        ),
+                    )
+            except OSError as exc:
+                return self._unavailable(role, tool, exc, started)
         return self._run(
             role, tool, [*command, *extra], allowed, deadline,
             cwd=cwd or self.root, started=started, allow_network=needs_network,
             env=self.profile.env(environment), fail_on_output=fail_on_output,
             unavailable_on_output=unavailable_on_output,
             scans_dependencies=phase in self.profile.dependency_scan_phases,
+            dependency_findings=(
+                self._dependency_findings
+                if phase == "security" and self.profile.name in {"node", "dotnet"} else None
+            ),
         )
 
     def _run(
@@ -643,6 +689,7 @@ class QualityMCP:
         fail_on_output: Callable[[str], bool] | None = None,
         unavailable_on_output: Callable[[str], str | None] | None = None,
         scans_dependencies: bool = False,
+        dependency_findings: Callable[[str, int], list[str]] | None = None,
     ) -> ToolResult:
         if role not in allowed:
             return self._denied(role, tool)
@@ -658,6 +705,7 @@ class QualityMCP:
                 # still has to start its own launcher.
                 allow_subprocesses=allow_network or self.profile.needs_subprocesses,
                 env=env,
+                structured_output=dependency_findings is not None,
             )
         except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
             return self._unavailable(role, tool, exc, started)
@@ -668,9 +716,9 @@ class QualityMCP:
                 role, tool, RuntimeError("quality subprocess was terminated"), started
             )
         infrastructure_error = (
-            unavailable_on_output(full_output)
-            if unavailable_on_output is not None
-            else None
+            "structured scanner output exceeded its retention limit or was incomplete"
+            if dependency_findings is not None and getattr(completed, "output_truncated", False)
+            else unavailable_on_output(full_output) if unavailable_on_output is not None else None
         )
         if infrastructure_error is not None:
             status = ToolStatus.UNAVAILABLE
@@ -682,6 +730,14 @@ class QualityMCP:
                 and fail_on_output(full_output)
             ):
                 status = ToolStatus.FAIL
+        findings = (
+            dependency_findings(completed.stdout, completed.returncode)
+            if status is ToolStatus.FAIL and dependency_findings is not None else []
+        )
+        if findings:
+            # Keep diagnostic output and recognizable findings even when the
+            # scanner's report appears before the retained stdout tail.
+            output = output[-2000:] + "\nConfirmed dependency advisories: " + "; ".join(findings)[:1800]
         result = ToolResult(
             tool_name=tool,
             allowed_role=role,
@@ -696,6 +752,7 @@ class QualityMCP:
                 else None
             ),
             scans_dependencies=scans_dependencies,
+            confirmed_dependency_findings=bool(findings),
         )
         self._last[tool] = result
         return result
@@ -1055,6 +1112,9 @@ class QualityMCP:
             duration_ms=0,
             error=previous.error if previous else f"{source} has not executed",
             test_cases=previous.test_cases if previous else None,
+            scans_dependencies=previous.scans_dependencies if previous else False,
+            confirmed_dependency_findings=(previous.confirmed_dependency_findings if previous else False),
+            evidence_reference=previous.evidence_reference if previous else None,
         )
 
     def run_tests(self, role: AgentRole, paths: list[str] | None = None) -> ToolResult:
@@ -1292,6 +1352,122 @@ class QualityMCP:
             return False
         return "has the following vulnerable packages" in lowered
 
+    @staticmethod
+    def _payload_has_errors(payload: Any) -> bool:
+        if isinstance(payload, dict):
+            if any(payload.get(key) for key in ("error", "errors", "analysisExceptions")):
+                return True
+            if str(payload.get("level", "")).lower() in {"error", "fatal"}:
+                return True
+            return any(QualityMCP._payload_has_errors(value) for value in payload.values())
+        if isinstance(payload, list):
+            return any(QualityMCP._payload_has_errors(value) for value in payload)
+        return False
+
+    def _dependency_findings(self, output: str, returncode: int) -> list[str]:
+        """Recognize completed advisory evidence, never a command name or exit alone."""
+        if self.profile.name == "node" and returncode == 1:
+            try:
+                payload = json.loads(output)
+                if payload.get("auditReportVersion") != 2 or self._payload_has_errors(payload):
+                    return []
+                counts = payload["metadata"]["vulnerabilities"]
+                if not all(type(counts[key]) is int and counts[key] >= 0 for key in ("high", "critical")):
+                    return []
+                if counts["high"] + counts["critical"] == 0:
+                    return []
+                return [
+                    f"{name}: {advisory['title']} ({advisory['url']})"
+                    for name, package in payload["vulnerabilities"].items()
+                    for advisory in package["via"] if isinstance(advisory, dict)
+                    and advisory.get("severity") in {"high", "critical"}
+                    and advisory.get("title") and advisory.get("url")
+                ]
+            except (ValueError, KeyError, TypeError, AttributeError):
+                return []
+        if self.profile.name == "dotnet" and returncode == 0:
+            payload = self._dotnet_vulnerability_payload(output)
+            if not payload or type(payload.get("version")) is not int or payload["version"] != 1 or self._payload_has_errors(payload):
+                return []
+            try:
+                return [
+                    f"{package['id']}: {advisory['severity']} ({advisory['advisoryurl']})"
+                    for project in payload["projects"] for framework in project["frameworks"]
+                    for key in ("topLevelPackages", "transitivePackages")
+                    for package in framework.get(key, [])
+                    for advisory in package.get("vulnerabilities", [])
+                    if advisory.get("severity", "").lower() in {"low", "moderate", "high", "critical"}
+                    and advisory.get("advisoryurl")
+                ]
+            except (KeyError, TypeError, AttributeError):
+                return []
+        return []
+
+    @staticmethod
+    def _jvm_dependency_findings(directory: Path, output: str, returncode: int) -> list[str]:
+        if returncode != 1 or "One or more dependencies were identified with vulnerabilities" not in output:
+            return []
+        try:
+            # Open both levels without following links. Never read a report
+            # redirected outside the newly created scanner directory.
+            directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                report_fd = os.open("dependency-check-report.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+                with os.fdopen(report_fd, encoding="utf-8") as report:
+                    if not stat.S_ISREG(os.fstat(report.fileno()).st_mode):
+                        return []
+                    payload = json.load(report)
+            finally:
+                os.close(directory_fd)
+            if (
+                not isinstance(payload["scanInfo"]["engineVersion"], str)
+                or not payload["scanInfo"]["engineVersion"]
+                or not isinstance(payload["projectInfo"], dict)
+                or QualityMCP._payload_has_errors(payload)
+            ):
+                return []
+            return [
+                f"{dependency['fileName']}: {vulnerability['name']}"
+                for dependency in payload["dependencies"]
+                for vulnerability in dependency.get("vulnerabilities", [])
+                if any(
+                    isinstance(vulnerability.get(version), dict)
+                    and float(vulnerability[version].get("baseScore", 0)) >= 7
+                    for version in ("cvssv2", "cvssv3", "cvssv4")
+                )
+            ]
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return []
+
+    @staticmethod
+    def _valid_dotnet_vulnerability_schema(payload: dict[str, Any]) -> bool:
+        if type(payload.get("version")) is not int or payload["version"] != 1:
+            return False
+        # Validate collection shapes before treating an exit-zero document as
+        # a completed scan, including documents with no vulnerability entries.
+        pending = [(payload, "projects", "project")]
+        children = {
+            "project": (("frameworks", "framework"),),
+            "framework": (("topLevelPackages", "package"), ("transitivePackages", "package")),
+            "package": (("vulnerabilities", "advisory"),),
+            "advisory": (),
+        }
+        while pending:
+            parent, key, kind = pending.pop()
+            values = parent.get(key, [] if kind in {"package", "advisory"} else None)
+            if not isinstance(values, list) or any(not isinstance(value, dict) for value in values):
+                return False
+            for value in values:
+                if kind == "package" and not isinstance(value.get("id"), str):
+                    return False
+                if kind == "advisory" and not all(
+                    isinstance(value.get(field), str) and value[field]
+                    for field in ("severity", "advisoryurl")
+                ):
+                    return False
+                pending.extend((value, field, child) for field, child in children[kind])
+        return True
+
     def _security_infrastructure_error(self, output: str) -> str | None:
         """Separate scanner/advisory outages from findings in target dependencies."""
         indicators = {
@@ -1322,11 +1498,12 @@ class QualityMCP:
             self.profile.name, ()
         )):
             return f"{self.profile.name} advisory service or scanner was unavailable"
-        if (
-            self.profile.name == "dotnet"
-            and self._dotnet_vulnerability_payload(output) is None
-        ):
-            return "dotnet vulnerability scanner returned no valid JSON evidence"
+        if self.profile.name == "dotnet":
+            payload = self._dotnet_vulnerability_payload(output)
+            if payload is None or not self._valid_dotnet_vulnerability_schema(payload):
+                return "dotnet vulnerability scanner returned no valid JSON evidence"
+            if self._payload_has_errors(payload):
+                return "dotnet vulnerability scanner reported incomplete validation"
         return None
 
     def get_security_report(self, role: AgentRole) -> ToolResult:
@@ -1348,11 +1525,22 @@ class CompositeQuality:
 
     transport = "composite"
 
-    def __init__(self, backends: list[Any]) -> None:
+    def __init__(self, backends: list[Any], *, refresh: Callable[[], list[Any]] | None = None) -> None:
         if not backends:
             raise ValueError("CompositeQuality requires at least one backend")
         self._backends = list(backends)
+        self._refresh = refresh
         self.last_component_results: list[ToolResult] = []
+        self._changed_paths: tuple[str, ...] | None = None
+        self._last_tests: ToolResult | None = None
+
+    def set_changed_paths(self, paths: list[str]) -> None:
+        """Require validation for every component touched by the implementation."""
+        self._changed_paths = normalized_changes(paths)
+
+    def refresh_components(self) -> None:
+        if self._refresh is not None:
+            self._backends = list(self._refresh())
 
     def __enter__(self) -> CompositeQuality:
         return self
@@ -1387,6 +1575,9 @@ class CompositeQuality:
             if result.error:
                 errors.append(f"{label}: {result.error}")
             duration += int(result.duration_ms or 0)
+        failed_results = [
+            result for result in results if result.status is not ToolStatus.SUCCESS
+        ]
         return ToolResult(
             tool_name=tool_name,
             allowed_role=role,
@@ -1396,6 +1587,16 @@ class CompositeQuality:
             duration_ms=duration,
             evidence_reference=None,
             error="; ".join(errors) if errors else None,
+            # Successful code scans must not hide the provenance of a failing
+            # dependency scan. Missing or denied validation is never a finding.
+            scans_dependencies=bool(failed_results) and all(
+                result.status is ToolStatus.FAIL and result.scans_dependencies
+                for result in failed_results
+            ),
+            confirmed_dependency_findings=bool(failed_results) and all(
+                result.status is ToolStatus.FAIL and result.scans_dependencies
+                and result.confirmed_dependency_findings for result in failed_results
+            ),
             test_cases=(
                 [case for result in results for case in result.test_cases or []]
                 if all(result.test_cases is not None for result in results) else None
@@ -1403,16 +1604,40 @@ class CompositeQuality:
         )
 
     def run_tests(self, role: AgentRole, paths: list[str] | None = None) -> ToolResult:
+        self.refresh_components()
         results: list[ToolResult] = []
+        omissions: list[str] = []
         for backend in self._backends:
+            reason = (
+                undeclared_unchanged_suite(backend, self._changed_paths)
+                if role is AgentRole.TESTING and (not paths or paths == ["-v"]) else None
+            )
+            if reason:
+                omissions.append(reason)
+                continue
             # Pytest path args (`-v`, node ids) belong to the python profile.
             # Forwarding them would turn `mvn test` into `mvn test -v`.
             extra = paths if getattr(backend, "profile", None) is not None and backend.profile.name == "python" else None
             results.append(backend.run_tests(role, extra))
         self.last_component_results = results
-        return self._aggregate("run_tests", role, results)
+        if results:
+            result = self._aggregate("run_tests", role, results)
+        else:
+            result = ToolResult(
+                tool_name="run_tests", allowed_role=role, status=ToolStatus.UNAVAILABLE,
+                input_summary="components=0", output_summary="no test suite executed",
+                duration_ms=0, error="no declared test suite is available",
+            )
+        if omissions:
+            result = result.model_copy(update={
+                "output_summary": (result.output_summary + "\nNot executed: " + "; ".join(omissions))[-4000:],
+            })
+        self._last_tests = result
+        return result
 
     def get_test_results(self, role: AgentRole) -> ToolResult:
+        if role is AgentRole.TESTING and self._last_tests is not None:
+            return self._last_tests.model_copy(update={"tool_name": "get_test_results"})
         return self._aggregate(
             "get_test_results",
             role,
@@ -1420,6 +1645,7 @@ class CompositeQuality:
         )
 
     def run_build(self, role: AgentRole) -> ToolResult:
+        self.refresh_components()
         return self._aggregate(
             "run_build",
             role,
@@ -1434,6 +1660,7 @@ class CompositeQuality:
         )
 
     def run_linter(self, role: AgentRole) -> ToolResult:
+        self.refresh_components()
         return self._aggregate(
             "run_linter",
             role,
@@ -1441,6 +1668,7 @@ class CompositeQuality:
         )
 
     def scan_dependencies(self, role: AgentRole) -> ToolResult:
+        self.refresh_components()
         return self._aggregate(
             "scan_dependencies",
             role,
@@ -1448,6 +1676,7 @@ class CompositeQuality:
         )
 
     def run_security_scan(self, role: AgentRole) -> ToolResult:
+        self.refresh_components()
         return self._aggregate(
             "run_security_scan",
             role,

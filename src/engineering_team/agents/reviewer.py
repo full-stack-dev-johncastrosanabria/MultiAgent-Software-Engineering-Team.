@@ -19,7 +19,7 @@ from engineering_team.testing_evidence import (
 )
 
 from .base import AgentBase
-from .testing import TEST_EVIDENCE_TOOLS
+from .testing import TEST_EVIDENCE_TOOLS, _business_terms
 
 _DIMENSIONS = (
     "requirements", "architecture", "security", "testing", "implementation", "rag_grounding",
@@ -369,8 +369,18 @@ class ReviewerAgent(AgentBase[ReviewerDecision]):
                     for reference in latest_test.coverage_mapping.get(dimension, [])
                 )
             )
+            rule_terms = _business_terms(list(getattr(
+                envelope.state_projection.get("specification"), "business_rules", None
+            ) or []))
             test_evidence_problems.extend(
                 f"required coverage dimension has no evidence: {dimension}"
+                + (
+                    # The gate matches words; saying which makes it actionable.
+                    " (a passing test's name, body or display-name annotation such as "
+                    "@DisplayName or [Fact(DisplayName=...)] must mention one of: "
+                    + ", ".join(rule_terms[:12]) + ")"
+                    if dimension == "business_rule" and rule_terms else ""
+                )
                 for dimension in gaps
             )
             invalid_coverage = sorted(

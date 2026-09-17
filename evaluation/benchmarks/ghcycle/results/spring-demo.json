@@ -1,0 +1,45 @@
+{
+  "repository": "https://github.com/full-stack-dev-johncastrosanabria/spring-demo.git",
+  "delivered": true,
+  "clone_depth": 1,
+  "cli_returncode": 0,
+  "cli_stderr_tail": "Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n",
+  "stages": {
+    "clone": {
+      "passed": true,
+      "detail": "the run produced evidence, so it had a checkout to work in"
+    },
+    "infrastructure": {
+      "passed": false,
+      "detail": "{\"engines\": [\"mysql\"], \"read_from\": [\"src/main/resources/application.yaml\"]}",
+      "branch": null,
+      "error": null
+    },
+    "execute": {
+      "passed": false,
+      "detail": "36 tool outcomes, 0 unavailable, 2 failed, run exited asking for human review before TESTING closed",
+      "unavailable": [],
+      "failed_by_tool": {
+        "run_security_scan": 1,
+        "run_tests": 1
+      }
+    },
+    "spec": {
+      "passed": false,
+      "detail": "0 files written, reviewer said REJECTED",
+      "files_written": []
+    },
+    "delivery": {
+      "passed": false,
+      "pull_request": null,
+      "branch": null,
+      "error": null,
+      "skipped": false
+    },
+    "hygiene": {
+      "passed": true,
+      "leftover_labelled_resources": []
+    }
+  },
+  "all_stages_passed": false
+}

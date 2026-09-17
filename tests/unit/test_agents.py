@@ -150,6 +150,8 @@ def test_security_treats_untouched_dependency_cves_as_baseline_pass() -> None:
 
     tool = ToolResult(
         tool_name="scan_dependencies",
+        scans_dependencies=True,
+        confirmed_dependency_findings=True,
         allowed_role=AgentRole.SECURITY,
         status=ToolStatus.FAIL,
         input_summary="project",
@@ -202,6 +204,8 @@ def test_security_fails_dependency_cves_when_pom_changed() -> None:
 
     tool = ToolResult(
         tool_name="scan_dependencies",
+        scans_dependencies=True,
+        confirmed_dependency_findings=True,
         allowed_role=AgentRole.SECURITY,
         status=ToolStatus.FAIL,
         input_summary="project",
@@ -246,6 +250,8 @@ def test_security_redacts_secrets_in_baseline_finding_description() -> None:
     secret = "password=BaselineSecretToken_ABC123XYZ"
     tool = ToolResult(
         tool_name="scan_dependencies",
+        scans_dependencies=True,
+        confirmed_dependency_findings=True,
         allowed_role=AgentRole.SECURITY,
         status=ToolStatus.FAIL,
         input_summary="project",
@@ -286,6 +292,8 @@ def test_security_redacts_secrets_in_baseline_finding_description() -> None:
 def test_security_fails_closed_when_implementation_missing() -> None:
     tool = ToolResult(
         tool_name="scan_dependencies",
+        scans_dependencies=True,
+        confirmed_dependency_findings=True,
         allowed_role=AgentRole.SECURITY,
         status=ToolStatus.FAIL,
         input_summary="project",
@@ -308,6 +316,8 @@ def test_security_treats_new_manifests_as_dependency_surface() -> None:
 
     tool = ToolResult(
         tool_name="scan_dependencies",
+        scans_dependencies=True,
+        confirmed_dependency_findings=True,
         allowed_role=AgentRole.SECURITY,
         status=ToolStatus.FAIL,
         input_summary="project",

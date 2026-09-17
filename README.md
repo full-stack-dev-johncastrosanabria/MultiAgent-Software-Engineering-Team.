@@ -41,8 +41,10 @@ flowchart LR
   `dotnet`, `go` y `node` declaran instalación, lint, pruebas, build, integridad
   de dependencias, evidencia de seguridad y migración de esquema.
 - **La revisión humana es una salida real.** Cualquier etapa puede terminar en
-  `HUMAN_REVIEW_REQUIRED`; el tercer rechazo del Reviewer detiene la
-  automatización en lugar de reintentar indefinidamente.
+  `HUMAN_REVIEW_REQUIRED`. La remediación está acotada: el rechazo número
+  `MAX_REMEDIATION_ITERATIONS` (5 por omisión), o el tercero consecutivo con la
+  misma huella de fallo, detiene la automatización en lugar de reintentar
+  indefinidamente.
 - **Se redacta antes de negar.** Los secretos se enmascaran en el prompt antes de
   que una guardarraíl rechace la operación.
 
@@ -70,9 +72,10 @@ Extras declarados en `pyproject.toml`:
 | Extra | Instala | Para |
 |---|---|---|
 | `dev` | pytest, pytest-cov, ruff | Desarrollo y pruebas |
-| `rag` | chromadb, langchain-text-splitters, sentence-transformers | Recuperación sobre el corpus |
+| `rag` | chromadb, langchain-core, langchain-text-splitters, sentence-transformers | Recuperación sobre el corpus |
 | `observability` | langfuse | Trazas de ejecución |
 | `sample-app` | fastapi, uvicorn | Run API y proyecto de demo |
+| `quality-toolchain` | pytest, ruff y dependencias fijadas | Toolchain Python bloqueado de la compuerta de calidad |
 
 ## Uso
 
@@ -84,8 +87,9 @@ python3 -m engineering_team.cli run-project --help
 | Comando | Qué hace |
 |---|---|
 | `run` | Ejecuta el flujo y escribe un informe de evidencia redactado |
-| `run-project PATH --spec "..."` | Ejecuta sobre un repositorio real; admite `--test-spec` |
+| `run-project PATH --spec "..."` | Ejecuta sobre un repositorio real; admite `--test-spec`, `--repo URL` (clon temporal que no sobrevive al run, excluyente con `PATH`), `--clone-depth` y `--report-path` |
 | `reset-project PATH` | Restaura el repositorio de demo. **Destructivo** |
+| `docker-sweep` | Retira los recursos Docker etiquetados por ASET que ningún run vivo posee; `--build-cache` poda además la caché del daemon |
 
 `run-project` es de solo lectura por omisión: escribir en el proyecto exige
 `--authorize-writes`, y abrir un pull request exige además `--confirm-delivery`
@@ -98,10 +102,11 @@ Tras la instalación editable, `pyproject.toml` también expone el ejecutable
 ## Configuración
 
 Todo se configura por variables de entorno leídas en
-[`config.py`](src/engineering_team/config.py); `.env.example` documenta el
-conjunto. Las de uso más frecuente:
+[`config.py`](src/engineering_team/config.py): cada campo de `Settings` en
+mayúsculas. `.env.example` recoge las de uso habitual; la lista completa está en
+`Settings`. Las de uso más frecuente:
 
-| Variable | Por omisión | Efecto |
+| Variable | En `.env.example` | Efecto |
 |---|---|---|
 | `LOCAL_FIRST` | `false` | Intenta primero el modelo local |
 | `CLOUD_ENABLED` | `true` | Habilita las cadenas de proveedor en la nube |
@@ -110,6 +115,7 @@ conjunto. Las de uso más frecuente:
 | `QUALITY_TEST_FILTER` | vacío | Qué pruebas corre la compuerta |
 | `WORKSPACE_ROOT` | `workspace/runs` | Raíz de los espacios aislados |
 
+Sin `.env`, los valores de clase son `LOCAL_FIRST=true` y `CLOUD_ENABLED=false`.
 Detalle completo en [operaciones](docs/operations.md).
 
 ## Pruebas
@@ -118,10 +124,10 @@ Detalle completo en [operaciones](docs/operations.md).
 PYTHONPATH=src python3 -m pytest
 ```
 
-La suite tiene 72 archivos organizados por alcance: `tests/unit/`, `tests/mcp/`,
-`tests/graph/`, `tests/integration/`, `tests/rag/` y `tests/e2e/`. El alcance de
-cada grupo, y qué exige ejecutar cada uno, están en
-[pruebas](docs/testing.md).
+La suite se organiza por alcance: `tests/unit/`, `tests/mcp/`, `tests/graph/`,
+`tests/integration/`, `tests/rag/` y `tests/e2e/`, más `tests/test_run_api.py`.
+El alcance de cada grupo, qué exige ejecutar cada uno y cómo aislarla del
+entorno del shell están en [pruebas](docs/testing.md).
 
 ```sh
 python3 -m ruff check src tests
@@ -141,7 +147,7 @@ registra lo que se retiró y no debe recrearse.
 | [Mapa del proyecto](AGENTS.md) | Punto de entrada para agentes y personas |
 | [Mapa por tarea](docs/README.md) | Dónde cambiar cada parte y qué comprobar |
 | [Arquitectura](docs/architecture/overview.md) | Composición implementada |
-| [Decisiones](docs/architecture/decisions/README.md) | Catorce decisiones aceptadas |
+| [Decisiones](docs/architecture/decisions/README.md) | Por qué el sistema es así |
 | [Operaciones](docs/operations.md) | Instalación, configuración, CLI y frontend |
 | [Pruebas](docs/testing.md) | Comandos y alcance de validación |
 | [Estado](docs/status.md) | Evidencia y limitaciones actuales |

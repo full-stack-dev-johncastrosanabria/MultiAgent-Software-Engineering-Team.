@@ -1,5 +1,7 @@
 """Bounded cloud contingency routing; not normal model selection."""
 
+import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -10,6 +12,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from engineering_team.config import Settings
+from engineering_team.contracts.developer_plan import DeveloperTargetPlan, validate_target_plan
 from engineering_team.contracts.enums import AgentRole, ErrorCode
 from engineering_team.contracts.models import CloudFallbackContext, ModelExecutionInfo
 from engineering_team.guardrails.secrets import (
@@ -19,6 +22,7 @@ from engineering_team.guardrails.secrets import (
 from engineering_team.llm.prompting import build_role_prompts, governed_output_schema
 from engineering_team.models.context import ContextEnvelope
 
+from .model_health import ModelHealth
 from .registry import ModelSelection
 from .runtime import _ineffective_remediation_error, _preserves_governed_facts
 
@@ -28,7 +32,25 @@ _OPENAI_COMPATIBLE = {
     "groq": ("https://api.groq.com/openai/v1/chat/completions", "groq_api_key"),
     "mistral": ("https://api.mistral.ai/v1/chat/completions", "mistral_api_key"),
     "openrouter": ("https://openrouter.ai/api/v1/chat/completions", "open_router_api_key"),
+    # Gateways probed 2026-09-16 with this runtime's JSON request shape and a
+    # 22k-token prompt; endpoints taken from each provider's own documentation.
+    "xkiro": ("https://api.xkiro.com/v1/chat/completions", "x_kiro_api_key"),
+    "vyce": ("https://vyceai.com/v1/chat/completions", "vyce_ai_api_key"),
+    "tokenforge": ("https://tokenforge.ai.studio/v1/chat/completions", "token_forge_api_key"),
+    "nvidia": ("https://integrate.api.nvidia.com/v1/chat/completions", "nvidia_api_key"),
+    "kilo": ("https://api.kilo.ai/api/gateway/chat/completions", "kilo_api_key"),
+    "cohere": ("https://api.cohere.ai/compatibility/v1/chat/completions", "cohere_api_key"),
+    "cloudflare": (
+        "https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1/chat/completions",
+        "cloudflare_worker_ai_api",
+    ),
 }
+_CLOUDFLARE_ACCOUNT = re.compile(r"[0-9a-f]{32}")
+# Cohere refuses a budget above its models' 8192-token output limit with 400.
+_OUTPUT_TOKEN_LIMIT = {"cohere": 8000}
+# Gateway defaults for output length are provider-specific and can truncate a
+# Developer's full-file content; state the budget explicitly, as for OpenRouter.
+_EXPLICIT_OUTPUT_BUDGET = frozenset({"xkiro", "vyce", "tokenforge", "nvidia", "kilo", "cohere", "cloudflare"})
 
 # Both logical providers use Google's official API. Keeping the second route
 # distinct gives its credential and cooldown independent state while ensuring
@@ -43,15 +65,42 @@ _GOOGLE_CREDENTIALS = {
 # fallback always crosses providers. Google quotas can be model scoped: a 3.6 quota
 # failure must not disable a working 3.5 fallback. Testing/Reviewer are deterministic.
 _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
+    # Gateway entries were evaluated on 2026-09-16 through this runtime on ASET's
+    # own tasks (Product spec, Developer target plan, Developer authoring of real
+    # FlaskApiProduct sources, Security review) and in run apply-523385f8, the day
+    # Mistral answered 429/503, OpenRouter's Nemotron relayed "overloaded" and
+    # Gemini 3.5 answered 503 on both keys. xKiro's deepseek-v4.1-flash passed all
+    # four tasks; deepseek-v4-pro passed Security 3/3 and Architecture 2/2. xKiro's
+    # free tier is 500k tokens a day per account, so it follows the existing
+    # primary and first fallback. Vyce ignores response_format and fences its
+    # JSON; once one fenced block was accepted, deepseek-v4-flash passed Product
+    # and Security and agnes-3.0-flash passed Developer authoring (not planning).
+    # NVIDIA's free endpoints timed out on almost every model; its Nemotron 3
+    # Super passed Product and Security and keeps that model off one provider.
     AgentRole.PRODUCT: (
         ("groq", "openai/gpt-oss-120b"),
         ("mistral", "mistral-small-latest"),
+        # Cohere's Command A passed all five tasks once its output budget stayed
+        # under 8192 tokens; trial keys are rate limited, so it is a fallback.
+        ("cohere", "command-a-03-2025"),
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("kilo", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("cloudflare", "@cf/meta/llama-4-scout-17b-16e-instruct"),
+        ("vyce", "deepseek-v4-flash"),
+        ("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
         ("google", "gemini-3.5-flash"),
     ),
     AgentRole.ARCHITECTURE: (
         ("mistral", "mistral-medium-latest"),
         ("groq", "openai/gpt-oss-120b"),
+        ("cohere", "command-a-03-2025"),
+        ("xkiro", "deepseek/deepseek-v4-pro"),
+        ("cloudflare", "@cf/nvidia/nemotron-3-120b-a12b"),
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
+        # Nemotron spent 117-129 s of this role's deadline in apply-82aaa8c3.
+        ("vyce", "agnes-3.0-flash"),
+        ("kilo", "nex-agi/nex-n2.5-pro:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
         ("google", "gemini-3.5-flash"),
     ),
@@ -62,13 +111,27 @@ _ROLE_CHAINS: dict[AgentRole, tuple[tuple[str, str], ...]] = {
     AgentRole.DEVELOPER: (
         ("mistral", "codestral-latest"),
         ("groq", "openai/gpt-oss-120b"),
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
+        ("cohere", "command-a-03-2025"),
+        ("xkiro", "qwen/qwen3-coder-plus:free"),
         ("mistral", "mistral-small-latest"),
+        # Authoring took 72-85 s on these two; the Developer timeout allows it.
+        ("kilo", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("cloudflare", "@cf/openai/gpt-oss-120b"),
+        ("vyce", "agnes-3.0-flash"),
         ("google", "gemini-3.5-flash"),
     ),
     AgentRole.SECURITY: (
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
         ("groq", "openai/gpt-oss-120b"),
+        ("cohere", "command-a-03-2025"),
+        ("xkiro", "deepseek/deepseek-v4-pro"),
         ("mistral", "mistral-small-latest"),
+        ("xkiro", "deepseek/deepseek-v4.1-flash:free"),
+        ("cloudflare", "@cf/meta/llama-4-scout-17b-16e-instruct"),
+        ("kilo", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("vyce", "deepseek-v4-flash"),
+        ("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
         ("google", "gemini-3.5-flash"),
     ),
 }
@@ -95,10 +158,38 @@ _CLOUD_MAP[AgentRole.TESTING] = ("groq", "openai/gpt-oss-20b")
 _CLOUD_MAP[AgentRole.REVIEWER] = ("groq", "openai/gpt-oss-120b")
 
 
+_FENCED_JSON = re.compile(r"```(?:json)?[ \t]*\n(.*?)\n[ \t]*```", re.DOTALL)
+
+
+def _json_payload(raw: str) -> str:
+    """The answer itself, or its one fenced JSON block.
+
+    Some gateways ignore response_format and wrap the object in a fence, with or
+    without prose around it. Exactly one block is unambiguous; anything else is
+    returned unchanged and fails validation as before. Schema and governed facts
+    are validated after this either way.
+    """
+    try:
+        json.loads(raw)
+        return raw
+    except ValueError:
+        blocks = _FENCED_JSON.findall(raw)
+        return blocks[0] if len(blocks) == 1 else raw
+
+
 class _GovernedContradiction(ValueError):
     def __init__(self, candidate: dict[str, Any], actual: BaseModel) -> None:
         values = actual.model_dump(mode="json")
         self.fields = sorted(key for key, value in candidate.items() if values.get(key) != value)
+        # A target plan is expected to differ from its candidate: the model fills
+        # the proposal fields. The validator's fixed message is the actual cause.
+        self.reason = None
+        if isinstance(actual, DeveloperTargetPlan):
+            try:
+                validate_target_plan(DeveloperTargetPlan.model_validate(candidate), actual,
+                                     all_paths=set(candidate.get("inventory_paths", [])))
+            except ValueError as exc:
+                self.reason = str(exc)
         super().__init__("governed artifact contradiction")
 
 
@@ -108,6 +199,26 @@ class _IncompleteOutput(ValueError):
 
 class _IneffectiveRemediation(ValueError):
     pass
+
+
+class _ProviderReportedError(ValueError):
+    """An upstream failure relayed inside a success response.
+
+    Only the numeric code is kept: the message and metadata are provider text.
+    """
+
+    def __init__(self, code: int) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _missing_response_field_detail(exc: KeyError) -> str:
+    # Only protocol field names are safe to disclose. KeyError may originate
+    # inside a client/transport and carry arbitrary data rather than a field.
+    key = exc.args[0] if len(exc.args) == 1 else None
+    known_fields = {"candidates", "choices", "content", "message", "parts", "text"}
+    field = repr(key) if type(key) is str and key in known_fields else "[REDACTED]"
+    return f"KeyError: missing response field {field}"
 
 
 @dataclass
@@ -210,6 +321,10 @@ class CloudRouter:
         else:
             entry = _OPENAI_COMPATIBLE.get(selection.provider)
             key = getattr(self._settings, entry[1], None) if entry else None
+            if entry and "{account}" in entry[0]:
+                # The account id is interpolated into the URL the token is sent to.
+                account = self._settings.cloudflare_account_id or ""
+                key = key if _CLOUDFLARE_ACCOUNT.fullmatch(account) else None
         return self._settings.cloud_enabled and bool(key)
 
 
@@ -284,8 +399,10 @@ class CloudModelRuntime:
     def __init__(
         self, settings: Settings, *, client: httpx.Client | None = None,
         trace: Any | None = None, primary: bool = False,
+        health: ModelHealth | None = None,
     ) -> None:
         self.settings = settings
+        self.health = health
         self.router = CloudRouter(settings)
         self.budget = CloudBudget(settings, unlimited=primary)
         self.client = client
@@ -293,6 +410,20 @@ class CloudModelRuntime:
         self.primary = primary
         self.attempts: list[ModelExecutionInfo] = []
         self._unavailable_until: dict[tuple[str, str], float] = {}
+
+    def _remember(self, info: ModelExecutionInfo) -> None:
+        self.attempts.append(info)
+        if self.health is not None:
+            self.health.record_attempt(
+                info.agent, info.provider, info.requested_model,
+                None if info.structured_output_success else (info.error_category or "invalid_response"),
+            )
+
+    def _cooling_until(self, selection: ModelSelection) -> float:
+        return max(
+            self._unavailable_until.get((selection.provider, "*"), 0),
+            self._unavailable_until.get((selection.provider, selection.model), 0),
+        )
 
     def invoke_artifact(
         self,
@@ -305,7 +436,14 @@ class CloudModelRuntime:
         _deadline: float | None = None,
     ) -> tuple[BaseModel, ModelExecutionInfo]:
         chain = self.router.selection_chain(role)
-        deadline = _deadline if _deadline is not None else time.monotonic() + self.settings.cloud_role_timeout_seconds
+        if self.health is not None:
+            chain = self.health.ordered(role, chain)
+        developer = role is AgentRole.DEVELOPER
+        role_timeout = (
+            self.settings.developer_role_timeout_seconds if developer
+            else self.settings.cloud_role_timeout_seconds
+        )
+        deadline = _deadline if _deadline is not None else time.monotonic() + role_timeout
         # The budget bounds *escalations*, not the retries within one escalation: every
         # model in the chain is one attempt at the same escalation, so it is consumed
         # once, on entry, and never again as the chain is walked. It must be charged
@@ -315,34 +453,56 @@ class CloudModelRuntime:
             raise RuntimeError("CLOUD_FALLBACK_UNAVAILABLE: disabled, missing credential, or budget")
         # Skip entries whose provider has no usable credential rather than aborting the
         # whole chain on the first unconfigured one.
-        while _attempt < len(chain) and (
-            not self.router.enabled_for(chain[_attempt])
-            or self._unavailable_until.get((chain[_attempt].provider, "*"), 0) > time.monotonic()
-            or self._unavailable_until.get((chain[_attempt].provider, chain[_attempt].model), 0) > time.monotonic()
-        ):
-            _attempt += 1
-        if _attempt >= len(chain):
-            raise RuntimeError("CLOUD_FALLBACK_UNAVAILABLE: disabled, missing credential, or budget")
+        start = _attempt
+        while True:
+            _attempt = start
+            while _attempt < len(chain) and (
+                not self.router.enabled_for(chain[_attempt])
+                or self._cooling_until(chain[_attempt]) > time.monotonic()
+            ):
+                _attempt += 1
+            if _attempt < len(chain):
+                break
+            # Every usable model is cooling down. Waiting for the earliest one,
+            # within the role deadline, is an attempt; failing at once made a
+            # stage retry touch nothing. A credential failure never expires.
+            resume = min(
+                (self._cooling_until(item) for item in chain[start:] if self.router.enabled_for(item)),
+                default=float("inf"),
+            )
+            if resume >= deadline:
+                raise RuntimeError("CLOUD_FALLBACK_UNAVAILABLE: disabled, missing credential, or budget")
+            time.sleep(max(0.0, resume - time.monotonic()))
         selection = chain[_attempt]
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RuntimeError("CLOUD_FALLBACK_UNAVAILABLE: role deadline exceeded")
-        request_timeout = min(self.settings.llm_timeout_seconds, remaining)
+        request_timeout = min(
+            self.settings.developer_llm_timeout_seconds if developer else self.settings.llm_timeout_seconds,
+            remaining,
+        )
         candidate_dict = candidate.model_dump(mode="json")
         output_schema = governed_output_schema(type(candidate), candidate_dict)
         system_prompt, user_prompt = build_role_prompts(
             role, envelope, output_schema, candidate_dict
         )
-        safe_context = build_cloud_context(
-            role, envelope.current_task,
-            str(envelope.state_projection.get("requirement", "")),
-            {"candidate": candidate_dict},
-            deterministic_evidence=[item.chunk_id for item in envelope.rag_evidence],
-        )
-        system_prompt = redacted_for_cloud(system_prompt)
-        user_prompt = redacted_for_cloud(user_prompt)
-        require_safe_cloud_context(system_prompt)
-        require_safe_cloud_context(user_prompt)
+        try:
+            safe_context = build_cloud_context(
+                role, envelope.current_task,
+                str(envelope.state_projection.get("requirement", "")),
+                {"candidate": candidate_dict},
+                deterministic_evidence=[item.chunk_id for item in envelope.rag_evidence],
+            )
+            system_prompt = redacted_for_cloud(system_prompt)
+            user_prompt = redacted_for_cloud(user_prompt)
+            require_safe_cloud_context(system_prompt)
+            require_safe_cloud_context(user_prompt)
+        except ValueError:
+            # Every provider would receive the same prompt, so the refusal ends
+            # the escalation -- as a run error with evidence, not a crashed run.
+            raise RuntimeError(
+                "CLOUD_FALLBACK_UNAVAILABLE: sensitive content refused in cloud context"
+            ) from None
         owns_client = self.client is None
         client = self.client or httpx.Client(timeout=request_timeout)
         started = time.perf_counter()
@@ -369,6 +529,7 @@ class CloudModelRuntime:
                 usage = payload.get("usageMetadata")
             else:
                 endpoint, credential = _OPENAI_COMPATIBLE[selection.provider]
+                endpoint = endpoint.replace("{account}", self.settings.cloudflare_account_id or "")
                 schema_mode = (selection.provider == "mistral" or
                     (selection.provider == "openrouter" and selection.model != "minimax/minimax-m3:free"))
                 response_format = ({"type": "json_schema", "json_schema": {
@@ -378,7 +539,12 @@ class CloudModelRuntime:
                     "require_parameters": True, "max_price": {"prompt": 0, "completion": 0},
                 }, "max_tokens": 16000 if role is AgentRole.DEVELOPER else 4096,
                     "reasoning": {"effort": "low", "exclude": True},
-                } if selection.provider == "openrouter" else {})
+                } if selection.provider == "openrouter" else {
+                    "max_tokens": min(
+                        16000 if role is AgentRole.DEVELOPER else 4096,
+                        _OUTPUT_TOKEN_LIMIT.get(selection.provider, 16000),
+                    ),
+                } if selection.provider in _EXPLICIT_OUTPUT_BUDGET else {})
                 response = client.post(
                     endpoint,
                     headers={
@@ -398,11 +564,14 @@ class CloudModelRuntime:
                 )
                 response.raise_for_status()
                 payload = response.json()
+                relayed = payload.get("error") if isinstance(payload, dict) else None
+                if "choices" not in payload and isinstance(relayed, dict) and type(relayed.get("code")) is int:
+                    raise _ProviderReportedError(relayed["code"])
                 if payload["choices"][0].get("finish_reason") == "length":
                     raise _IncompleteOutput("model output reached its token limit")
                 raw = payload["choices"][0]["message"]["content"]
                 usage = payload.get("usage")
-            artifact = type(candidate).model_validate_json(raw)
+            artifact = type(candidate).model_validate_json(_json_payload(raw))
             if not _preserves_governed_facts(candidate.model_dump(mode="json"), artifact):
                 raise _GovernedContradiction(candidate_dict, artifact)
             remediation_error = _ineffective_remediation_error(
@@ -442,7 +611,7 @@ class CloudModelRuntime:
                 structured_output_success=False, error=error,
                 http_status=status, error_category=category, retryable=retryable,
             )
-            self.attempts.append(info)
+            self._remember(info)
             if self.trace is not None:
                 self.trace.record(
                     f"{role.value} cloud {'primary' if self.primary else 'fallback'}",
@@ -460,13 +629,22 @@ class CloudModelRuntime:
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
             contradiction = isinstance(exc, _GovernedContradiction)
             ineffective = isinstance(exc, _IneffectiveRemediation)
+            relayed_category = (
+                _http_category(exc.code)[0] if isinstance(exc, _ProviderReportedError) else None
+            )
             detail = (
+                f"{relayed_category} (provider error {exc.code})"
+                if relayed_category else
+                f"target plan rejected: {exc.reason}"
+                if contradiction and exc.reason else
                 f"governed fields differ: {', '.join(exc.fields)}"
                 if contradiction else
                 "unchanged developer remediation"
                 if ineffective else
                 "schema validation: " + ", ".join(sorted({e["type"] for e in exc.errors(include_input=False)}))
-                if isinstance(exc, ValidationError) else type(exc).__name__
+                if isinstance(exc, ValidationError) else
+                _missing_response_field_detail(exc)
+                if isinstance(exc, KeyError) else type(exc).__name__
             )
             error = (
                 "LLM_QUALITY_ERROR: unchanged developer remediation"
@@ -481,14 +659,16 @@ class CloudModelRuntime:
                 degraded=True,
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 structured_output_success=False, error=error,
-                error_category=("governed_contradiction" if contradiction else
-                                "ineffective_remediation" if ineffective else
-                                "incomplete_output" if isinstance(exc, _IncompleteOutput) else
-                                "timeout" if isinstance(exc, httpx.TimeoutException) else
-                                "schema_validation" if isinstance(exc, ValidationError) else "invalid_response"),
+                error_category=relayed_category or (
+                    "governed_contradiction" if contradiction else
+                    "ineffective_remediation" if ineffective else
+                    "incomplete_output" if isinstance(exc, _IncompleteOutput) else
+                    "timeout" if isinstance(exc, httpx.TimeoutException) else
+                    "schema_validation" if isinstance(exc, ValidationError) else "invalid_response"
+                ),
                 retryable=True,
             )
-            self.attempts.append(info)
+            self._remember(info)
             if self.trace is not None:
                 self.trace.record(
                     f"{role.value} cloud {'primary' if self.primary else 'fallback'}",
@@ -497,12 +677,20 @@ class CloudModelRuntime:
                     status_message=error,
                 )
             if _attempt + 1 < len(chain):
-                return self.invoke_artifact(
-                    role, envelope, candidate, fallback_reason=fallback_reason,
-                    _attempt=_attempt + 1,
-                    _deadline=deadline,
-                )
-            raise RuntimeError(error) from exc
+                try:
+                    return self.invoke_artifact(
+                        role, envelope, candidate, fallback_reason=fallback_reason,
+                        _attempt=_attempt + 1,
+                        _deadline=deadline,
+                    )
+                except RuntimeError as fallback_error:
+                    # A later failure otherwise chains this unsanitized KeyError.
+                    if isinstance(exc, KeyError):
+                        raise fallback_error from None
+                    raise
+            # Keep arbitrary KeyError arguments out of rendered tracebacks too.
+            cause = None if isinstance(exc, KeyError) else exc
+            raise RuntimeError(error) from cause
         finally:
             if owns_client:
                 client.close()
@@ -518,7 +706,7 @@ class CloudModelRuntime:
             latency_ms=int((time.perf_counter() - started) * 1000), usage=usage,
             structured_output_success=True,
         )
-        self.attempts.append(info)
+        self._remember(info)
         if self.trace is not None:
             self.trace.record(
                 f"{role.value} cloud {'primary' if self.primary else 'fallback'}",

@@ -15,6 +15,7 @@ from engineering_team.agents.security import SecurityAgent
 from engineering_team.contracts.enums import ActionMode, AgentRole, ToolStatus
 from engineering_team.contracts.models import ImplementationResult, ToolResult
 from engineering_team.contracts.state import EngineeringState
+from engineering_team.mcp.quality import CompositeQuality
 from engineering_team.models.context import build_context
 from engineering_team.stacks import profile_for
 
@@ -33,7 +34,12 @@ def _reviewed(
         duration_ms=1,
         output_summary="CVE-2026-41115 kafka-clients, CVE-2026-75838 swagger-ui",
         scans_dependencies=scans_dependencies,
+        confirmed_dependency_findings=scans_dependencies,
     )
+    return _review_result(tool, changed_files)
+
+
+def _review_result(tool: ToolResult, changed_files: list[str]):
     state = EngineeringState(
         run_id="r",
         requirement="Reject nonpositive quantity",
@@ -80,6 +86,73 @@ def test_a_linter_under_the_same_tool_name_is_never_held_as_baseline() -> None:
 
 
 @pytest.mark.parametrize(
+    "ruff_status, changed_files, expected",
+    [
+        (ToolStatus.SUCCESS, ["app/routes.py"], "PASS"),
+        (ToolStatus.FAIL, ["app/routes.py"], "FAIL"),
+        (ToolStatus.SUCCESS, ["client/package-lock.json"], "FAIL"),
+    ],
+)
+def test_mixed_security_scan_preserves_the_failing_component_scope(
+    ruff_status: ToolStatus, changed_files: list[str], expected: str,
+) -> None:
+    def component(name: str, status: ToolStatus, dependencies: bool) -> ToolResult:
+        return ToolResult(
+            tool_name="run_security_scan", allowed_role=AgentRole.SECURITY,
+            status=status, input_summary=name, duration_ms=1,
+            output_summary="dependency vulnerability" if dependencies else "ruff scan",
+            evidence_reference=f"mcp://quality/run_security_scan#{name}",
+            scans_dependencies=dependencies,
+            confirmed_dependency_findings=dependencies,
+        )
+
+    aggregate = CompositeQuality._aggregate(
+        "run_security_scan", AgentRole.SECURITY,
+        [component("python", ruff_status, False), component("client", ToolStatus.FAIL, True)],
+    )
+    reviewed = _review_result(aggregate, changed_files)
+
+    assert aggregate.status is ToolStatus.FAIL
+    assert reviewed.status.value == expected
+    assert [finding.category for finding in reviewed.findings] == [
+        "baseline dependencies" if expected == "PASS" else "security tooling"
+    ]
+    if expected == "PASS":
+        assert "dependency vulnerability" in reviewed.findings[0].description
+
+
+@pytest.mark.parametrize("status", [ToolStatus.UNAVAILABLE, ToolStatus.DENIED])
+@pytest.mark.parametrize("aggregate_components", [False, True])
+@pytest.mark.parametrize(
+    "tool_name, scans_dependencies",
+    [("run_security_scan", True), ("scan_dependencies", False)],
+)
+def test_missing_dependency_validation_cannot_become_baseline_risk(
+    status: ToolStatus, tool_name: str, scans_dependencies: bool,
+    aggregate_components: bool,
+) -> None:
+    unavailable = ToolResult(
+        tool_name=tool_name, allowed_role=AgentRole.SECURITY, status=status,
+        input_summary="client", duration_ms=1, output_summary="validation did not execute",
+        scans_dependencies=scans_dependencies,
+    )
+    if aggregate_components:
+        ruff = unavailable.model_copy(update={
+            "input_summary": "python", "status": ToolStatus.SUCCESS,
+            "scans_dependencies": False, "output_summary": "ruff scan passed",
+        })
+        unavailable = CompositeQuality._aggregate(
+            tool_name, AgentRole.SECURITY, [ruff, unavailable],
+        )
+        assert unavailable.status is status
+        assert unavailable.scans_dependencies is False
+    reviewed = _review_result(unavailable, ORDER)
+
+    assert reviewed.status.value == "FAIL"
+    assert [finding.category for finding in reviewed.findings] == ["security tooling"]
+
+
+@pytest.mark.parametrize(
     "stack, expected",
     [
         ("python", ("dependency",)),
@@ -100,3 +173,17 @@ def test_only_python_reports_its_own_code_from_the_security_phase(
     rule derived from the fifth.
     """
     assert profile_for(stack).dependency_scan_phases == expected
+
+
+@pytest.mark.parametrize("tool_name", ["scan_dependencies", "get_security_report", "run_security_scan"])
+@pytest.mark.parametrize("aggregate", [False, True])
+def test_unconfirmed_failure_never_becomes_baseline(tool_name: str, aggregate: bool) -> None:
+    failed = ToolResult(
+        tool_name=tool_name, allowed_role=AgentRole.SECURITY, status=ToolStatus.FAIL,
+        input_summary="client", output_summary="unexpected installation failure",
+        duration_ms=1, scans_dependencies=True,
+    )
+    if aggregate:
+        success = failed.model_copy(update={"status": ToolStatus.SUCCESS, "scans_dependencies": False})
+        failed = CompositeQuality._aggregate(tool_name, AgentRole.SECURITY, [success, failed])
+    assert _review_result(failed, ORDER).status.value == "FAIL"

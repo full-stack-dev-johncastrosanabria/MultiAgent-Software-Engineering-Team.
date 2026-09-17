@@ -8,6 +8,8 @@ run really recorded. A dimension with no matching evidence is reported empty; it
 never filled with a placeholder.
 """
 
+import re
+
 from engineering_team.contracts.enums import ToolStatus
 from engineering_team.contracts.models import TestResult, ToolResult
 from engineering_team.models.context import ContextEnvelope
@@ -43,11 +45,22 @@ _MARKERS: dict[str, tuple[str, ...]] = {
     "security": (
         "authoriz", "autoriz", "permission", "permiso", "token", "expire", "expira",
         "owner", "dueñ", "propiedad", "session", "sesión", "sesion", "credential",
-        "credencial", "password", "contraseñ", "lock", "bloque", "attempt", "intento",
+        "credencial", "password", "contraseñ", "lock", "bloque",
         "enumerat", "enumerac", "single use", "un solo uso", "ajen", "idor",
     ),
     "business_rule": (),  # filled from the specification's own business rules
 }
+
+
+# An attempt is a security matter when it is a failed, repeated or login attempt
+# ("five failed attempts", "maximumConsecutiveAttempts", "intentos fallidos"), not
+# when an operation merely tries something: "before attempting to store the
+# resource" made spring-demo require security coverage no test could give.
+_SECURITY_ATTEMPT = re.compile(
+    r"(?:failed|consecutive|repeated|login|sign.?in|authentication|password)\W*(?:\w+\W+){0,2}attempt"
+    r"|intentos?\W*(?:\w+\W+){0,1}(?:fallid|consecutiv|de acceso|de inicio|de sesi)"
+    r"|(?:fallid|consecutiv)\w*\W*intentos?"
+)
 
 
 def _normalise(text: object) -> str:
@@ -72,6 +85,8 @@ def _business_terms(rules: list[str]) -> tuple[str, ...]:
 def _categories_for(text: str, business_terms: tuple[str, ...]) -> set[str]:
     """Every dimension one sentence or test identifier speaks to."""
     found = {name for name, markers in _MARKERS.items() if any(m in text for m in markers)}
+    if _SECURITY_ATTEMPT.search(text):
+        found.add("security")
     if business_terms and any(term in text for term in business_terms):
         found.add("business_rule")
     return found
