@@ -51,6 +51,7 @@ from engineering_team.repository_evidence import (
 )
 
 from .routers import (
+    classify_stop_cause,
     code_unchanged_since_earlier_rejection,
     failure_repetitions,
     rejection_record,
@@ -98,6 +99,7 @@ class WorkflowState(TypedDict, total=False):
     route_history: list
     final_report: object
     human_decision: str
+    stop_cause: str
 
 
 def _visit(role: str):
@@ -950,11 +952,17 @@ def build_engineering_graph(
     def final_node(raw_state: dict[str, Any]) -> dict[str, Any]:
         state = EngineeringState.model_validate(raw_state)
         report = _report(state, "APPROVED")
+        # An approved run never passes through `human_node`, so naming the cause
+        # only there would leave `stop_cause` empty for every run that succeeded
+        # -- and a field that is only populated on failure is one more thing a
+        # consumer has to infer rather than read.
+        cause = classify_stop_cause(state, max_iterations=max_remediation_iterations)
         if trace is not None:
             trace.finish(report.model_dump(mode="json"))
         return {
             "route_history": [*state.route_history, "FinalReport"],
             "final_status": "APPROVED", "final_report": report,
+            "stop_cause": cause.value,
         }
 
     def human_node(raw_state: dict[str, Any], name: str = "HUMAN_REVIEW_REQUIRED") -> dict[str, Any]:
@@ -978,13 +986,22 @@ def build_engineering_graph(
                     "human_decision": human_decision,
                 }
         report = _report(state, "HUMAN_REVIEW_REQUIRED")
+        # The decision to stop was taken upstream; this only names it, once,
+        # while the typed evidence is still here. Everything downstream reads
+        # the name instead of guessing at the last error's wording.
+        cause = classify_stop_cause(state, max_iterations=max_remediation_iterations)
         if trace is not None:
-            trace.record(name, metadata={"iteration": state.iteration, "hitl": True})
+            trace.record(
+                name,
+                metadata={
+                    "iteration": state.iteration, "hitl": True, "stop_cause": cause.value,
+                },
+            )
             trace.finish(report.model_dump(mode="json"))
         return {
             "route_history": [*state.route_history, name], "human_review_required": True,
             "final_status": "HUMAN_REVIEW_REQUIRED", "final_report": report,
-            "human_decision": human_decision,
+            "human_decision": human_decision, "stop_cause": cause.value,
         }
 
     graph.add_node("FinalReport", final_node)

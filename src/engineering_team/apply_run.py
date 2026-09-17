@@ -647,6 +647,7 @@ def run_on_project(
         "project_path": str(project_root),
         "cloud_first": cloud_first,
         "final_status": state.get("final_status"),
+        "stop_cause": state.get("stop_cause"),
         "route_history": state.get("route_history", []),
         "iterations": state.get("iteration", 0),
         "duration_seconds": duration,

@@ -68,3 +68,27 @@ class ErrorCode(StrEnum):
     # thing -- the misleading headline finding 7 describes.
     INFRASTRUCTURE_ERROR = "INFRASTRUCTURE_ERROR"
     AGENT_TIMEOUT = "AGENT_TIMEOUT"
+
+
+class StopCause(StrEnum):
+    # Why a run stopped, named once by the graph from its own typed state.
+    # The audit had to reconstruct this afterwards from the last error's text,
+    # which is how a refused answer came to be reported as a provider outage.
+    # One vocabulary, defined here, so the graph and the scorer cannot drift.
+    APPROVED = "approved"
+    PROVIDER_CHAIN_EXHAUSTED = "provider_chain_exhausted"
+    ITERATION_LIMIT = "iteration_limit"
+    STAGNATION = "stagnation"
+    MCP_UNAVAILABLE = "mcp_unavailable"
+    # The provider answered and this system refused the content: a governed
+    # contradiction, a rejected target plan, a truncated generation. Folding
+    # these into PROVIDER_CHAIN_EXHAUSTED is exactly the A-09 defect -- one in
+    # four "chain unavailable" events in the 2026-09-16 campaign was ours.
+    LLM_QUALITY_REJECTED = "llm_quality_rejected"
+    # Same name apply_run.py already gives this outcome in its evidence dict.
+    DESTRUCTIVE_AUTHORIZATION_BLOCKED = "destructive_authorization_blocked"
+    WRITE_FAILED = "write_failed"
+    # Never produced inside the graph: a crashed run never reaches the node
+    # that names its cause. It exists for the scorer, which sees the exit code.
+    CRASH = "crash"
+    UNKNOWN = "unknown"

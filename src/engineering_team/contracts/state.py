@@ -72,3 +72,11 @@ class EngineeringState(StrictModel):
     route_history: list[str] = Field(default_factory=list)
     final_report: FinalReport | None = None
     human_decision: str | None = None
+    stop_cause: str | None = None
+    """Why the run stopped, as a `StopCause` value; None until it stops.
+
+    Kept as the string rather than the enum for the same reason `final_status`
+    is: this collection is serialized into run evidence and read back from JSON
+    by tools that never import the contracts. The vocabulary still lives in one
+    place -- `StopCause` -- and the graph is the only thing that writes here.
+    """

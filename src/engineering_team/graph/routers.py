@@ -4,14 +4,22 @@ import hashlib
 import re
 
 from engineering_team.contracts.enums import (
+    ActionMode,
     AgentRole,
+    ErrorCode,
     RemediationCategory,
     ReviewerStatus,
     RouteTarget,
     SecuritySeverity,
+    StopCause,
     ToolStatus,
 )
-from engineering_team.contracts.models import BASELINE_RISK_PREFIX, ReviewerDecision, ToolResult
+from engineering_team.contracts.models import (
+    BASELINE_RISK_PREFIX,
+    ModelExecutionInfo,
+    ReviewerDecision,
+    ToolResult,
+)
 from engineering_team.contracts.state import EngineeringState
 
 _ALLOWED_REJECTED_TARGETS = {RouteTarget.ARCHITECTURE, RouteTarget.DEVELOPER}
@@ -106,6 +114,23 @@ def rejection_record(
     }
 
 
+def remediation_target_is_consistent(decision: ReviewerDecision) -> bool:
+    """Whether a rejection names a remediation route this graph is willing to take.
+
+    Shared with `classify_stop_cause` rather than restated there: both have to
+    agree on which rejections stop the run before stagnation is ever considered,
+    and a second copy of this rule would drift from the routing it describes.
+    """
+    if decision.return_to not in _ALLOWED_REJECTED_TARGETS:
+        return False
+    expected = (
+        RouteTarget.ARCHITECTURE
+        if decision.remediation_category is RemediationCategory.ARCHITECTURE
+        else RouteTarget.DEVELOPER
+    )
+    return decision.remediation_category is not None and decision.return_to is expected
+
+
 def review_route(
     decision: ReviewerDecision,
     iteration: int,
@@ -120,14 +145,7 @@ def review_route(
         raise ValueError("max_iterations must be positive")
     if iteration >= max_iterations:
         return "HUMAN_REVIEW_REQUIRED"
-    if decision.return_to not in _ALLOWED_REJECTED_TARGETS:
-        return "HUMAN_REVIEW_REQUIRED"
-    expected = (
-        RouteTarget.ARCHITECTURE
-        if decision.remediation_category is RemediationCategory.ARCHITECTURE
-        else RouteTarget.DEVELOPER
-    )
-    if decision.remediation_category is None or decision.return_to is not expected:
+    if not remediation_target_is_consistent(decision):
         return "HUMAN_REVIEW_REQUIRED"
     if unchanged_code and repeated_failures >= 2:
         return "HUMAN_REVIEW_REQUIRED"
@@ -138,3 +156,139 @@ def review_route(
 
 def security_route(severity: SecuritySeverity) -> str:
     return "security_hitl" if severity is SecuritySeverity.CRITICAL else "Testing"
+
+
+_WRITE_TOOLS = frozenset({"create_file", "update_file"})
+
+_CONTENT_REJECTION_CATEGORIES = frozenset({
+    "governed_contradiction",
+    "ineffective_remediation",
+    "incomplete_output",
+    "schema_validation",
+})
+"""`ModelExecutionInfo.error_category` values that mean the answer was refused.
+
+The provider replied and this system rejected what it said. The graph cannot
+tell these apart from an outage by error code alone: `cloud.py` raises every one
+of them as `CLOUD_FALLBACK_UNAVAILABLE`, so the only typed record of what really
+happened is the category the runtime stamped on the attempt.
+"""
+
+
+def _stagnated(state: EngineeringState) -> bool:
+    """The two stagnation conditions `review_route` uses, read back from state."""
+    repeated = failure_repetitions(state.failure_fingerprints)
+    return repeated >= 3 or (
+        code_unchanged_since_earlier_rejection(state.applied_diff_fingerprints)
+        and repeated >= 2
+    )
+
+
+def _last_failed_generation(state: EngineeringState) -> ModelExecutionInfo | None:
+    """The most recent model attempt that produced no artifact."""
+    return next((item for item in reversed(state.model_usage) if item.error), None)
+
+
+def _content_was_rejected(state: EngineeringState) -> bool:
+    """Whether the last exhausted attempt was refused for what it said.
+
+    `governed_fields_diff` and `violated_rule` are only ever set on a governed
+    contradiction, so their presence is proof on its own; `error_category`
+    covers the truncated and schema-invalid generations, which name no field.
+    """
+    info = _last_failed_generation(state)
+    if info is None:
+        return False
+    return (
+        info.governed_fields_diff is not None
+        or info.violated_rule is not None
+        or info.error_category in _CONTENT_REJECTION_CATEGORIES
+    )
+
+
+def _write_attempt_failed(state: EngineeringState) -> bool:
+    """Whether a write tool ran and did not succeed."""
+    return any(
+        item.tool_name in _WRITE_TOOLS and item.status is not ToolStatus.SUCCESS
+        for item in state.tool_results
+    )
+
+
+def _authored_changes_were_never_written(state: EngineeringState) -> bool:
+    """Whether the run holds applied file contents no write tool ever saw.
+
+    The destructive-change guardrail refuses before the write loop, so it is the
+    one stop that ends with an APPLIED implementation and no write evidence at
+    all. It and a failed write share `ErrorCode.TOOL_ERROR`, and the tool record
+    is the only typed thing that separates them.
+    """
+    implementation = state.implementation
+    return (
+        implementation is not None
+        and implementation.action_mode is ActionMode.APPLIED
+        and bool(implementation.file_contents)
+        and not any(item.tool_name in _WRITE_TOOLS for item in state.tool_results)
+    )
+
+
+def classify_stop_cause(state: EngineeringState, *, max_iterations: int) -> StopCause:
+    """Name why this run stopped, from the typed evidence the graph already has.
+
+    Called once, from `human_node`, after the graph has decided to stop. It never
+    re-decides: where `review_route` made the call it is read back in that same
+    order, and everywhere else the stopping node's own `WorkflowError` says so.
+    Reconstructing this afterwards from error prose is what made the audit report
+    refused answers as provider outages.
+
+    `max_iterations` is a parameter rather than a state field because the
+    remediation budget is configuration, not evidence: it belongs to
+    `build_engineering_graph`, inside whose closure `human_node` already has it.
+    """
+    if not state.human_review_required:
+        # No node recorded a failure, so the stop came from the routers.
+        if state.review is None:
+            # `security_hitl`: the Reviewer never ran, so `review_route` never
+            # decided anything. A critical security finding has no word in this
+            # vocabulary yet, and borrowing one would be worse than saying so.
+            return StopCause.UNKNOWN
+        if state.review.status is ReviewerStatus.APPROVED:
+            return StopCause.APPROVED
+        # From here on the order is `review_route`'s own, because a run that met
+        # several of these conditions was stopped by the first one it met.
+        if state.iteration >= max_iterations:
+            return StopCause.ITERATION_LIMIT
+        if not remediation_target_is_consistent(state.review):
+            # `review_route` stops on a self-contradicting rejection *before* it
+            # looks at stagnation. Reading stagnation first would report a run
+            # that was never given a remediation route as one that spun.
+            return StopCause.UNKNOWN
+        if _stagnated(state):
+            return StopCause.STAGNATION
+        return StopCause.UNKNOWN
+    if not state.errors:
+        # Every path that raises the flag appends a `WorkflowError` first, so an
+        # empty list means an unrecorded one -- surfaced, not guessed at.
+        return StopCause.UNKNOWN
+    last = state.errors[-1]
+    if last.code is ErrorCode.MCP_ERROR:
+        return StopCause.MCP_UNAVAILABLE
+    if last.code is ErrorCode.TOOL_ERROR:
+        if _authored_changes_were_never_written(state):
+            return StopCause.DESTRUCTIVE_AUTHORIZATION_BLOCKED
+        if _write_attempt_failed(state):
+            return StopCause.WRITE_FAILED
+        return StopCause.UNKNOWN
+    if last.code is ErrorCode.LLM_QUALITY_ERROR:
+        return StopCause.LLM_QUALITY_REJECTED
+    if last.code is ErrorCode.CLOUD_FALLBACK_UNAVAILABLE:
+        # This code says the chain ran out, not why it was entered, and
+        # `cloud.py` raises it for refused content too. Two typed signals
+        # recover the difference: the graph copies the local failure's
+        # retryability onto this error, and only a quality failure is
+        # unretryable; and the attempt itself recorded what the cloud refused.
+        if not last.retryable or _content_was_rejected(state):
+            return StopCause.LLM_QUALITY_REJECTED
+        return StopCause.PROVIDER_CHAIN_EXHAUSTED
+    if last.code in {ErrorCode.LLM_AVAILABILITY_ERROR, ErrorCode.AGENT_TIMEOUT}:
+        return StopCause.PROVIDER_CHAIN_EXHAUSTED
+    return StopCause.UNKNOWN
