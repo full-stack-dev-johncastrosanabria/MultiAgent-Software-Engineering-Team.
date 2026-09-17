@@ -6,7 +6,9 @@ Este índice responde dónde mirar y cómo verificar. El [estado](status.md) con
 |---|---|---|
 | Cambiar la CLI o ejecutar sobre un proyecto | [CLI](../src/engineering_team/cli.py), [apply_run](../src/engineering_team/apply_run.py) | [Entrega desde runs](../tests/unit/test_apply_run_delivery.py), [selección de calidad](../tests/unit/test_apply_quality_profiles.py) |
 | Entender etapas y retornos de revisión | [StateGraph](../src/engineering_team/graph/stategraph.py) | [Workflow](../tests/integration/test_workflow.py) |
-| Ajustar modelos y contexto | [LLM](../src/engineering_team/llm/), [evidencia](../src/engineering_team/repository_evidence.py) | [Prompts](../tests/unit/test_prompts.py), [runtime](../tests/unit/test_model_runtime.py), [grounding](../tests/unit/test_architecture_grounding.py) |
+| Ajustar modelos y contexto | [LLM](../src/engineering_team/llm/), [cadenas y proveedores](../src/engineering_team/llm/cloud.py), [salud de modelos](../src/engineering_team/llm/model_health.py), [evidencia](../src/engineering_team/repository_evidence.py) | [Prompts](../tests/unit/test_prompts.py), [runtime](../tests/unit/test_model_runtime.py), [grounding](../tests/unit/test_architecture_grounding.py), [cloud runtime](../tests/unit/test_cloud_runtime.py), [fallback](../tests/unit/test_cloud_fallback.py), [salud de modelos](../tests/unit/test_model_health.py) |
+| Cambiar qué archivos puede tocar Developer o qué sabe del stack | [Plan de destinos](../src/engineering_team/contracts/developer_plan.py), [hechos del proyecto](../src/engineering_team/project_facts.py) | [Plan](../tests/unit/test_developer_target_plan.py), [hechos](../tests/unit/test_project_facts.py) |
+| Cambiar la ejecución de toolchains node o el alcance de suites | [Volumen nativo](../src/engineering_team/mcp/workspace_runner.py), [alcance de tests](../src/engineering_team/mcp/test_scope.py) | [Runner](../tests/mcp/test_workspace_runner.py), [aplicabilidad](../tests/unit/test_test_applicability.py) |
 | Cambiar recuperación documental | [RAG](../src/engineering_team/rag/), [corpus de entrada](../knowledge/) | [RAG tests](../tests/rag/) |
 | Cambiar herramientas o perfiles de stack | [MCP](../src/engineering_team/mcp/), [perfiles](../src/engineering_team/stacks.py) | [MCP tests](../tests/mcp/), [perfiles](../tests/unit/test_stack_profiles.py) |
 | Cambiar preparación de servicios | [Servicios](../src/engineering_team/services.py) | [Servicios tests](../tests/unit/test_services.py) |
@@ -31,5 +33,7 @@ Este índice responde dónde mirar y cómo verificar. El [estado](status.md) con
 - [Testing](testing.md): comprobaciones y requisitos.
 - [Estado](status.md): evidencia, pendientes y zona de no recrear.
 - [Historia](history.md): decisiones documentales y retiros.
+
+Las auditorías fechadas son evidencia de una revisión puntual, no propietarias de hechos vigentes: lo que siga siendo cierto se traslada a su propietario. La [auditoría del 2026-09-16](audit160926/README.md) mide ASET contra «Building effective agents» de Anthropic y la guía de Harness Engineering, e incluye registro de hallazgos y plan de remediación.
 
 Las reglas para agentes están en [AGENTS.md](../AGENTS.md). El [archivo histórico](deprecated/README.md) se consulta explícitamente, nunca como paso habitual de navegación.

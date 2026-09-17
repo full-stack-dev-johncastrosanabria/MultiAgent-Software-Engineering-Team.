@@ -24,10 +24,11 @@ herramientas MCP producen evidencia dentro de un espacio de trabajo aislado.
 | Ruta | Contiene | Propietario documental |
 |---|---|---|
 | `src/engineering_team/` | El paquete: CLI, grafo, agentes, LLM, RAG, MCP, contratos, entrega | [Arquitectura](docs/architecture/overview.md) |
-| `src/engineering_team/prompts/` | Un `system.md` por rol, cargado en ejecución | Recurso del programa, no documentación |
+| `src/engineering_team/prompts/` | Un `system.md` por rol, cargado en ejecución por `llm/prompting.py` (Testing y Reviewer no invocan modelo, así que el suyo no se envía). Los seis `user.md` no se cargan: el mensaje de usuario se construye en código | Recurso del programa, no documentación |
 | `tests/` | `unit/`, `mcp/`, `graph/`, `integration/`, `e2e/`, `rag/` | [Pruebas](docs/testing.md) |
 | `docs/` | Documentación activa y archivo histórico | [Mapa](docs/README.md) |
 | `docs/architecture/` | Diseño implementado y decisiones aceptadas | [Arquitectura](docs/architecture/overview.md) |
+| `docs/audit160926/` | Auditoría fechada del 2026-09-16: hallazgos, métricas y plan; sus `anexos/` son papeles de trabajo | [Mapa](docs/README.md); lo vigente pasa a su propietario |
 | `evaluation/` | Escenarios, benchmarks y reportes por ejecución | [Estado](docs/status.md) |
 | `demo-projects/` | Proyectos objetivo de demo y evaluación | [Operaciones](docs/operations.md) |
 | `frontend/` | Interfaz React + Vite sobre la Run API | [Operaciones](docs/operations.md) |
