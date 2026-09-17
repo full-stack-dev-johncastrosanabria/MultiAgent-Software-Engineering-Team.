@@ -599,11 +599,6 @@ def build_engineering_graph(
                     # Calling a model here adds latency without improving the result.
                     output = candidate
                 elif model_runtime is not None:
-                    rotate = getattr(model_runtime, "rotate_chain", None)
-                    if role is AgentRole.DEVELOPER and callable(rotate):
-                        # First pass and first remediation use the chain as ordered;
-                        # every later remediation starts one model further along.
-                        rotate(role, max(0, current.iteration - 1))
                     for stage_attempt in range(model_stage_retries + 1):
                         attempt_start = len(model_runtime.attempts)
                         try:

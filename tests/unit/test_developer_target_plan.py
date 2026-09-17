@@ -358,26 +358,6 @@ def test_a_plan_that_writes_nothing_is_still_refused():
                              all_paths=set(PATHS))
 
 
-def test_later_remediation_rotates_the_developer_model_chain(tmp_path):
-    """The same model repeated one compile error for five iterations; a later
-    remediation starts with the next model instead."""
-    class RotatingRuntime(NaturalRuntime):
-        def __init__(self):
-            super().__init__()
-            self.rotations = []
-
-        def rotate_chain(self, role, offset):
-            self.rotations.append((role, offset))
-
-    runtime = RotatingRuntime()
-    graph = build_engineering_graph(repository_mcp=setup_repository(tmp_path), model_runtime=runtime)
-    graph.nodes["Developer"].invoke({
-        "run_id": "rotation", "requirement": REQUIREMENT, "iteration": 3,
-        "repository_context": {"apply_changes": True, "authorized": True},
-    })
-    assert runtime.rotations and set(runtime.rotations) == {(AgentRole.DEVELOPER, 2)}
-
-
 def test_a_new_production_source_beside_existing_sources_is_allowed():
     """spring-demo apply-5f7b9e7e: authors referenced InvalidProductNameException,
     a class the plan contract would not let them create, and compilation failed."""
