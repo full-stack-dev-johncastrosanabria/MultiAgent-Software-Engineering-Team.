@@ -208,6 +208,21 @@ class ModelExecutionInfo(StrictModel):
     http_status: int | None = None
     error_category: str | None = None
     retryable: bool | None = None
+    violated_rule: str | None = None
+    """The governed rule the rejected answer broke, as its validator stated it.
+
+    Set only when the rejection was a target-plan violation, whose validator
+    names the exact rule. None for every other error, including a governed
+    contradiction with no captured rule text. `error` renders the same fact as
+    one English string for humans; this is the same fact for machines, so that
+    rejections can be grouped by cause without parsing prose.
+    """
+    governed_fields_diff: list[str] | None = None
+    """The governed keys the model actually changed, sorted.
+
+    None when the failure was not a governed contradiction: a transport error
+    rejected no answer, and an empty list there would claim it did.
+    """
 
 
 class CloudFallbackContext(StrictModel):

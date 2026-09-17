@@ -60,19 +60,20 @@ class LocalModelRuntime:
         when a cloud provider is configured as the primary runtime. It is
         recorded rather than accepted and dropped: a run that fell back to local
         and reported nothing looked exactly like one that never needed to.
+
+        The reason travels into the attempt loop rather than being stamped on
+        the way out, because the attempts this runtime keeps on the failure path
+        never pass through here at all.
         """
-        artifact, info = self._invoke_schema(
-            role, envelope, type(candidate), candidate.model_dump(mode="json")
+        return self._invoke_schema(
+            role, envelope, type(candidate), candidate.model_dump(mode="json"),
+            fallback_reason=fallback_reason,
         )
-        if fallback_reason:
-            info = info.model_copy(
-                update={"fallback_used": True, "fallback_reason": fallback_reason}
-            )
-        return artifact, info
 
     def _invoke_schema(
         self, role: AgentRole, envelope: ContextEnvelope,
         schema_type: type[BaseModel], candidate: dict[str, Any],
+        *, fallback_reason: str | None = None,
     ) -> tuple[BaseModel, ModelExecutionInfo]:
         selection = self.router.local_for(role)
         output_schema = governed_output_schema(schema_type, candidate)
@@ -114,6 +115,7 @@ class LocalModelRuntime:
                 info = ModelExecutionInfo(
                     agent=role, provider="ollama", requested_model=selection.model,
                     actual_model=payload.get("model"), model_profile=selection.model_profile,
+                    fallback_used=bool(fallback_reason), fallback_reason=fallback_reason,
                     degraded=True, latency_ms=latency, structured_output_success=False,
                     error=f"{code}: {type(exc).__name__}",
                 )
@@ -140,7 +142,9 @@ class LocalModelRuntime:
                 info = ModelExecutionInfo(
                     agent=role, provider="ollama", requested_model=selection.model,
                     actual_model=payload.get("model", selection.model),
-                    model_profile=selection.model_profile, degraded=True, latency_ms=latency,
+                    model_profile=selection.model_profile,
+                    fallback_used=bool(fallback_reason), fallback_reason=fallback_reason,
+                    degraded=True, latency_ms=latency,
                     usage=usage or None, structured_output_success=False,
                     error="LLM_QUALITY_ERROR: invalid structured response",
                 )
@@ -156,7 +160,9 @@ class LocalModelRuntime:
                 info = ModelExecutionInfo(
                     agent=role, provider="ollama", requested_model=selection.model,
                     actual_model=payload.get("model", selection.model),
-                    model_profile=selection.model_profile, degraded=True,
+                    model_profile=selection.model_profile,
+                    fallback_used=bool(fallback_reason), fallback_reason=fallback_reason,
+                    degraded=True,
                     latency_ms=latency, usage=usage or None,
                     structured_output_success=False,
                     error="LLM_QUALITY_ERROR: governed artifact contradiction",
@@ -192,6 +198,8 @@ class LocalModelRuntime:
                     requested_model=selection.model,
                     actual_model=payload.get("model", selection.model),
                     model_profile=selection.model_profile,
+                    fallback_used=bool(fallback_reason),
+                    fallback_reason=fallback_reason,
                     degraded=True,
                     latency_ms=latency,
                     usage=usage or None,
@@ -221,7 +229,9 @@ class LocalModelRuntime:
             info = ModelExecutionInfo(
                 agent=role, provider="ollama", requested_model=selection.model,
                 actual_model=payload.get("model", selection.model),
-                model_profile=selection.model_profile, latency_ms=latency, usage=usage or None,
+                model_profile=selection.model_profile,
+                fallback_used=bool(fallback_reason), fallback_reason=fallback_reason,
+                latency_ms=latency, usage=usage or None,
                 structured_output_success=True,
             )
             self.outputs[role] = parsed
