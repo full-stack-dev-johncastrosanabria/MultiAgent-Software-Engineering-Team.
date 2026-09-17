@@ -151,7 +151,10 @@ huella de su clase de fallo (`remediation_fingerprint`): categoría, motivo y
 problemas sin números, porcentajes ni duraciones, y sin el riesgo residual de
 dependencias previas. La tercera vez que la misma huella aparece en la corrida,
 aunque no sea consecutiva, sale a revisión humana antes del límite; ninguna
-repetición se envía a Architecture. La
+repetición se envía a Architecture. Si además el rechazo deja exactamente el
+mismo diff que un rechazo anterior, la segunda aparición de esa clase de fallo
+ya sale a revisión humana: repetir código que no cambió no puede cambiar el
+resultado. La
 [auditoría del 2026-09-16](../audit160926/README.md) midió el bucle que esta
 regla corrige. Los predicados y límites exactos viven en el grafo y en sus
 [tests de enrutado](../../tests/graph/test_routers.py) y

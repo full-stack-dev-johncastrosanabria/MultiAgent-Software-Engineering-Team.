@@ -4,12 +4,15 @@ import hashlib
 import re
 
 from engineering_team.contracts.enums import (
+    AgentRole,
     RemediationCategory,
     ReviewerStatus,
     RouteTarget,
     SecuritySeverity,
+    ToolStatus,
 )
-from engineering_team.contracts.models import BASELINE_RISK_PREFIX, ReviewerDecision
+from engineering_team.contracts.models import BASELINE_RISK_PREFIX, ReviewerDecision, ToolResult
+from engineering_team.contracts.state import EngineeringState
 
 _ALLOWED_REJECTED_TARGETS = {RouteTarget.ARCHITECTURE, RouteTarget.DEVELOPER}
 _HEX = re.compile(r"0x[0-9a-f]+")
@@ -58,12 +61,58 @@ def failure_repetitions(fingerprints: list[str]) -> int:
     return fingerprints.count(fingerprints[-1])
 
 
+def applied_diff_fingerprint(tool_results: list[ToolResult]) -> str:
+    """Identity of the code a cycle left in the workspace; empty when unknown.
+
+    get_diff is cumulative, so its latest successful Developer result describes the
+    whole change the Reviewer just rejected.
+    """
+    latest = next(
+        (
+            item
+            for item in reversed(tool_results)
+            if item.tool_name == "get_diff"
+            and item.allowed_role is AgentRole.DEVELOPER
+            and item.status is ToolStatus.SUCCESS
+        ),
+        None,
+    )
+    if latest is None or not latest.output_summary.strip():
+        return ""
+    return hashlib.sha256(latest.output_summary.encode("utf-8")).hexdigest()[:20]
+
+
+def code_unchanged_since_earlier_rejection(fingerprints: list[str]) -> bool:
+    """Whether the latest rejected cycle left exactly the code an earlier one did.
+
+    Retrying code that did not change cannot change the outcome.
+    """
+    if not fingerprints or not fingerprints[-1]:
+        return False
+    return fingerprints[-1] in fingerprints[:-1]
+
+
+def rejection_record(
+    state: EngineeringState, decision: ReviewerDecision
+) -> dict[str, list[str]]:
+    """What a rejection appends to the run's memory of its failures."""
+    return {
+        "failure_fingerprints": [
+            *state.failure_fingerprints, remediation_fingerprint(decision)
+        ],
+        "applied_diff_fingerprints": [
+            *state.applied_diff_fingerprints, applied_diff_fingerprint(state.tool_results)
+        ],
+    }
+
+
 def review_route(
     decision: ReviewerDecision,
     iteration: int,
     *,
     max_iterations: int = 3,
     repeated_failures: int = 1,
+    unchanged_code: bool = False,
 ) -> str:
     if decision.status is ReviewerStatus.APPROVED:
         return "FinalReport"
@@ -79,6 +128,8 @@ def review_route(
         else RouteTarget.DEVELOPER
     )
     if decision.remediation_category is None or decision.return_to is not expected:
+        return "HUMAN_REVIEW_REQUIRED"
+    if unchanged_code and repeated_failures >= 2:
         return "HUMAN_REVIEW_REQUIRED"
     if repeated_failures >= 3:
         return "HUMAN_REVIEW_REQUIRED"

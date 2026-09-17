@@ -51,8 +51,9 @@ from engineering_team.repository_evidence import (
 )
 
 from .routers import (
+    code_unchanged_since_earlier_rejection,
     failure_repetitions,
-    remediation_fingerprint,
+    rejection_record,
     review_route,
     security_route,
 )
@@ -83,6 +84,7 @@ class WorkflowState(TypedDict, total=False):
     model_usage: list
     iteration: int
     failure_fingerprints: list
+    applied_diff_fingerprints: list
     errors: list
     human_review_required: bool
     final_status: str
@@ -869,10 +871,7 @@ def build_engineering_graph(
                 patch["review_history"] = [*current.review_history, output]
             if role is AgentRole.REVIEWER and output.status is ReviewerStatus.REJECTED:
                 patch["iteration"] = current.iteration + 1
-                patch["failure_fingerprints"] = [
-                    *current.failure_fingerprints,
-                    remediation_fingerprint(output),
-                ]
+                patch.update(rejection_record(current, output))
                 patch["remediation_request"] = output.reason
                 patch["next_validation_path"] = (
                     "testing_only"
@@ -927,11 +926,13 @@ def build_engineering_graph(
         if state.human_review_required:
             return "HUMAN_REVIEW_REQUIRED"
         repeated_failures = failure_repetitions(state.failure_fingerprints)
+        unchanged_code = code_unchanged_since_earlier_rejection(state.applied_diff_fingerprints)
         route = review_route(
             state.review,
             state.iteration,
             max_iterations=max_remediation_iterations,
             repeated_failures=repeated_failures,
+            unchanged_code=unchanged_code,
         )
         if trace is not None:
             trace.record(
@@ -941,6 +942,7 @@ def build_engineering_graph(
                     "to": route,
                     "iteration": state.iteration,
                     "repeated_failures": repeated_failures,
+                    "unchanged_code": unchanged_code,
                 },
             )
         return route

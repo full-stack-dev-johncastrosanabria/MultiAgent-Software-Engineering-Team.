@@ -1,12 +1,18 @@
 from engineering_team.contracts.enums import (
+    AgentRole,
     RemediationCategory,
     ReviewerStatus,
     RouteTarget,
     SecuritySeverity,
+    ToolStatus,
 )
-from engineering_team.contracts.models import ReviewerDecision
+from engineering_team.contracts.models import ReviewerDecision, ToolResult
+from engineering_team.contracts.state import EngineeringState
 from engineering_team.graph.routers import (
+    applied_diff_fingerprint,
+    code_unchanged_since_earlier_rejection,
     failure_repetitions,
+    rejection_record,
     remediation_fingerprint,
     review_route,
     security_route,
@@ -118,3 +124,65 @@ def test_repetitions_count_the_whole_run_not_a_trailing_streak() -> None:
     assert failure_repetitions([]) == 0
     assert failure_repetitions(["a", "b", "a"]) == 2
     assert failure_repetitions(["a", "b", "a", "b", "a"]) == 3
+
+
+def _diff(output: str, status: ToolStatus = ToolStatus.SUCCESS) -> ToolResult:
+    return ToolResult(
+        tool_name="get_diff",
+        allowed_role=AgentRole.DEVELOPER,
+        status=status,
+        input_summary="git diff",
+        output_summary=output,
+        duration_ms=1,
+    )
+
+
+def test_the_applied_diff_fingerprint_describes_the_latest_successful_diff() -> None:
+    early = _diff("--- a/x\n+++ b/x\n+one")
+    late = _diff("--- a/x\n+++ b/x\n+two")
+
+    assert applied_diff_fingerprint([early, late]) == applied_diff_fingerprint([late])
+    assert applied_diff_fingerprint([early, late]) != applied_diff_fingerprint([early])
+    assert applied_diff_fingerprint([]) == ""
+    assert applied_diff_fingerprint([_diff("   ")]) == ""
+    assert applied_diff_fingerprint([_diff("+x", ToolStatus.FAIL)]) == ""
+
+
+def test_unchanged_code_is_claimed_only_when_an_earlier_rejection_left_the_same_diff() -> None:
+    assert code_unchanged_since_earlier_rejection(["d1", "d2", "d1"]) is True
+    assert code_unchanged_since_earlier_rejection(["d1", "d2"]) is False
+    assert code_unchanged_since_earlier_rejection(["", ""]) is False
+    assert code_unchanged_since_earlier_rejection([]) is False
+
+
+def test_the_same_code_failing_the_same_way_twice_stops_the_loop() -> None:
+    """spring-demo-dry-20260916e left an identical diff and compile error five times."""
+    decision = _rejection(
+        "failed tests require implementation remediation",
+        ["package org.springframework.boot.test.autoconfigure.web.servlet does not exist"],
+    )
+
+    assert review_route(
+        decision, iteration=2, max_iterations=5, repeated_failures=2, unchanged_code=True
+    ) == "HUMAN_REVIEW_REQUIRED"
+    assert review_route(
+        decision, iteration=2, max_iterations=5, repeated_failures=1, unchanged_code=True
+    ) == "Developer"
+
+
+def test_a_rejection_records_its_failure_class_and_the_code_it_rejected() -> None:
+    state = EngineeringState(
+        run_id="r",
+        requirement="filter products by q",
+        failure_fingerprints=["f0"],
+        applied_diff_fingerprints=["d0"],
+        tool_results=[_diff("--- a/app.py\n+++ b/app.py\n+new")],
+    )
+    decision = _rejection("failed tests require implementation remediation", ["assert 5 == 1"])
+
+    record = rejection_record(state, decision)
+
+    assert record["failure_fingerprints"] == ["f0", remediation_fingerprint(decision)]
+    assert record["applied_diff_fingerprints"] == [
+        "d0", applied_diff_fingerprint(state.tool_results)
+    ]
