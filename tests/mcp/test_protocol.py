@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import pytest
+from _docker import needs_docker
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.mcp.client import MCPQualityClient, MCPRepositoryClient
@@ -110,6 +111,7 @@ def test_repository_search_code_excludes_secret_paths_over_real_protocol(tmp_pat
     assert sentinel not in result.output_summary
 
 
+@needs_docker
 def test_quality_run_tests_executes_through_real_stdio_mcp_session(tmp_path: Path) -> None:
     _declare_interpreter(tmp_path)
     (tmp_path / "test_failure.py").write_text(

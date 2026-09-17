@@ -1,0 +1,18 @@
+#!/bin/bash
+# Regresion fijada antes de cada commit. Deliberadamente rapida: no colecta
+# tests/mcp/ salvo test_test_evidence.py, asi que NO comprueba el criterio de
+# salida del gate de Docker (eso exige `pytest tests`, ver docs/testing.md).
+#
+# `env -i` sigue haciendo falta para lo que no pasa por Settings (PYTHONPATH,
+# variables de herramientas). Lo que si pasa por Settings --- incluido el .env
+# del repositorio --- lo aisla tests/conftest.py, por eso ya no hay
+# exportaciones CLOUD_CHAIN_* ni --deselect aqui.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+env -i HOME="$HOME" PATH="$PATH" PYTHONPATH=src \
+  .venv/bin/python -m pytest \
+  tests/unit tests/graph tests/rag tests/test_run_api.py \
+  tests/integration/test_documentation.py tests/integration/test_workflow.py \
+  tests/mcp/test_test_evidence.py \
+  -p no:cacheprovider

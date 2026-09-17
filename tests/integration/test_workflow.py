@@ -2,6 +2,7 @@ from collections import deque
 
 import httpx
 import pytest
+from _docker import needs_docker
 
 from engineering_team.agents.reviewer import ReviewerAgent
 from engineering_team.agents.security import SecurityAgent
@@ -238,6 +239,7 @@ def test_failed_mcp_test_result_changes_reviewer_route_and_is_remediated():
     assert result["route_history"][-4:] == ["Developer", "Testing", "Reviewer", "FinalReport"]
 
 
+@needs_docker
 def test_real_mcp_protocol_failure_changes_reviewer_route_and_is_remediated(tmp_path):
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "safe.py").write_text("value = 1\n", encoding="utf-8")

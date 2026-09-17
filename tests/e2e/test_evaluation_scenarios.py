@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from _docker import needs_docker
+
 from engineering_team.config import Settings
 from engineering_team.contracts.models import ModelExecutionInfo
 from engineering_team.llm.router import ModelRouter
@@ -9,6 +11,7 @@ from engineering_team.observability.metrics import aggregate
 from engineering_team.rag import build_retriever
 
 
+@needs_docker
 def test_exactly_five_scenarios_execute_with_fixed_expected_outcomes(tmp_path) -> None:
     settings = Settings(_env_file=None)
     retriever = build_retriever(settings, tmp_path / "chroma", reindex=True)
@@ -83,6 +86,7 @@ class RepairRecordingRuntime(RouterRecordingRuntime):
         return super().invoke_artifact(role, envelope, candidate)
 
 
+@needs_docker
 def test_evaluation_records_model_usage_needed_by_live_aggregate(tmp_path) -> None:
     settings = Settings(_env_file=None)
     harness = EvaluationHarness(
@@ -105,6 +109,7 @@ def test_evaluation_records_model_usage_needed_by_live_aggregate(tmp_path) -> No
     assert metrics["structured_output_success"] == 4
 
 
+@needs_docker
 def test_evaluation_counts_a_successfully_repaired_local_invocation(tmp_path) -> None:
     settings = Settings(_env_file=None)
     harness = EvaluationHarness(

@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from _docker import needs_docker
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.contracts.models import ToolResult
@@ -57,6 +58,10 @@ def _patch_executor(monkeypatch, callback) -> None:
         )
 
     monkeypatch.setattr(ContainerRunner, "execute", execute)
+    # The callback above is the whole boundary: no command reaches a container,
+    # so the daemon probe is a precondition these tests never intended to
+    # depend on. Removing it does not add any path that could reach a daemon.
+    monkeypatch.setattr(ContainerRunner, "require_available", lambda self: None)
 
 
 def _base_python() -> str:
@@ -70,6 +75,7 @@ def _base_python() -> str:
     return "python"
 
 
+@needs_docker
 def test_quality_mcp_preserves_failed_test_result(tmp_path: Path) -> None:
     (tmp_path / "test_failure.py").write_text(
         "def test_fails():\n    assert False\n", encoding="utf-8"
@@ -111,6 +117,7 @@ def test_denied_quality_operation_never_starts_subprocess(tmp_path: Path, monkey
     assert result.status is ToolStatus.DENIED
 
 
+@needs_docker
 def test_quality_getter_preserves_last_real_result(tmp_path: Path) -> None:
     (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
     mcp = _quality(tmp_path, image=REAL)
@@ -523,6 +530,7 @@ def test_quality_prefers_hashed_lock_and_installs_project_without_deps(
         quality.close()
 
 
+@needs_docker
 def test_real_project_modules_cannot_shadow_quality_toolchain(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo_pkg").mkdir(parents=True)
     (tmp_path / "src" / "demo_pkg" / "__init__.py").write_text(
@@ -646,6 +654,7 @@ def test_venv_creation_is_an_interruptible_isolated_subprocess(
 
 
 
+@needs_docker
 def test_quality_tools_install_uses_the_complete_declared_lock(tmp_path: Path) -> None:
     """HIGH: --no-deps is safe only with the complete declared toolchain closure."""
     (tmp_path / "requirements.lock").write_text(
@@ -700,6 +709,7 @@ def test_missing_workspace_is_reported_without_starting_a_server(tmp_path: Path)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin TLS sandbox regression")
+@needs_docker
 def test_install_phase_can_download_over_real_pypi_tls(tmp_path: Path) -> None:
     quality = _quality(tmp_path, image=REAL, timeout_seconds=30)
     try:
@@ -845,6 +855,7 @@ def test_quality_container_contract_is_documented() -> None:
     assert "[Settings](../src/engineering_team/config.py)" in operations
 
 
+@needs_docker
 def test_ruff_config_stays_inside_the_sandboxed_project(tmp_path: Path) -> None:
     """Los demos viven dentro del repo padre. Ruff busca su configuracion
     subiendo por el arbol, llega al pyproject del padre -fuera del sandbox- y
@@ -873,6 +884,7 @@ def test_ruff_config_stays_inside_the_sandboxed_project(tmp_path: Path) -> None:
         assert result.status is not ToolStatus.UNAVAILABLE
 
 
+@needs_docker
 def test_a_project_at_the_mount_root_still_imports_its_own_modules(
     tmp_path: Path,
 ) -> None:
@@ -905,6 +917,7 @@ def test_a_project_at_the_mount_root_still_imports_its_own_modules(
         quality.close()
 
 
+@needs_docker
 def test_ruff_reads_the_project_configuration_from_inside_the_container(
     tmp_path: Path,
 ) -> None:
