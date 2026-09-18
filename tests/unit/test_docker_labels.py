@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from engineering_team import docker_labels
+from engineering_team.contracts.enums import ErrorCode
 from engineering_team.docker_labels import (
     CACHE_LIFETIME,
     OWNER_LABEL,
@@ -179,6 +180,7 @@ def test_the_sweep_leaves_the_current_run_alone(monkeypatch) -> None:
     })
     report = sweep("now")
     assert report["containers"] == ["dead"]
+    assert report["error_code"] is None
     assert ["docker", "rm", "--force", "alive"] not in runtime.removed
 
 
@@ -202,7 +204,56 @@ def test_the_sweep_keeps_a_pulled_image_and_removes_a_built_one(monkeypatch) -> 
 
 def test_the_sweep_is_a_no_op_without_a_runtime(monkeypatch) -> None:
     monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: None)
-    assert sweep("now") == {"containers": [], "networks": [], "volumes": [], "images": []}
+    assert sweep("now") == {
+        "containers": [], "networks": [], "volumes": [], "images": [],
+        "error_code": None,
+    }
+
+
+def test_the_sweep_reports_a_typed_signal_when_the_runtime_never_answers(monkeypatch) -> None:
+    """A hung daemon must not be reported the same as nothing to clean (A-13, B-11).
+
+    The stub raises `TimeoutExpired` itself -- no real sleeping involved -- so
+    this stays fast while still exercising exactly what `subprocess.run(...,
+    timeout=...)` does when a `docker` shim never returns.
+    """
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+    calls: list[tuple[list[str], float | None]] = []
+
+    def _hung(argv, **kwargs):
+        calls.append((argv, kwargs.get("timeout")))
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+
+    monkeypatch.setattr(docker_labels.subprocess, "run", _hung)
+
+    report = sweep("now", timeout=0.01)
+
+    assert report == {
+        "containers": [], "networks": [], "volumes": [], "images": [],
+        "error_code": ErrorCode.INFRASTRUCTURE_ERROR,
+    }
+    # The injected timeout reached the actual subprocess call: this test never
+    # waits anywhere close to the real 60s default.
+    assert calls[0][1] == 0.01
+
+
+def test_the_sweep_stops_at_the_first_hang_instead_of_repeating_it_per_kind(
+    monkeypatch,
+) -> None:
+    """`sweep` makes ~8 listing calls (two per resource kind); a hung runtime
+    must not be endured that many times over."""
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+    calls: list[list[str]] = []
+
+    def _hung(argv, **kwargs):
+        calls.append(argv)
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+
+    monkeypatch.setattr(docker_labels.subprocess, "run", _hung)
+
+    sweep("now", timeout=0.01)
+
+    assert len(calls) == 1
 
 
 def test_the_label_arguments_are_a_docker_command_line() -> None:

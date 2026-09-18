@@ -213,8 +213,16 @@ class _ProjectInfrastructureQuality:
 
         try:
             # The sweep runs before anything is started: what a crashed run left
-            # behind is removed now, and only what no live run owns.
-            sweep(self.run_id)
+            # behind is removed now, and only what no live run owns. A runtime
+            # that never answers is not one with nothing to clean (A-13, B-11):
+            # report it as the infrastructure failure it is instead of starting
+            # against a stack the sweep never actually looked at.
+            swept = sweep(self.run_id)
+            if swept["error_code"] is not None:
+                raise ServiceStartupError(
+                    "the pre-run Docker sweep never got an answer from the "
+                    "runtime; nothing was confirmed removed"
+                )
             self.services = ServiceStack(
                 self.root, self.run_id or str(uuid.uuid4()), project=self.project
             )

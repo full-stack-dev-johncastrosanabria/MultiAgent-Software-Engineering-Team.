@@ -44,7 +44,13 @@ def test_new_test_project_is_executed_and_closed_without_restarting_services(
     )
     monkeypatch.setattr("engineering_team.services.ServiceStack", lambda *a, **kw: services)
     monkeypatch.setattr("engineering_team.mcp.quality.QualityMCP", Backend)
-    monkeypatch.setattr(module, "sweep", lambda *a: None)
+    # A `SweepReport`, not `None`: the caller reads `["error_code"]` off this
+    # return value (A-13/B-11 -- a hung runtime must not be mistaken for a
+    # sweep that ran and found nothing), so the stub has to answer the same
+    # shape the real function does.
+    monkeypatch.setattr(module, "sweep", lambda *a: {
+        "containers": [], "networks": [], "volumes": [], "images": [], "error_code": None,
+    })
     monkeypatch.setattr(module, "detect_prerequisite", lambda *a: None)
     settings = Settings(_env_file=None, quality_run_daemon_image="")
     with open_project_quality(tmp_path, settings, timeout_seconds=30) as quality:

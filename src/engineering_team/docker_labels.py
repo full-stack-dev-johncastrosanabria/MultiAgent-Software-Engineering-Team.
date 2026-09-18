@@ -19,6 +19,9 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TypedDict
+
+from engineering_team.contracts.enums import ErrorCode
 
 OWNER = "aset"
 OWNER_LABEL = "aset.owner"
@@ -89,12 +92,49 @@ def compose_label_lines(
     return lines
 
 
-def _listed(runtime: str, arguments: list[str]) -> set[str]:
+class RuntimeUnresponsive(Exception):
+    """`docker` (or whichever runtime was named) did not answer in time.
+
+    Raised out of `_listed`/`_removed` so `sweep` can stop at the very first
+    one instead of enduring the same timeout for every remaining resource
+    kind. Deliberately distinct from the `(OSError, SubprocessError)` case
+    below: a missing binary or a malformed invocation means there is nothing
+    to report, but a hang means the question was never answered, which is a
+    different fact and must not collapse into the same empty result (A-13,
+    B-11 -- a hung daemon is not an absent one).
+    """
+
+
+class SweepReport(TypedDict):
+    """What one sweep removed, or why it could not look.
+
+    `error_code` is `None` when the sweep genuinely queried the runtime,
+    whether or not anything came back -- an empty `containers` list under
+    `error_code=None` truly means "nothing to clean". `ErrorCode.INFRASTRUCTURE_ERROR`
+    means the runtime never answered a single query, so every list below is
+    empty for that reason alone and must not be read as "ASET owns nothing".
+    This reuses the vocabulary `ToolResult.error_code` and
+    `ServiceStartupError.code` already carry elsewhere, rather than a new
+    marker every caller would have to learn to compare against.
+    """
+
+    containers: list[str]
+    networks: list[str]
+    volumes: list[str]
+    images: list[str]
+    error_code: ErrorCode | None
+
+
+def _listed(runtime: str, arguments: list[str], *, timeout: float = 60) -> set[str]:
     try:
         completed = subprocess.run(
             [runtime, *arguments],
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True, text=True, timeout=timeout, check=False,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeUnresponsive(
+            f"{runtime} did not answer within {timeout}s: {arguments}"
+        ) from exc
     except (OSError, subprocess.SubprocessError):
         return set()
     if completed.returncode != 0:
@@ -102,25 +142,36 @@ def _listed(runtime: str, arguments: list[str]) -> set[str]:
     return {line.strip() for line in completed.stdout.splitlines() if line.strip()}
 
 
-def _owned(runtime: str, kind: list[str], current_run_id: str) -> list[str]:
+def _owned(
+    runtime: str, kind: list[str], current_run_id: str, *, timeout: float = 60
+) -> list[str]:
     """Everything ASET owns of one kind, minus what the current run owns."""
-    everything = _listed(runtime, [*kind, "--filter", f"label={OWNER_FILTER}"])
+    everything = _listed(
+        runtime, [*kind, "--filter", f"label={OWNER_FILTER}"], timeout=timeout
+    )
     mine = (
         _listed(runtime, [*kind, "--filter", f"label={OWNER_FILTER}",
-                          "--filter", f"label={RUN_LABEL}={current_run_id}"])
+                          "--filter", f"label={RUN_LABEL}={current_run_id}"],
+                timeout=timeout)
         if current_run_id else set()
     )
     return sorted(everything - mine)
 
 
-def _removed(runtime: str, command: list[str], names: list[str]) -> list[str]:
+def _removed(
+    runtime: str, command: list[str], names: list[str], *, timeout: float = 120
+) -> list[str]:
     gone: list[str] = []
     for name in names:
         try:
             completed = subprocess.run(
                 [runtime, *command, name],
-                capture_output=True, text=True, timeout=120, check=False,
+                capture_output=True, text=True, timeout=timeout, check=False,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeUnresponsive(
+                f"{runtime} did not answer within {timeout}s: {command} {name}"
+            ) from exc
         except (OSError, subprocess.SubprocessError):
             continue
         if completed.returncode == 0:
@@ -128,7 +179,9 @@ def _removed(runtime: str, command: list[str], names: list[str]) -> list[str]:
     return gone
 
 
-def sweep(current_run_id: str = "", *, runtime: str = "docker") -> dict[str, list[str]]:
+def sweep(
+    current_run_id: str = "", *, runtime: str = "docker", timeout: float = 60
+) -> SweepReport:
     """Remove what ASET labelled and no live run still owns.
 
     A run reaps what it labelled through the ordinary teardown; this is what
@@ -140,34 +193,59 @@ def sweep(current_run_id: str = "", *, runtime: str = "docker") -> dict[str, lis
 
     Order matters: a network with a container attached cannot be removed, and a
     volume in use by a container cannot either.
+
+    A hung runtime is not an absent one. `shutil.which` finding nothing below
+    returns immediately with `error_code=None`: there truly is nothing to
+    look at. But once a runtime is found, this makes ~8 listing calls (one or
+    two per resource kind) and each one can wait up to `timeout` seconds; a
+    daemon that stops answering mid-sweep used to cost minutes of silent
+    waiting and then report `error_code=None` with everything empty, as if it
+    had looked and found nothing (A-13, B-11). `RuntimeUnresponsive` from the
+    first `_listed`/`_removed` call ends the sweep right there instead.
     """
-    report: dict[str, list[str]] = {
-        "containers": [], "networks": [], "volumes": [], "images": []
+    empty: SweepReport = {
+        "containers": [], "networks": [], "volumes": [], "images": [],
+        "error_code": None,
     }
     if shutil.which(runtime) is None:
-        return report
-    report["containers"] = _removed(
-        runtime, ["rm", "--force"],
-        _owned(runtime, ["ps", "-a", "--quiet"], current_run_id),
-    )
-    report["networks"] = _removed(
-        runtime, ["network", "rm"],
-        _owned(runtime, ["network", "ls", "--quiet"], current_run_id),
-    )
-    report["volumes"] = _removed(
-        runtime, ["volume", "rm", "--force"],
-        _owned(runtime, ["volume", "ls", "--quiet"], current_run_id),
-    )
-    # Only images a run built. An image a run pulled is labelled `cache` on
-    # purpose and survives: re-pulling postgres for every run trades disk for
-    # bandwidth, and that is a bad trade.
-    built = set(_owned(runtime, ["images", "--quiet"], current_run_id))
-    cached = _listed(
-        runtime,
-        ["images", "--quiet", "--filter", f"label={OWNER_FILTER}",
-         "--filter", f"label={LIFETIME_LABEL}={CACHE_LIFETIME}"],
-    )
-    report["images"] = _removed(
-        runtime, ["image", "rm", "--force"], sorted(built - cached)
-    )
+        return empty
+    remove_timeout = timeout * 2
+    report: SweepReport = dict(empty)  # type: ignore[assignment]
+    try:
+        report["containers"] = _removed(
+            runtime, ["rm", "--force"],
+            _owned(runtime, ["ps", "-a", "--quiet"], current_run_id, timeout=timeout),
+            timeout=remove_timeout,
+        )
+        report["networks"] = _removed(
+            runtime, ["network", "rm"],
+            _owned(runtime, ["network", "ls", "--quiet"], current_run_id, timeout=timeout),
+            timeout=remove_timeout,
+        )
+        report["volumes"] = _removed(
+            runtime, ["volume", "rm", "--force"],
+            _owned(runtime, ["volume", "ls", "--quiet"], current_run_id, timeout=timeout),
+            timeout=remove_timeout,
+        )
+        # Only images a run built. An image a run pulled is labelled `cache` on
+        # purpose and survives: re-pulling postgres for every run trades disk for
+        # bandwidth, and that is a bad trade.
+        built = set(
+            _owned(runtime, ["images", "--quiet"], current_run_id, timeout=timeout)
+        )
+        cached = _listed(
+            runtime,
+            ["images", "--quiet", "--filter", f"label={OWNER_FILTER}",
+             "--filter", f"label={LIFETIME_LABEL}={CACHE_LIFETIME}"],
+            timeout=timeout,
+        )
+        report["images"] = _removed(
+            runtime, ["image", "rm", "--force"], sorted(built - cached),
+            timeout=remove_timeout,
+        )
+    except RuntimeUnresponsive:
+        return {
+            "containers": [], "networks": [], "volumes": [], "images": [],
+            "error_code": ErrorCode.INFRASTRUCTURE_ERROR,
+        }
     return report

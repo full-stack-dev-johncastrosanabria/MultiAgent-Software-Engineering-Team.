@@ -65,6 +65,14 @@ def infrastructure(tmp_path, monkeypatch):
             events.append("close")
 
     monkeypatch.setattr("engineering_team.services.ServiceStack", Stack)
+    # These tests exercise the Python-side orchestration (ServiceStack, the
+    # component runners), not the real Docker sweep -- so the runtime is
+    # faked absent here rather than left to whatever `docker` a machine or a
+    # PATH shim happens to expose. Before this, `sweep()` reached the real
+    # `subprocess` module unmocked and a hung `docker` on PATH hung these
+    # tests too (A-13/B-11), which this isolation removes regardless of what
+    # else is on PATH.
+    monkeypatch.setattr("engineering_team.docker_labels.shutil.which", lambda _name: None)
     monkeypatch.setattr(
         "engineering_team.mcp.quality.build_runner",
         lambda root, _settings, **_kwargs: Runner(root),
