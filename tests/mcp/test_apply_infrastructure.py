@@ -1,4 +1,5 @@
 """The production container path owns dependencies before baseline and until exit."""
+import json
 import subprocess
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -28,7 +29,7 @@ def infrastructure(tmp_path, monkeypatch):
         network = "aset-test-default"
         networks = ("aset-test-default", "aset-test-admin")
 
-        def __init__(self, root, run_id, project="", deadline=None):
+        def __init__(self, root, run_id, project="", model=None):
             assert root == tmp_path
             stacks.append(self)
 
@@ -197,38 +198,70 @@ def test_a_daemon_that_refuses_the_sweep_listing_refuses_the_start_too(
     assert not stacks and not runners
 
 
-def test_a_bind_mount_refusal_reaches_the_caller_as_a_typed_startup_error(
-    tmp_path, monkeypatch
+def _docker_compose_config(monkeypatch, answer):
+    """Fake the one Docker call building the stack makes, `docker compose
+    config`, and nothing else: `read_compose_model`, `ServiceStack` and its
+    isolation policy run for real. The sweep finds no runtime to ask."""
+    real_run = subprocess.run
+
+    def run(argv, *args, **kwargs):
+        if list(argv[:2]) == ["docker", "compose"] and "config" in argv:
+            return answer(argv, kwargs.get("timeout"))
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr("engineering_team.services.subprocess.run", run)
+    monkeypatch.setattr("engineering_team.docker_labels.shutil.which", lambda _name: None)
+
+
+def _compose_resolves_to(model):
+    return lambda argv, _timeout: subprocess.CompletedProcess(argv, 0, json.dumps(model), "")
+
+
+def _compose_hangs(argv, timeout):
+    raise subprocess.TimeoutExpired(argv, timeout)
+
+
+_RUNTIME_SOCKET = {"services": {"db": {
+    "image": "postgres:16", "volumes": ["/var/run/docker.sock:/var/run/docker.sock"],
+}}}
+
+
+@pytest.mark.parametrize(("model", "refusal"), [
+    (_RUNTIME_SOCKET, "requests a host runtime socket"),
+    ({"services": {"db": {"image": "postgres:16", "volumes": [{
+        "type": "bind", "source": "../outside", "target": "/data",
+    }]}}}, "bind outside the project checkout"),
+    ({"services": {"db": {"image": "postgres:16", "privileged": True}}},
+     "non-isolated container settings"),
+    ({"services": {"db": {"image": "postgres:16"}},
+      "networks": {"shared": {"external": True}}}, "external Compose networks"),
+    ({"services": {"db": {"image": "postgres:16", "networks": {"_backend": None}}},
+      "networks": {"_backend": {}}}, "refusing to override a name like '_backend'"),
+], ids=["runtime-socket", "bind-outside-checkout", "privileged", "external-network",
+        "name-the-override-cannot-write"])
+def test_asets_refusal_of_the_compose_model_is_not_dressed_as_infrastructure(
+    tmp_path, monkeypatch, model, refusal
 ):
-    """B-11's own example: a compose file that binds outside the checkout is
-    refused before anything starts (`_validate_isolation`), and that refusal
-    reaches `execute_on_project`'s caller as `ServiceStartupError` -- the one
-    type the CLI maps to its infrastructure exit code."""
+    """The compose model was read -- the infrastructure answered -- and ASET's
+    own isolation policy refused what it said. That is ASET declining the
+    project's configuration, so it reaches the caller as the `ComposeError`
+    it is and never as `ServiceStartupError`, which the CLI would turn into
+    the infrastructure exit status. Goes through the real `__enter__` and the
+    real `ServiceStack`; only `docker compose config` is faked."""
     root = tmp_path / "checkout"
     root.mkdir()
+    (tmp_path / "outside").mkdir()
     (root / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.docker_labels.shutil.which", lambda _name: None)
-    monkeypatch.setattr(
-        "engineering_team.services.read_compose_model", lambda _, deadline=None: {
-            "services": {"db": {"image": "postgres", "volumes": [{
-                "type": "bind", "source": str(tmp_path), "target": "/data",
-            }]}},
-        },
+    _docker_compose_config(monkeypatch, _compose_resolves_to(model))
+    handle = apply_run.open_project_quality(
+        root, Settings(quality_runner="container"), timeout_seconds=30
     )
-    monkeypatch.setattr(apply_run, "quality_targets_for", lambda *_: [
-        Component(path=".", stack="jvm", manifest="pom.xml"),
-    ])
 
-    with (
-        pytest.raises(ServiceStartupError) as caught,
-        apply_run.open_project_quality(
-            root, Settings(quality_runner="container"), timeout_seconds=30
-        ),
-    ):
-        pytest.fail("a refused compose file must not start")
+    with pytest.raises(ComposeError, match=refusal) as caught, handle:
+        pytest.fail("a refused compose model must not start")
 
-    assert isinstance(caught.value.__cause__, ComposeError)
-    assert caught.value.code is ErrorCode.INFRASTRUCTURE_ERROR
+    assert not isinstance(caught.value, ServiceStartupError)
+    assert handle.services is None  # refused before anything was started
 
 
 def _asets_own_attribute_error(monkeypatch):
@@ -258,7 +291,7 @@ def _quality_constructor_refusal(monkeypatch):
 def test_a_failure_after_the_infrastructure_steps_is_not_dressed_as_infrastructure(
     tmp_path, monkeypatch, infrastructure, inject
 ):
-    """N-1: only the infrastructure steps (`sweep`, `ServiceStack(...)`,
+    """N-1: only the infrastructure steps (`sweep`, reading the compose model,
     `services.up`, `daemon.up`) may become `ServiceStartupError`. A failure in
     wiring the components on top of a stack that came up -- ASET's own bug or
     its own refusal -- propagates as itself, so the CLI exits as a crash
@@ -334,6 +367,44 @@ def test_run_project_exits_with_the_infrastructure_status_when_a_dependency_neve
     result = _run_project_through_the_real_startup(tmp_path, monkeypatch)
 
     assert result.exit_code == INFRASTRUCTURE_EXIT_CODE
+
+
+def test_run_project_exits_as_a_crash_when_aset_refuses_the_compose_model(
+    tmp_path, monkeypatch
+):
+    """N-1 in miniature, at the process boundary: a compose file that mounts
+    the Docker socket is refused by ASET's isolation policy, not by the
+    infrastructure, so the scorer must read the run as `crash` and never as
+    `infrastructure_unavailable`. Real `ServiceStack`; only `docker compose
+    config` is faked."""
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    (tmp_path / "compose.yaml").write_text("services: {}")
+    _docker_compose_config(monkeypatch, _compose_resolves_to(_RUNTIME_SOCKET))
+
+    result = _run_project_through_the_real_startup(tmp_path, monkeypatch)
+
+    assert result.exit_code not in (0, INFRASTRUCTURE_EXIT_CODE)
+    assert isinstance(result.exception, ComposeError)
+    assert "requests a host runtime socket" in str(result.exception)
+
+
+def test_run_project_exits_with_the_infrastructure_status_when_compose_cannot_be_read(
+    tmp_path, monkeypatch
+):
+    """The half that must not swing: reading the compose model is the part of
+    building the stack that asks the infrastructure something, so `docker
+    compose config` hanging past its deadline still exits with the
+    infrastructure status."""
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    (tmp_path / "compose.yaml").write_text("services: {}")
+    _docker_compose_config(monkeypatch, _compose_hangs)
+
+    result = _run_project_through_the_real_startup(tmp_path, monkeypatch)
+
+    assert result.exit_code == INFRASTRUCTURE_EXIT_CODE
+    assert "compose could not read compose.yaml" in result.stderr
 
 
 def test_a_run_daemon_that_never_came_up_is_an_infrastructure_failure(

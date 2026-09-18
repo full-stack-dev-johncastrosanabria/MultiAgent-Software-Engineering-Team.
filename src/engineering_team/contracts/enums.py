@@ -113,8 +113,10 @@ class StopCause(StrEnum):
 # The exit status `engineering-team` uses when a typed infrastructure failure
 # stopped it before any report could be written: `services.ServiceStartupError`,
 # which is how the pre-run Docker sweep that got no answer, a compose file that
-# could not be read or that binds outside the checkout, and a dependency that
-# never became ready all reach the CLI. `run-project` writes its report only at
+# `docker compose config` could not read, and a dependency or run daemon that
+# never became ready all reach the CLI. ASET's own refusal of a compose file it
+# did read (`ServiceStack._validate_isolation`) is not one of them: it reaches
+# the CLI as itself and exits as a crash. `run-project` writes its report only at
 # the end of a completed run, so without this the typed code died with the
 # process and the scorer saw the same thing as an ASET crash. Named here, next
 # to `StopCause`, for the same reason: the CLI and the scorer read one

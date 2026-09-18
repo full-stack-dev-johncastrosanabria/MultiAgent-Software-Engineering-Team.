@@ -218,9 +218,10 @@ class _ProjectInfrastructureQuality:
         that ask the infrastructure something are wrapped -- the sweep, reading
         the compose model, bringing the services and the run daemon up -- by
         *step*, not by exception type: a bare `RuntimeError` from `up` is still
-        a dependency that never came up. Wiring the components on top of a
-        stack that did come up is ASET's own code; a bug or a refusal there
-        propagates as itself and reads as a crash.
+        a dependency that never came up. Judging the compose model once read,
+        and wiring the components on top of a stack that did come up, are
+        ASET's own code; a bug or a refusal there propagates as itself and
+        reads as a crash.
         """
         from engineering_team.services import ServiceStartupError
 
@@ -231,7 +232,12 @@ class _ProjectInfrastructureQuality:
 
     def __enter__(self):
         from engineering_team.mcp.quality import CompositeQuality
-        from engineering_team.services import ServiceStack, ServiceStartupError
+        from engineering_team.services import (
+            ServiceStack,
+            ServiceStartupError,
+            find_compose_file,
+            read_compose_model,
+        )
 
         try:
             with self._infrastructure_step():
@@ -249,10 +255,24 @@ class _ProjectInfrastructureQuality:
                         "confirmed done"
                     )
                 deadline = time.monotonic() + self.timeout_seconds
-                self.services = ServiceStack(
-                    self.root, self.run_id or str(uuid.uuid4()), project=self.project,
-                    deadline=deadline,
+                # Of building the stack, only reading the compose model asks
+                # the infrastructure something: `docker compose config`.
+                compose_file = find_compose_file(self.root)
+                model = (
+                    None if compose_file is None
+                    else read_compose_model(compose_file, deadline)
                 )
+            # Judging that model is ASET's own policy: which services to start,
+            # and whether they can be isolated at all (`_validate_isolation`
+            # refuses a mounted runtime socket, `privileged`, `network_mode`,
+            # an external network). A refusal there is ASET declining the
+            # project's configuration, not the infrastructure failing, so it
+            # propagates as itself and reads as a crash, like QualityMCP's.
+            self.services = ServiceStack(
+                self.root, self.run_id or str(uuid.uuid4()), project=self.project,
+                model=model,
+            )
+            with self._infrastructure_step():
                 self.services.up(deadline)
             # The project declared nothing and this run inferred it. Under ADR 18
             # that is a blocking prerequisite to deliver, not a detail: the

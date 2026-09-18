@@ -168,6 +168,13 @@ def network_names(model: dict) -> tuple[str, ...]:
     return tuple(sorted(declared)) or ("default",)
 
 
+def _refuse_names_the_override_cannot_write(names) -> None:
+    """Names reach the override document; refuse any outside compose's grammar."""
+    for name in names:
+        if not _SERVICE_NAME.match(name):
+            raise ComposeError(f"refusing to override a name like {name!r}")
+
+
 def override_document(
     services: tuple[str, ...],
     networks: tuple[str, ...] = ("default",),
@@ -184,9 +191,7 @@ def override_document(
     `!override []` removes it. Writing four keys of YAML needs no library --
     parsing is what finding 2 removed pyyaml for.
     """
-    for name in (*services, *networks, *volumes):
-        if not _SERVICE_NAME.match(name):
-            raise ComposeError(f"refusing to override a name like {name!r}")
+    _refuse_names_the_override_cannot_write((*services, *networks, *volumes))
     lines = ["services:"]
     for name in services:
         # `!override` and not an empty list: an empty list would be merged.
@@ -272,7 +277,19 @@ class ServiceStack:
     """
 
     def __init__(self, root: str | Path, run_id: str, *, runtime: str = "docker",
-                 project: str = "", deadline: float | None = None) -> None:
+                 project: str = "", deadline: float | None = None,
+                 model: dict | None = None) -> None:
+        """Read the project's topology, then refuse what cannot be isolated.
+
+        Only the reading asks the infrastructure anything: `read_compose_model`
+        shells out to `docker compose config`, bounded by `deadline`. Judging
+        the model it returns -- which services are infrastructure, and whether
+        `_validate_isolation` lets them run at all -- is ASET's own policy. A
+        caller that names infrastructure failures by step (`apply_run`) reads
+        the model inside that step and passes it here as `model`, so that a
+        refusal of the project's configuration is not filed as a failure of
+        the infrastructure. Without `model`, the stack reads it itself.
+        """
         self.root = Path(root).resolve()
         self.runtime = runtime
         self.run_id = run_id
@@ -297,11 +314,12 @@ class ServiceStack:
         self._running = False
         self._model: dict = {}
         if self._compose_file is not None:
-            model = read_compose_model(self._compose_file, deadline)
+            if model is None:
+                model = read_compose_model(self._compose_file, deadline)
             self._model = model
             self._services = classify_services(model).infrastructure
-            self._validate_isolation(model)
             self._networks = network_names(model)
+            self._validate_isolation(model)
         else:
             # Only when the project declares nothing. A file it wrote itself
             # always wins: inferring over it would be guessing at something its
@@ -410,6 +428,14 @@ class ServiceStack:
                 # device selected by its driver. Only Docker-managed storage is
                 # safe to create and remove under this per-run contract.
                 raise ComposeError(f"volume {name} requests non-isolated driver options")
+        # The override renames every service, network and volume it isolates,
+        # and compose accepts names that document cannot carry (a network or a
+        # volume called `_backend`). Refused here with the rest of this policy,
+        # rather than first discovered inside `up`, where it would be filed
+        # under the step that asks the infrastructure to start.
+        _refuse_names_the_override_cannot_write(
+            (*self._services, *self._networks, *(model.get("volumes") or {}))
+        )
 
     def delivery_artifacts(self) -> tuple[str, str]:
         """The compose and .env.example a developer would receive.

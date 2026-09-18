@@ -104,10 +104,10 @@ def run_project(
                 report_path=report_path,
             )
         except ServiceStartupError as exc:
-            # Raised before the graph -- the pre-run sweep got no answer, the
-            # compose file was refused, a dependency never came up -- so no
-            # report exists to carry the typed code. The exit status carries
-            # it instead, and the scorer reads that, never this message.
+            # Raised before the graph -- the pre-run sweep got no answer,
+            # compose could not read the file, a dependency never came up --
+            # so no report exists to carry the typed code. The exit status
+            # carries it instead, and the scorer reads that, never this message.
             typer.echo(f"infrastructure unavailable before the run started: {exc}", err=True)
             raise typer.Exit(code=INFRASTRUCTURE_EXIT_CODE) from exc
         typer.echo(json.dumps(evidence, ensure_ascii=False))

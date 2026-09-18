@@ -394,9 +394,9 @@ def _classify_environment_failure(
        this phase's no-text-parsing rule.
     4. There is no report and the CLI exited `INFRASTRUCTURE_EXIT_CODE` -- a
        typed infrastructure failure (`ServiceStartupError`: the pre-run Docker
-       sweep got no answer, a compose file was refused, a dependency never
-       came up) stopped it before the graph, so no report could carry signals
-       1-3. The exit status is the typed code crossing the process boundary;
+       sweep got no answer, compose could not read the project's file, a
+       dependency never came up) stopped it before the graph, so no report
+       could carry signals 1-3. The exit status is the typed code crossing the process boundary;
        `cli_stderr_tail` is never read to decide this.
 
     Returns `None` when none of the four fired: "no environment failure was

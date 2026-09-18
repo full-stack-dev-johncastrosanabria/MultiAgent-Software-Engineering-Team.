@@ -661,8 +661,13 @@ corridas congeladas. Calibración: cinco parches malos conocidos.
   antes, en la fase 2. Lo que sí cruza ya el proceso es un fallo tipado de un
   paso de infraestructura antes del grafo —el barrido previo, leer el compose,
   levantar los servicios o el daemon del run— (código de salida 3); cualquier
-  otra salida distinta de cero sin reporte se registra como `crash`, incluido un
-  fallo de ASET al cablear los componentes sobre una pila que sí arrancó.
+  otra salida distinta de cero sin reporte se registra como `crash`, incluidos un
+  fallo de ASET al cablear los componentes sobre una pila que sí arrancó y su
+  negativa deliberada a un compose que sí leyó —la política de aislamiento:
+  socket del runtime montado, `privileged`, `network_mode`, redes o volúmenes
+  externos, opciones de driver de un volumen, un bind fuera del checkout, un
+  nombre que su override no puede escribir—. Esa negativa no es un fallo, pero hoy no tiene resultado tipado
+  propio.
 - **Dos fallos antes del reporte se leen `crash` sin serlo del todo (N-2).** Un
   `git clone` fallido (red, límite de peticiones, autenticación) sale como un
   `RuntimeError` sin tipo y exit 1, y una CLI matada por una señal (código de
