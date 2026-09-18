@@ -28,7 +28,7 @@ def infrastructure(tmp_path, monkeypatch):
         network = "aset-test-default"
         networks = ("aset-test-default", "aset-test-admin")
 
-        def __init__(self, root, run_id, project=""):
+        def __init__(self, root, run_id, project="", deadline=None):
             assert root == tmp_path
             stacks.append(self)
 
@@ -170,7 +170,7 @@ def test_interrupted_start_cleans_and_preserves_interruption(
 
 def test_declared_compose_environment_matches_build_context(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "db": {"image": "postgres"},
             "app": {"build": {"context": str(tmp_path / "api")},
@@ -191,7 +191,7 @@ def test_declared_compose_environment_matches_build_context(tmp_path, monkeypatc
 ])
 def test_declared_unsafe_infrastructure_is_refused(tmp_path, monkeypatch, service):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {"db": {"image": "postgres", **service}}
     })
     with pytest.raises(ComposeError):
@@ -210,7 +210,7 @@ def test_bind_outside_checkout_is_refused(tmp_path, monkeypatch, source_kind, re
     source = {"absolute": str(outside), "relative": "../outside", "symlink": "./link"}[
         source_kind
     ]
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {"db": {"image": "postgres", "volumes": [{
             "type": "bind", "source": source, "target": "/data", "read_only": read_only,
         }]}}
@@ -222,7 +222,7 @@ def test_bind_outside_checkout_is_refused(tmp_path, monkeypatch, source_kind, re
 def test_bind_inside_checkout_is_available_for_database_initialization(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
     (tmp_path / "init.sql").write_text("CREATE DATABASE orders;")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {"db": {"image": "postgres", "volumes": [{
             "type": "bind", "source": str(tmp_path / "init.sql"),
             "target": "/docker-entrypoint-initdb.d/init.sql", "read_only": True,
@@ -233,7 +233,7 @@ def test_bind_inside_checkout_is_available_for_database_initialization(tmp_path,
 
 def test_volume_driver_cannot_escape_checkout_by_renaming_a_bind(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {"db": {"image": "postgres", "volumes": [{
             "type": "volume", "source": "database", "target": "/data",
         }]}},
@@ -255,7 +255,7 @@ def test_declared_database_mapping_uses_image_and_supports_both_spring_versions(
         "spring.datasource.username=app\n"
         "spring.datasource.password=test\n"
     )
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "documents": {"image": "mongo:7"},
             "database": {"image": "postgres:16"},
@@ -270,7 +270,7 @@ def test_declared_database_mapping_uses_image_and_supports_both_spring_versions(
 
 def test_ambiguous_build_context_fails_instead_of_selecting_arbitrary_env(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "one": {"build": ".", "environment": {"DB_HOST": "database-one"}},
             "two": {"build": ".", "environment": {"DB_HOST": "database-two"}},
@@ -282,7 +282,7 @@ def test_ambiguous_build_context_fails_instead_of_selecting_arbitrary_env(tmp_pa
 
 def test_shared_maven_context_merges_compatible_service_environment(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "postgres": {"image": "postgres"},
             "mongo": {"image": "mongo"},
@@ -303,7 +303,7 @@ def test_prueba_services_get_isolated_names_without_rejecting_multiple_networks(
     tmp_path, monkeypatch
 ):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "kafka": {"image": "apache/kafka:4.3.1"},
             "kafka-init": {"image": "apache/kafka:4.3.1"},

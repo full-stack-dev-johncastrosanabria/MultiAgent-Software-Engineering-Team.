@@ -224,10 +224,12 @@ class _ProjectInfrastructureQuality:
                     "runtime partway through; cleanup is incomplete, not "
                     "confirmed done"
                 )
+            deadline = time.monotonic() + self.timeout_seconds
             self.services = ServiceStack(
-                self.root, self.run_id or str(uuid.uuid4()), project=self.project
+                self.root, self.run_id or str(uuid.uuid4()), project=self.project,
+                deadline=deadline,
             )
-            self.services.up(time.monotonic() + self.timeout_seconds)
+            self.services.up(deadline)
             # The project declared nothing and this run inferred it. Under ADR 18
             # that is a blocking prerequisite to deliver, not a detail: the
             # inference used to be written to a temporary file and deleted, so

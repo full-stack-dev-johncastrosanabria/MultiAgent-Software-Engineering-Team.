@@ -92,14 +92,34 @@ def find_compose_file(root: Path) -> Path | None:
     return None
 
 
-def read_compose_model(compose_file: Path) -> dict:
-    """Resolve a compose file through compose's own parser."""
+def _remaining(deadline: float) -> float:
+    """Seconds left before the deadline, never negative."""
+    return max(0.0, deadline - time.monotonic())
+
+
+def read_compose_model(compose_file: Path, deadline: float | None = None) -> dict:
+    """Resolve a compose file through compose's own parser.
+
+    Bounded by `deadline` when the caller gives one, the same pattern
+    `ContainerRunner.require_available` uses: never longer than the fixed
+    `_CONFIG_TIMEOUT_SECONDS` a caller without a deadline still gets, but
+    never longer than the caller's own remaining time either. A daemon that
+    stops answering here is the same "hung is not absent" fact this module's
+    sweep exists to name, just reached through Compose's own parser instead
+    of a direct `docker` call -- and the failure this raises either way is
+    `ComposeError`, a type every caller already distinguishes by, not by
+    reading what its message says.
+    """
+    timeout = (
+        _CONFIG_TIMEOUT_SECONDS if deadline is None
+        else min(_CONFIG_TIMEOUT_SECONDS, _remaining(deadline))
+    )
     try:
         completed = subprocess.run(
             ["docker", "compose", "-f", str(compose_file), "config", "--format", "json"],
             capture_output=True,
             text=True,
-            timeout=_CONFIG_TIMEOUT_SECONDS,
+            timeout=timeout,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -252,7 +272,7 @@ class ServiceStack:
     """
 
     def __init__(self, root: str | Path, run_id: str, *, runtime: str = "docker",
-                 project: str = "") -> None:
+                 project: str = "", deadline: float | None = None) -> None:
         self.root = Path(root).resolve()
         self.runtime = runtime
         self.run_id = run_id
@@ -277,7 +297,7 @@ class ServiceStack:
         self._running = False
         self._model: dict = {}
         if self._compose_file is not None:
-            model = read_compose_model(self._compose_file)
+            model = read_compose_model(self._compose_file, deadline)
             self._model = model
             self._services = classify_services(model).infrastructure
             self._validate_isolation(model)

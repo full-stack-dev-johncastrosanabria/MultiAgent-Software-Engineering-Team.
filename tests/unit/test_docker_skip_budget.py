@@ -10,7 +10,21 @@ which is the public collection API, and reaches this test through the
 # (.superpowers/fase1/research-test-gate.md §5.4); the one-line
 # `require_available` patch in tests/mcp/test_quality.py turned out to fix 9
 # tests rather than the 5 the notes expected, so 8 remain in that file.
-EXPECTED_NEEDS_DOCKER_COUNT = 13
+#
+# +3 (13 -> 16), task 9 fix round 2: three tests in test_service_stack.py
+# (test_all_distinct_infrastructure_networks_are_discovered,
+# test_the_stack_reads_only_infrastructure,
+# test_a_declared_compose_is_never_overridden_by_inference) construct a real
+# ServiceStack against a compose file they write themselves, which reaches
+# services.py's read_compose_model (a real `docker compose config`) with no
+# test-side seam to fake it. Under a hung daemon these three used to stall
+# for up to read_compose_model's 60s timeout each and then fail with an
+# uncaught ComposeError, rather than skip -- the same "hung read as ready to
+# proceed" defect this task exists to close. They now carry the shared
+# needs_docker mark from tests/_docker.py, not this file's own local one
+# (which additionally requires the base image pulled, a condition these
+# three never needed: config only parses the file, it never runs the image).
+EXPECTED_NEEDS_DOCKER_COUNT = 16
 
 # Per file, so a run that deliberately collects only part of the suite (the
 # repository's pinned regression command) still checks what it did collect
@@ -20,6 +34,7 @@ EXPECTED_NEEDS_DOCKER_BY_FILE = {
     "tests/mcp/test_protocol.py": 1,
     "tests/integration/test_workflow.py": 1,
     "tests/e2e/test_evaluation_scenarios.py": 3,
+    "tests/mcp/test_service_stack.py": 3,
 }
 
 
