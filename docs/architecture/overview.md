@@ -129,7 +129,6 @@ flowchart TD
   D -.->|human_review_required| H
   SEC -.->|human_review_required| H
   T -.->|human_review_required| H
-  R -->|"2ª huella repetida de implementación"| A
   R -.->|"límite de iteraciones · huella repetida 3 veces · ruta inválida"| H
 
   H -->|"RESUME e interactive_hitl"| D
@@ -148,13 +147,16 @@ El Reviewer recomienda; la validación determinista elige la arista. La iteraci�
 sube exactamente una vez por rechazo; al alcanzar `max_remediation_iterations`
 (`MAX_REMEDIATION_ITERATIONS`, 5 por omisión) el grafo sale a
 `HUMAN_REVIEW_REQUIRED` y no empieza otro ciclo. Además, cada rechazo deja una
-huella (`remediation_fingerprint`): el segundo rechazo consecutivo idéntico de
-implementación vuelve a Architecture en lugar de Developer, y el tercero sale a
-revisión humana antes del límite. La huella se calcula sobre el motivo y los
-problemas del rechazo, incluido texto de diagnóstico que cambia entre ciclos,
-de modo que fallos de la misma clase rara vez producen huellas idénticas; ver la
-[auditoría del 2026-09-16](../audit160926/README.md). Los predicados y
-límites exactos viven en el grafo y en sus
+huella de su clase de fallo (`remediation_fingerprint`): categoría, motivo y
+problemas sin números, porcentajes ni duraciones, y sin el riesgo residual de
+dependencias previas. La tercera vez que la misma huella aparece en la corrida,
+aunque no sea consecutiva, sale a revisión humana antes del límite; ninguna
+repetición se envía a Architecture. Si además el rechazo deja exactamente el
+mismo diff que un rechazo anterior, la segunda aparición de esa clase de fallo
+ya sale a revisión humana: repetir código que no cambió no puede cambiar el
+resultado. La
+[auditoría del 2026-09-16](../audit160926/README.md) midió el bucle que esta
+regla corrige. Los predicados y límites exactos viven en el grafo y en sus
 [tests de enrutado](../../tests/graph/test_routers.py) y
 [de HITL](../../tests/graph/test_hitl.py).
 

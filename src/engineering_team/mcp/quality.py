@@ -53,6 +53,112 @@ _DISTRIBUTION_NAME = "autonomous-engineering-team"
 
 
 
+_OUTPUT_TAIL = 4000
+_ERROR_BLOCK_LIMIT = 8
+_ERROR_BLOCK_BUDGET = 1500
+_BUILD_ERRORS_HEADING = "\nBuild errors, extracted before truncation:\n"
+
+# One `[ERROR]` line plus the unprefixed continuation lines javac indents under
+# it, ending at the next `[ERROR]` or at the `[INFO]` banner of the next phase.
+_MAVEN_ERROR_BLOCK = re.compile(
+    r"^\[ERROR\].*?(?=^\[ERROR\]|^\[INFO\]|\Z)", re.MULTILINE | re.DOTALL
+)
+# Surefire's own summary lines, with or without Maven's `[ERROR] ` prefix. Only a
+# run that failed something matches: `Failures: 0, Errors: 0` does not.
+_SUREFIRE_FAILURE_HEADER = re.compile(
+    r"^.*(?:Tests in error:|Failed tests:|Tests run:.*?(?:Failures|Errors): [1-9]).*$",
+    re.MULTILINE,
+)
+# Maven's help footer is printed verbatim on every failure and names no cause.
+_MAVEN_BOILERPLATE = (
+    "-> [Help 1]",
+    "To see the full stack trace",
+    "Re-run Maven using the -X switch",
+    "For more information about the errors and possible solutions",
+    "[Help 1] http",
+)
+
+
+def extract_build_errors(
+    full_output: str,
+    *,
+    max_blocks: int = _ERROR_BLOCK_LIMIT,
+    budget: int = _ERROR_BLOCK_BUDGET,
+) -> str:
+    """The build's own error blocks, head-first, bounded by block count and bytes.
+
+    Maven prints its compilation errors and Surefire's failure summary near the
+    *head* of the failing phase and a fixed `[Help 1]` footer after them, so a cut
+    taken from the end keeps the footer and loses the cause. Two cuts are taken
+    from the end downstream -- 4000 characters in `_run` below, then 600 more in
+    `apply_run.tool_outcomes()` -- and this is the only point at which the head is
+    still reachable, which is why the extraction happens here and not there.
+
+    Bounded twice on purpose: a build that fails in a hundred files would
+    otherwise spend the whole budget on the first file's neighbours.
+    """
+    blocks: list[str] = []
+    for match in _MAVEN_ERROR_BLOCK.findall(full_output):
+        block = match.rstrip()
+        if not block.removeprefix("[ERROR]").strip():
+            continue
+        if any(noise in block for noise in _MAVEN_BOILERPLATE):
+            continue
+        blocks.append(block)
+        if len(blocks) >= max_blocks:
+            break
+    # A Surefire summary Maven did not prefix with `[ERROR]` matches nothing
+    # above, so it is looked for separately and only added when it is new.
+    for match in _SUREFIRE_FAILURE_HEADER.findall(full_output):
+        if len(blocks) >= max_blocks:
+            break
+        header = match.strip()
+        if header and not any(header in block for block in blocks):
+            blocks.append(header)
+    return "\n".join(blocks)[:budget]
+
+
+def retained_output(full_output: str) -> str:
+    """The tail a tool keeps, with the extracted error blocks appended after it.
+
+    After, not before: every consumer downstream cuts from the end, so anything
+    put at the head would be cut again. This is the ordering `_run` already
+    relies on to carry confirmed dependency advisories past the 600-character
+    excerpt in the run receipt.
+    """
+    errors = extract_build_errors(full_output)
+    if not errors:
+        return full_output[-_OUTPUT_TAIL:]
+    suffix = _BUILD_ERRORS_HEADING + errors
+    keep = _OUTPUT_TAIL - len(suffix)
+    return (full_output[-keep:] if keep > 0 else "") + suffix
+
+
+def _reconstruct_stream(head: str, tail: str) -> str:
+    """One stream's text, with any earlier bytes `_BoundedOutput.head_text`
+    captured restored ahead of the tail `_run` below already had.
+
+    `_run` builds `full_output` from a `CommandOutput` whose `.stdout`/
+    `.stderr` are already tail-only: `ContainerRunner` caps each stream to the
+    last `_OUTPUT_LIMIT` bytes *as they stream past*, before this function or
+    `retained_output` ever runs, which for an ordinary (non-dependency-scan)
+    command sits ahead of both tail cuts this module already reorders against.
+    A Maven failure long enough to need any of that truncation routinely
+    exceeds that cap before its own `[ERROR]` block is reached -- the
+    dependency-resolution logging alone commonly does -- so the block was
+    already gone by the time `extract_build_errors` got a chance to see it.
+
+    `head` arrives pre-trimmed to the exact bytes the tail does not already
+    cover, and already carries its own gap marker when, and only when, bytes
+    were genuinely dropped between the two windows (`_BoundedOutput.head_text`
+    decides both). So this is plain concatenation: `""` for `head` -- a
+    command that never truncated, and the whole dependency-scan path, which
+    never requests one -- reconstructs to exactly `tail`, byte for byte what
+    `full_output` was before head retention existed.
+    """
+    return tail if not head else head + tail
+
+
 def build_runner(
     root: Path, settings: Settings, *, interpreter: Any = None,
     run_id: str = "", project: str = "",
@@ -279,7 +385,7 @@ class QualityMCP:
     def _interpreter(self, deadline: float | None = None) -> str:
         """Get the interpreter for this instance, provisioning it once."""
         deadline = self._deadline() if deadline is None else deadline
-        self._runner.require_available()
+        self._runner.require_available(deadline)
         if not self._environment_lock.acquire(timeout=self._remaining(deadline)):
             raise TimeoutError("quality environment lock deadline exceeded")
         try:
@@ -401,8 +507,32 @@ class QualityMCP:
         )
 
     def _unavailable(
-        self, role: AgentRole, tool: str, exc: BaseException, started: float
+        self,
+        role: AgentRole,
+        tool: str,
+        exc: BaseException,
+        started: float,
+        *,
+        error_code: ErrorCode | None = ErrorCode.INFRASTRUCTURE_ERROR,
     ) -> ToolResult:
+        """An UNAVAILABLE result, stamped with what failed when that is known.
+
+        The default is the common case: the isolated environment is what did
+        not come up -- a container, a workspace transfer, a daemon this suite
+        needed, an interpreter that could not be provisioned, a lock that never
+        freed. The code under test was never given a chance to run, which is
+        the distinction INFRASTRUCTURE_ERROR exists to draw, and the one the
+        message alone never carried: this wording has no marker in it at all.
+
+        `error_code=None` is for the two callers where that is false: the
+        suite command itself outliving its deadline (the environment came up
+        and the code ran -- it hung or was slow), and this system's own refusal
+        to run a configuration the profile cannot honour. Stamping either as
+        infrastructure would file a product failure, or an operator's choice,
+        as an environment failure (B-11 inverted). With no code the graph
+        falls back to MCP_ERROR / `mcp_unavailable`, the label these carried
+        before phase 1; a suite timeout still needs a typed cause of its own.
+        """
         result = ToolResult(
             tool_name=tool,
             allowed_role=role,
@@ -411,6 +541,7 @@ class QualityMCP:
             output_summary="",
             duration_ms=int((time.perf_counter() - started) * 1000),
             error=f"isolated environment unavailable: {type(exc).__name__}: {exc}",
+            error_code=error_code,
             evidence_reference=self._evidence_reference(tool),
         )
         self._last[tool] = result
@@ -499,6 +630,7 @@ class QualityMCP:
                 input_summary="services", output_summary="",
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 error=f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: {exc}",
+                error_code=ErrorCode.INFRASTRUCTURE_ERROR,
                 evidence_reference=self._evidence_reference(tool),
             )
         self._services_started = True
@@ -563,6 +695,7 @@ class QualityMCP:
                         f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: applying the "
                         f"project's migrations failed ({' '.join(command[:3])})"
                     ),
+                    error_code=ErrorCode.INFRASTRUCTURE_ERROR,
                     evidence_reference=self._evidence_reference(tool),
                 )
         return None
@@ -707,10 +840,28 @@ class QualityMCP:
                 env=env,
                 structured_output=dependency_findings is not None,
             )
-        except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
+            # Only `ContainerRunner._run_container` raises this under
+            # `_execute_process`: the command itself ran past its deadline. The
+            # environment came up and the code under test ran, so this is not
+            # an infrastructure failure -- see `_unavailable`.
+            return self._unavailable(role, tool, exc, started, error_code=None)
+        except (OSError, RuntimeError, TimeoutError) as exc:
             return self._unavailable(role, tool, exc, started)
-        full_output = completed.stdout + completed.stderr
-        output = full_output[-4000:]
+        # getattr, not an attribute a `CommandOutput` always has: several tests
+        # in this suite hand `_execute_process` a bare `subprocess.CompletedProcess`
+        # to skip the real runner, and that type has no head to restore.
+        full_output = _reconstruct_stream(
+            getattr(completed, "stdout_head", ""), completed.stdout
+        ) + _reconstruct_stream(
+            getattr(completed, "stderr_head", ""), completed.stderr
+        )
+        # The head window exists to restore build errors for extraction
+        # (`retained_output`). The two text heuristics below have always read
+        # the tail only, and widening their input would let, say, a transient
+        # `dial tcp:` early in a long download log flip a scan to UNAVAILABLE.
+        tail_output = completed.stdout + completed.stderr
+        output = retained_output(full_output)
         if completed.returncode < 0:
             return self._unavailable(
                 role, tool, RuntimeError("quality subprocess was terminated"), started
@@ -718,7 +869,7 @@ class QualityMCP:
         infrastructure_error = (
             "structured scanner output exceeded its retention limit or was incomplete"
             if dependency_findings is not None and getattr(completed, "output_truncated", False)
-            else unavailable_on_output(full_output) if unavailable_on_output is not None else None
+            else unavailable_on_output(tail_output) if unavailable_on_output is not None else None
         )
         if infrastructure_error is not None:
             status = ToolStatus.UNAVAILABLE
@@ -727,7 +878,7 @@ class QualityMCP:
             if (
                 status is ToolStatus.SUCCESS
                 and fail_on_output is not None
-                and fail_on_output(full_output)
+                and fail_on_output(tail_output)
             ):
                 status = ToolStatus.FAIL
         findings = (
@@ -750,6 +901,9 @@ class QualityMCP:
                 f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: {infrastructure_error}"
                 if infrastructure_error is not None
                 else None
+            ),
+            error_code=(
+                ErrorCode.INFRASTRUCTURE_ERROR if infrastructure_error is not None else None
             ),
             scans_dependencies=scans_dependencies,
             confirmed_dependency_findings=bool(findings),
@@ -1062,6 +1216,7 @@ class QualityMCP:
             completed = completed.model_copy(update={
                 "status": ToolStatus.UNAVAILABLE,
                 "error": f"{ErrorCode.INFRASTRUCTURE_ERROR.value}: {explanation}",
+                "error_code": ErrorCode.INFRASTRUCTURE_ERROR,
             })
         self._project_result = completed
         return self._operation_failure(completed, role, tool)
@@ -1111,6 +1266,7 @@ class QualityMCP:
             output_summary=previous.output_summary if previous else f"no {source} result",
             duration_ms=0,
             error=previous.error if previous else f"{source} has not executed",
+            error_code=previous.error_code if previous else None,
             test_cases=previous.test_cases if previous else None,
             scans_dependencies=previous.scans_dependencies if previous else False,
             confirmed_dependency_findings=(previous.confirmed_dependency_findings if previous else False),
@@ -1126,12 +1282,14 @@ class QualityMCP:
         if boundary is not None:
             return self._unavailable(role, "run_tests", boundary, started)
         if self.test_filter and not self.profile.test_filter_arguments(self.test_filter):
+            # Our own refusal of a configuration, not an environment that
+            # failed: nothing was asked of a container, workspace or daemon.
             return self._unavailable(role, "run_tests", RuntimeError(
                 f"{self.profile.name} declares no test filter syntax, so "
                 f"quality_test_filter={self.test_filter!r} cannot be honoured. "
                 "Refusing before the run rather than executing the whole suite "
                 "the operator asked to narrow."
-            ), started)
+            ), started, error_code=None)
         deadline = self._deadline()
         unavailable = self._ensure_services(role, "run_tests", deadline)
         if unavailable is not None:
@@ -1587,6 +1745,19 @@ class CompositeQuality:
             duration_ms=duration,
             evidence_reference=None,
             error="; ".join(errors) if errors else None,
+            # The joined message above is where a producer's marker goes to die:
+            # every component's error is relabelled with its evidence reference,
+            # so nothing a producer wrote at the front of its string is at the
+            # front any more. The code is forwarded instead, taken from the same
+            # result that decided the aggregate status, so what the consumer
+            # reads and what it was told happened cannot disagree.
+            error_code=next(
+                (
+                    result.error_code for result in results
+                    if result.status is status and result.error_code is not None
+                ),
+                None,
+            ),
             # Successful code scans must not hide the provenance of a failing
             # dependency scan. Missing or denied validation is never a finding.
             scans_dependencies=bool(failed_results) and all(

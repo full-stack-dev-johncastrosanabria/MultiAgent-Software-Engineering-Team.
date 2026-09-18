@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from _docker import needs_docker
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.contracts.models import ToolResult
@@ -13,7 +14,7 @@ from engineering_team.interpreter import python_image
 from engineering_team.mcp.client import MCPQualityClient
 from engineering_team.mcp.command import CommandRequest
 from engineering_team.mcp.container import ENVIRONMENT_MOUNT, ContainerRunner
-from engineering_team.mcp.quality import QualityMCP
+from engineering_team.mcp.quality import QualityMCP, extract_build_errors, retained_output
 
 # Two images, and the difference is deliberate. A test that patches `execute`
 # never starts a container, so the digest only has to satisfy the runner's
@@ -57,6 +58,12 @@ def _patch_executor(monkeypatch, callback) -> None:
         )
 
     monkeypatch.setattr(ContainerRunner, "execute", execute)
+    # The callback above is the whole boundary: no command reaches a container,
+    # so the daemon probe is a precondition these tests never intended to
+    # depend on. Removing it does not add any path that could reach a daemon.
+    monkeypatch.setattr(
+        ContainerRunner, "require_available", lambda self, deadline=None: None
+    )
 
 
 def _base_python() -> str:
@@ -70,6 +77,7 @@ def _base_python() -> str:
     return "python"
 
 
+@needs_docker
 def test_quality_mcp_preserves_failed_test_result(tmp_path: Path) -> None:
     (tmp_path / "test_failure.py").write_text(
         "def test_fails():\n    assert False\n", encoding="utf-8"
@@ -111,6 +119,7 @@ def test_denied_quality_operation_never_starts_subprocess(tmp_path: Path, monkey
     assert result.status is ToolStatus.DENIED
 
 
+@needs_docker
 def test_quality_getter_preserves_last_real_result(tmp_path: Path) -> None:
     (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
     mcp = _quality(tmp_path, image=REAL)
@@ -523,6 +532,7 @@ def test_quality_prefers_hashed_lock_and_installs_project_without_deps(
         quality.close()
 
 
+@needs_docker
 def test_real_project_modules_cannot_shadow_quality_toolchain(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo_pkg").mkdir(parents=True)
     (tmp_path / "src" / "demo_pkg" / "__init__.py").write_text(
@@ -646,6 +656,7 @@ def test_venv_creation_is_an_interruptible_isolated_subprocess(
 
 
 
+@needs_docker
 def test_quality_tools_install_uses_the_complete_declared_lock(tmp_path: Path) -> None:
     """HIGH: --no-deps is safe only with the complete declared toolchain closure."""
     (tmp_path / "requirements.lock").write_text(
@@ -700,6 +711,7 @@ def test_missing_workspace_is_reported_without_starting_a_server(tmp_path: Path)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin TLS sandbox regression")
+@needs_docker
 def test_install_phase_can_download_over_real_pypi_tls(tmp_path: Path) -> None:
     quality = _quality(tmp_path, image=REAL, timeout_seconds=30)
     try:
@@ -845,6 +857,7 @@ def test_quality_container_contract_is_documented() -> None:
     assert "[Settings](../src/engineering_team/config.py)" in operations
 
 
+@needs_docker
 def test_ruff_config_stays_inside_the_sandboxed_project(tmp_path: Path) -> None:
     """Los demos viven dentro del repo padre. Ruff busca su configuracion
     subiendo por el arbol, llega al pyproject del padre -fuera del sandbox- y
@@ -873,6 +886,7 @@ def test_ruff_config_stays_inside_the_sandboxed_project(tmp_path: Path) -> None:
         assert result.status is not ToolStatus.UNAVAILABLE
 
 
+@needs_docker
 def test_a_project_at_the_mount_root_still_imports_its_own_modules(
     tmp_path: Path,
 ) -> None:
@@ -905,6 +919,7 @@ def test_a_project_at_the_mount_root_still_imports_its_own_modules(
         quality.close()
 
 
+@needs_docker
 def test_ruff_reads_the_project_configuration_from_inside_the_container(
     tmp_path: Path,
 ) -> None:
@@ -931,3 +946,88 @@ def test_ruff_reads_the_project_configuration_from_inside_the_container(
         assert result.status is ToolStatus.SUCCESS, detail
     finally:
         quality.close()
+
+
+# A real Maven failure, shaped like the ones in the campaign's stored receipts:
+# the cause is printed once near the head of the failing phase, and the fixed
+# `[Help 1]` footer is what the log actually ends with.
+MAVEN_COMPILATION_FAILURE = (
+    "[INFO] Scanning for projects...\n"
+    + "[INFO] Downloading from central: https://repo.maven.apache.org/artifact.jar\n" * 200
+    + "[ERROR] COMPILATION ERROR : \n"
+    "[ERROR] /project-root/src/main/java/ProductController.java:[5,37] cannot find symbol\n"
+    "  symbol:   class InvalidProductNameException\n"
+    "  location: package com.example.exception\n"
+    "[INFO] ------------------------------------------------------\n"
+    "[INFO] BUILD FAILURE\n"
+    + "[INFO] Total time:  12.345 s\n" * 200
+    + "[ERROR] Failed to execute goal maven-compiler-plugin:compile on project demo: "
+    "Compilation failure\n"
+    "[ERROR] -> [Help 1]\n"
+    "[ERROR] \n"
+    "[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.\n"
+    "[ERROR] Re-run Maven using the -X switch to enable full debug logging.\n"
+    "[ERROR] For more information about the errors and possible solutions, "
+    "please read the following articles:\n"
+    "[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException\n"
+)
+
+
+def test_a_maven_error_at_the_head_survives_both_tail_truncations() -> None:
+    retained = retained_output(MAVEN_COMPILATION_FAILURE)
+
+    # What the tail cut alone kept: the help footer, not the cause. This is the
+    # defect, measured against the same log.
+    assert "cannot find symbol" not in MAVEN_COMPILATION_FAILURE[-4000:][-600:]
+    # `apply_run.tool_outcomes()` keeps the last 600 characters of this summary.
+    assert "cannot find symbol" in retained[-600:]
+    assert "ProductController.java" in retained[-600:]
+    assert len(retained) <= 4000
+
+
+def test_the_extracted_blocks_carry_causes_and_drop_mavens_help_footer() -> None:
+    errors = extract_build_errors(MAVEN_COMPILATION_FAILURE)
+
+    assert "COMPILATION ERROR" in errors
+    assert "symbol:   class InvalidProductNameException" in errors
+    assert "Failed to execute goal" in errors
+    assert "[Help 1]" not in errors
+    assert "re-run Maven with the -e switch" not in errors
+
+
+def test_error_extraction_is_bounded_by_block_count_and_bytes() -> None:
+    log = "".join(
+        f"[ERROR] /src/main/java/File{index}.java:[1,1] cannot find symbol number {index}\n"
+        for index in range(200)
+    )
+
+    errors = extract_build_errors(log)
+
+    assert errors.count("[ERROR]") == 8
+    assert len(errors) <= 1500
+    assert "number 0" in errors
+    assert "number 199" not in errors
+    assert len(extract_build_errors(log, max_blocks=2)) < len(errors)
+    assert len(extract_build_errors(log, budget=120)) <= 120
+
+
+def test_a_surefire_failure_summary_is_kept_without_a_maven_error_prefix() -> None:
+    log = (
+        "-------------------------------------------------------\n T E S T S\n"
+        + "[INFO] Running com.example.ProductServiceTest\n" * 300
+        + "Tests run: 12, Failures: 2, Errors: 0, Skipped: 0\n"
+        "Tests in error:\n"
+        + "[INFO] irrelevant trailing chatter\n" * 300
+    )
+
+    errors = extract_build_errors(log)
+
+    assert "Tests run: 12, Failures: 2" in errors
+    assert "Tests in error:" in errors
+    assert "Tests run: 12, Failures: 2" in retained_output(log)[-600:]
+
+
+def test_a_log_without_errors_keeps_exactly_the_tail_it_kept_before() -> None:
+    clean = "".join(f"[INFO] Tests run: 4, Failures: 0, Errors: 0 -- run {i}\n" for i in range(2000))
+
+    assert retained_output(clean) == clean[-4000:]

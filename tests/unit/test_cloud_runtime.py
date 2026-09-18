@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
 from engineering_team.config import Settings
+from engineering_team.contracts.developer_plan import DeveloperTargetPlan, plan_candidate
 from engineering_team.contracts.enums import (
     ActionMode,
     AgentRole,
@@ -636,3 +639,185 @@ def test_cohere_output_budget_stays_under_its_model_limit(role, expected):
         CloudModelRuntime(settings, client=client, primary=True).invoke_artifact(
             role, cloud_envelope(), product_candidate())
     assert budgets == [expected]
+
+
+# -- what a rejected generation leaves behind (M-05, A-12) -------------------
+
+_EXCERPT_LIMIT = 2000
+
+
+def developer_plan_envelope() -> ContextEnvelope:
+    return ContextEnvelope(
+        agent=AgentRole.DEVELOPER, current_task="plan the target files",
+        state_projection={"requirement": "Add a health endpoint"},
+        rag_evidence=[], tool_results=[], remediation_feedback=None,
+        output_schema="", allowed_tools=[], model_profile="CLOUD_FALLBACK",
+        projection_fingerprint="fixture-fingerprint",
+    )
+
+
+def target_plan_candidate() -> DeveloperTargetPlan:
+    return plan_candidate(
+        ["app.py", "tests/test_app.py", "pyproject.toml"], authored=set()
+    )
+
+
+def _google_runtime(
+    settings: Settings, client: httpx.Client, trace: TraceSession
+) -> CloudModelRuntime:
+    return CloudModelRuntime(settings, client=client, trace=trace, primary=True)
+
+
+def test_a_governed_contradiction_records_the_violated_rule_and_the_diffed_fields() -> None:
+    """The rule the model broke was computed, rendered into one English string
+    and thrown away. Nothing downstream could group rejections by rule, so a
+    plan that named an uninspected path and one that edited a protected test
+    were the same opaque `governed artifact contradiction` in the receipt."""
+    candidate = target_plan_candidate()
+    rejected = candidate.model_copy(update={"edit_paths": ["missing.py"]})
+    settings = Settings(
+        cloud_enabled=True, local_first=False, gemini_api_key="fixture-key",
+        cloud_chain_developer="google:gemini-3.5-flash",
+    )
+    body = {"candidates": [{"content": {"parts": [{"text": rejected.model_dump_json()}]}}]}
+    trace = TraceSession(trace_id="trace", run_id="run", live=False)
+
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body))
+    ) as client:
+        runtime = _google_runtime(settings, client, trace)
+        with pytest.raises(RuntimeError, match="target plan rejected"):
+            runtime.invoke_artifact(
+                AgentRole.DEVELOPER, developer_plan_envelope(), candidate
+            )
+
+    attempt = runtime.attempts[-1]
+    assert attempt.violated_rule == "target plan references an uninspected inventory path"
+    assert attempt.governed_fields_diff == ["edit_paths"]
+    # The rendered string is routed on elsewhere by prefix and substring, so the
+    # typed fields are additive: they must not come at the cost of changing it.
+    assert attempt.error == (
+        "CLOUD_FALLBACK_UNAVAILABLE: target plan rejected: "
+        "target plan references an uninspected inventory path"
+    )
+    assert attempt.error_category == "governed_contradiction"
+    assert trace.events[-1]["metadata"]["violated_rule"] == attempt.violated_rule
+    assert trace.events[-1]["metadata"]["governed_fields_diff"] == ["edit_paths"]
+
+
+def test_a_transport_failure_carries_no_violated_rule() -> None:
+    """The typed fields describe a rejected answer; a 503 rejected nothing."""
+    runtime = _runtime(503, {"error": {"message": "service unavailable"}})
+    with pytest.raises(RuntimeError, match="provider_unavailable"):
+        runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), product_candidate())
+
+    attempt = runtime.attempts[-1]
+    assert attempt.violated_rule is None
+    assert attempt.governed_fields_diff is None
+
+
+def test_a_rejected_generation_records_a_bounded_excerpt_of_the_prompt() -> None:
+    """264 of 290 failed generations carried neither prompt nor answer, so the
+    one thing a diagnosis needs -- what was asked -- was only on the successful
+    path. The excerpt is bounded, and its tail is the end of the prompt, where
+    the candidate artifact and the task actually are."""
+    long_rules = [f"Rule {index}: " + "healthy status " * 20 for index in range(40)]
+    candidate = product_candidate().model_copy(update={"business_rules": long_rules})
+    settings = Settings(
+        cloud_enabled=True, local_first=False, gemini_api_key="fixture-key",
+        cloud_chain_product="google:gemini-3.5-flash",
+    )
+    trace = TraceSession(trace_id="trace", run_id="run", live=False)
+
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(503, json={}))
+    ) as client:
+        runtime = _google_runtime(settings, client, trace)
+        with pytest.raises(RuntimeError, match="provider_unavailable"):
+            runtime.invoke_artifact(AgentRole.PRODUCT, cloud_envelope(), candidate)
+
+    failed = trace.events[-1]
+    assert failed["level"] == "ERROR"
+    assert len(candidate.model_dump_json().encode()) > _EXCERPT_LIMIT
+    assert len(failed["input"]["user_prompt"].encode()) == _EXCERPT_LIMIT
+    assert len(failed["input"]["system_prompt"].encode()) <= _EXCERPT_LIMIT
+    assert failed["input"]["user_prompt"].endswith("Do not omit schema-optional keys.")
+
+
+def test_a_rejected_generation_records_the_answer_that_was_rejected() -> None:
+    """A schema violation is unreadable without the text that violated it."""
+    settings = Settings(
+        cloud_enabled=True, local_first=False, gemini_api_key="fixture-key",
+        cloud_chain_product="google:gemini-3.5-flash",
+    )
+    answer = "not json at all " * 300
+    body = {"candidates": [{"content": {"parts": [{"text": answer}]}}]}
+    trace = TraceSession(trace_id="trace", run_id="run", live=False)
+
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body))
+    ) as client:
+        runtime = _google_runtime(settings, client, trace)
+        with pytest.raises(RuntimeError, match="schema validation"):
+            runtime.invoke_artifact(
+                AgentRole.PRODUCT, cloud_envelope(), product_candidate()
+            )
+
+    failed = trace.events[-1]
+    assert failed["output"]["response"] == answer[-_EXCERPT_LIMIT:]
+    assert len(failed["output"]["response"].encode()) == _EXCERPT_LIMIT
+
+
+def test_a_failure_before_any_answer_records_no_answer_at_all() -> None:
+    """`raw` only exists once a response was parsed; a missing field means the
+    provider never gave one, and an empty excerpt would claim it did."""
+    settings = Settings(
+        cloud_enabled=True, local_first=False, gemini_api_key="fixture-key",
+        cloud_chain_product="google:gemini-3.5-flash",
+    )
+    trace = TraceSession(trace_id="trace", run_id="run", live=False)
+
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"usage": {}}))
+    ) as client:
+        runtime = _google_runtime(settings, client, trace)
+        with pytest.raises(RuntimeError, match="missing response field"):
+            runtime.invoke_artifact(
+                AgentRole.PRODUCT, cloud_envelope(), product_candidate()
+            )
+
+    failed = trace.events[-1]
+    assert failed["output"] is None
+    assert failed["input"]["user_prompt"]
+
+
+def test_a_recorded_prompt_excerpt_carries_no_secret_the_request_withheld() -> None:
+    """The excerpt is the prompt that was already redacted before transport, so
+    this widens no surface: it attaches to the trace exactly what the provider
+    itself received, bounded."""
+    requirement = "Add a health endpoint using Server=db;Password=hunter2-fixture;"
+    envelope = ContextEnvelope(
+        agent=AgentRole.PRODUCT, current_task="classify requirement",
+        state_projection={"requirement": requirement},
+        rag_evidence=[], tool_results=[], remediation_feedback=None,
+        output_schema="", allowed_tools=[], model_profile="CLOUD_FALLBACK",
+        projection_fingerprint="fixture-fingerprint",
+    )
+    settings = Settings(
+        cloud_enabled=True, local_first=False, gemini_api_key="fixture-key",
+        cloud_chain_product="google:gemini-3.5-flash",
+    )
+    sent: list[bytes] = []
+    trace = TraceSession(trace_id="trace", run_id="run", live=False)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        sent.append(request.content)
+        return httpx.Response(503, json={})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        runtime = _google_runtime(settings, client, trace)
+        with pytest.raises(RuntimeError, match="provider_unavailable"):
+            runtime.invoke_artifact(AgentRole.PRODUCT, envelope, product_candidate())
+
+    assert sent and b"hunter2-fixture" not in sent[0]
+    assert "hunter2-fixture" not in json.dumps(trace.events[-1])

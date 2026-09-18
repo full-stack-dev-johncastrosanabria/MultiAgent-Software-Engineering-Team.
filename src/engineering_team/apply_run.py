@@ -12,18 +12,23 @@ file content is written for real via ``create_file``/``update_file`` — see
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterable
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from engineering_team.components import Component, components_in
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import ErrorCode, ReviewerStatus, ToolStatus
-from engineering_team.contracts.models import ToolResult
+from engineering_team.contracts.enums import ReviewerStatus, StopCause, ToolStatus
+from engineering_team.contracts.models import (
+    BASELINE_RISK_PREFIX,
+    ReviewerDecision,
+    ToolResult,
+)
 from engineering_team.delivery import (
     BRANCH_NAMESPACE,
     DeliveryRefused,
@@ -32,6 +37,7 @@ from engineering_team.delivery import (
     build_delivery,
 )
 from engineering_team.docker_labels import project_slug, sweep
+from engineering_team.graph.routers import latest_successful_diff
 from engineering_team.graph.stategraph import build_engineering_graph
 from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.infrastructure_prerequisite import (
@@ -201,18 +207,73 @@ class _ProjectInfrastructureQuality:
         self.quality = None
         self._closed = False
 
-    def __enter__(self):
-        from engineering_team.mcp.quality import CompositeQuality
-        from engineering_team.services import ServiceStack, ServiceStartupError
+    @staticmethod
+    @contextmanager
+    def _infrastructure_step():
+        """Name a failure inside this block as the infrastructure's, not ASET's.
+
+        `ServiceStartupError` is what the CLI turns into its infrastructure
+        exit status, and the ghcycle scorer into `infrastructure_unavailable`
+        (`contracts/enums.py`, `INFRASTRUCTURE_EXIT_CODE`). So only the steps
+        that ask the infrastructure something are wrapped -- the sweep, reading
+        the compose model, bringing the services and the run daemon up -- by
+        *step*, not by exception type: a bare `RuntimeError` from `up` is still
+        a dependency that never came up. Judging the compose model once read,
+        and wiring the components on top of a stack that did come up, are
+        ASET's own code; a bug or a refusal there propagates as itself and
+        reads as a crash.
+        """
+        from engineering_team.services import ServiceStartupError
 
         try:
-            # The sweep runs before anything is started: what a crashed run left
-            # behind is removed now, and only what no live run owns.
-            sweep(self.run_id)
+            yield
+        except Exception as exc:
+            raise ServiceStartupError(f"INFRASTRUCTURE_ERROR: {exc}") from exc
+
+    def __enter__(self):
+        from engineering_team.mcp.quality import CompositeQuality
+        from engineering_team.services import (
+            ServiceStack,
+            ServiceStartupError,
+            find_compose_file,
+            read_compose_model,
+        )
+
+        try:
+            with self._infrastructure_step():
+                # The sweep runs before anything is started: what a crashed run
+                # left behind is removed now, and only what no live run owns. A
+                # runtime that never answers is not one with nothing to clean
+                # (A-13, B-11): report it as the infrastructure failure it is
+                # instead of starting against a stack the sweep never actually
+                # looked at.
+                swept = sweep(self.run_id)
+                if swept["error_code"] is not None:
+                    raise ServiceStartupError(
+                        "the pre-run Docker sweep never got an answer from the "
+                        "runtime partway through; cleanup is incomplete, not "
+                        "confirmed done"
+                    )
+                deadline = time.monotonic() + self.timeout_seconds
+                # Of building the stack, only reading the compose model asks
+                # the infrastructure something: `docker compose config`.
+                compose_file = find_compose_file(self.root)
+                model = (
+                    None if compose_file is None
+                    else read_compose_model(compose_file, deadline)
+                )
+            # Judging that model is ASET's own policy: which services to start,
+            # and whether they can be isolated at all (`_validate_isolation`
+            # refuses a mounted runtime socket, `privileged`, `network_mode`,
+            # an external network). A refusal there is ASET declining the
+            # project's configuration, not the infrastructure failing, so it
+            # propagates as itself and reads as a crash, like QualityMCP's.
             self.services = ServiceStack(
-                self.root, self.run_id or str(uuid.uuid4()), project=self.project
+                self.root, self.run_id or str(uuid.uuid4()), project=self.project,
+                model=model,
             )
-            self.services.up(time.monotonic() + self.timeout_seconds)
+            with self._infrastructure_step():
+                self.services.up(deadline)
             # The project declared nothing and this run inferred it. Under ADR 18
             # that is a blocking prerequisite to deliver, not a detail: the
             # inference used to be written to a temporary file and deleted, so
@@ -227,17 +288,18 @@ class _ProjectInfrastructureQuality:
                     run_id=self.run_id or None,
                     project=self.project,
                 )
-                self.daemon.up(time.monotonic() + self.timeout_seconds)
+                with self._infrastructure_step():
+                    self.daemon.up(time.monotonic() + self.timeout_seconds)
             for component in self.targets:
                 self._add_component(component)
             # Keep a stable handle even when a new test project is authored.
             self.quality = CompositeQuality(self.backends, refresh=self.refresh_components)
             return self.quality
-        except BaseException as exc:
+        except BaseException:
+            # Everything started so far is torn down whatever failed; only the
+            # name of the failure depends on which step it came from.
             self.close()
-            if not isinstance(exc, Exception):
-                raise
-            raise ServiceStartupError(f"INFRASTRUCTURE_ERROR: {exc}") from exc
+            raise
 
     def _add_component(self, component):
         from engineering_team.mcp.container import ContainerRunner
@@ -565,7 +627,7 @@ def _deliver_infrastructure_first(
 ERROR_EXCERPT_LIMIT = 600
 
 
-def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
+def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, Any]]:
     """Name every tool the run invoked, how it ended, and why when it did not.
 
     The evidence recorded which files were written but never which tools ran,
@@ -587,16 +649,143 @@ def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
     The tail is what is kept: the reason a tool failed is the last line of the
     process output far more often than the first. A tool that succeeded carries
     no excerpt; its output is bulk, not evidence.
+
+    ``error_code`` travels alongside ``error`` on every entry, present or not:
+    a reader who wants a run's environment failures cannot filter ``dict``
+    entries that lack the key at all, and the whole point (a ghcycle scorer
+    that never has to compare error *text*) is defeated if the discriminator
+    is itself conditional. Its value is ``ToolResult.error_code``
+    (``contracts/models.py:175``) -- the typed enum ``mcp.quality`` already
+    stamps on an UNAVAILABLE result -- or ``None``, never derived from
+    ``error``'s prefix.
     """
-    outcomes: list[dict[str, str]] = []
+    outcomes: list[dict[str, Any]] = []
     for item in results:
-        outcome = {"tool": item.tool_name, "status": item.status.value}
+        outcome: dict[str, Any] = {"tool": item.tool_name, "status": item.status.value}
         if item.status is not ToolStatus.SUCCESS:
             reason = item.error or item.output_summary or ""
             if reason:
                 outcome["error"] = redact_secrets(reason)[-ERROR_EXCERPT_LIMIT:]
+        outcome["error_code"] = item.error_code.value if item.error_code is not None else None
         outcomes.append(outcome)
     return outcomes
+
+
+def unresolved_risks(
+    results: Iterable[ToolResult], review: ReviewerDecision | None
+) -> list[dict[str, str]]:
+    """Say what the run left open, so that it cannot vanish by omission.
+
+    Everything here was already somewhere in the report, and that was the
+    problem: a reader had to reconstruct it. The receipt stated what changed,
+    what was written and what the Reviewer decided, and a run that ended with
+    untouched risk, unanswered objections or a suite that never ran looked, at a
+    glance, exactly like one that ended clean. Absence of a statement is not
+    evidence of absence, and the receipt was making it read as such.
+
+    Four things are left open, and each is a different kind:
+
+    ``baseline_risk`` is risk the system decided on purpose not to fix. Security
+    marks dependency advisories on manifests the change never touched, and
+    ``graph.routers.remediation_fingerprint`` then drops those from the failure
+    identity so that a repeat is not mistaken for a new failure. Nothing
+    remediates them and nothing ever will, so an approval that carries them is
+    an approval with risk standing behind it. It is reported whatever the
+    verdict was, because approval is what makes it easy to miss.
+
+    ``open_objection`` is the rest of a non-approved run's problems: raised,
+    never answered. An approved run's problems are not listed -- the Reviewer
+    approved with them in hand, which is a decision, not an omission.
+
+    ``unreviewed`` is a run that never got a verdict at all. ``review: null``
+    beside an empty problem list is the quietest way a receipt can report that
+    nothing was checked, and it is not the same outcome as approval.
+
+    ``unverified`` is a tool whose last word was not SUCCESS. Only the last one:
+    a suite that failed and then passed closed its own risk, and listing the
+    failed attempt would report a fixed problem as an open one -- the same
+    dishonesty as the first-diff receipt, pointing the other way.
+    """
+    risks: list[dict[str, str]] = []
+    if review is None:
+        risks.append({
+            "kind": "unreviewed",
+            "source": "reviewer",
+            "detail": "the run ended before a Reviewer decision",
+        })
+    else:
+        for problem in review.problems:
+            if problem.startswith(BASELINE_RISK_PREFIX):
+                kind = "baseline_risk"
+            elif review.status is not ReviewerStatus.APPROVED:
+                kind = "open_objection"
+            else:
+                continue
+            risks.append({
+                "kind": kind, "source": "reviewer", "detail": redact_secrets(problem),
+            })
+
+    last_outcome: dict[str, ToolResult] = {}
+    for item in results:
+        last_outcome[item.tool_name] = item
+    for name, item in last_outcome.items():
+        if item.status is ToolStatus.SUCCESS:
+            continue
+        reason = redact_secrets(
+            item.error or item.output_summary or ""
+        )[-ERROR_EXCERPT_LIMIT:]
+        risks.append({
+            "kind": "unverified",
+            "source": name,
+            "detail": f"{item.status.value}: {reason}" if reason else item.status.value,
+        })
+    return risks
+
+
+# A rev-parse against a local checkout. Short, because a report is owed either
+# way and a git that does not answer promptly is an answer of None.
+_GIT_SHA_TIMEOUT_SECONDS = 30
+
+
+def target_repo_sha(project_root: Path) -> str | None:
+    """The commit the run worked on, or ``None`` when there is no answer.
+
+    The receipt outlives the checkout. ``ephemeral_checkout`` removes its clone
+    in a ``finally`` block as the run returns, so by the time anyone reads the
+    report there is nothing left to ask. This has to be read while the working
+    copy is still on disk, which is why it is computed here rather than by
+    whoever reads the report afterwards.
+
+    It names the commit the run *started from*. Files the run wrote are in the
+    working tree and do not move HEAD, and this is read before the delivery
+    block below, so a branch this system commits cannot become the answer.
+
+    It never raises. A target that is not a git repository, a repository with no
+    commits, an absent git, a git that hangs -- each of those is a report
+    without a SHA, not a run that failed, and the run's real outcome must not be
+    replaced by this lookup's. ``GitDelivery._git`` is the wrong instrument for
+    exactly that reason: it turns a non-zero git into ``DeliveryRefused``. The
+    tolerant form is the one ``delivery.py`` uses inline for its own optional
+    lookups -- ``check=False``, then read ``returncode``.
+
+    The value is a SHA or ``None``, never ``""``, and ``run_on_project`` records
+    the key unconditionally. So ``None`` says "no SHA was obtained" and nothing
+    else: not "not computed yet", which would be a missing key, and not a falsy
+    string a reader could take for one. A repository with no commits reads
+    ``None`` too, because it has no SHA that a caller could have been given
+    instead.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+            timeout=_GIT_SHA_TIMEOUT_SECONDS, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
 
 
 def run_on_project(
@@ -631,10 +820,7 @@ def run_on_project(
 
     implementation = state.get("implementation")
     review = state.get("review")
-    diff_result = next(
-        (item for item in state.get("tool_results", []) if item.tool_name == "get_diff"),
-        None,
-    )
+    diff_result = latest_successful_diff(state.get("tool_results", []))
     writes = [
         item for item in state.get("tool_results", [])
         if item.tool_name in {"create_file", "update_file"}
@@ -645,8 +831,12 @@ def run_on_project(
         "trace_id": trace.trace_id,
         "langfuse_live": trace.live,
         "project_path": str(project_root),
+        # Read here, with the checkout still on disk. Always present, so its
+        # absence can never be mistaken for "not computed"; None means no SHA.
+        "target_repo_sha": target_repo_sha(project_root),
         "cloud_first": cloud_first,
         "final_status": state.get("final_status"),
+        "stop_cause": state.get("stop_cause"),
         "route_history": state.get("route_history", []),
         "iterations": state.get("iteration", 0),
         "duration_seconds": duration,
@@ -667,6 +857,7 @@ def run_on_project(
             f"{item.code.value}: {item.detail}" for item in errors
         ],
         "tool_outcomes": tool_outcomes(state.get("tool_results", [])),
+        "unresolved_risks": unresolved_risks(state.get("tool_results", []), review),
         "human_review_required": bool(state.get("human_review_required")),
         # ADR 18. A run that ends having delivered infrastructure and no
         # functional code is a success, and anything reading these outcomes has
@@ -680,9 +871,14 @@ def run_on_project(
             if (prerequisite := state.get("infrastructure_prerequisite")) is not None
             else None
         ),
-        "destructive_authorization_blocked": any(
-            item.code is ErrorCode.TOOL_ERROR and "destructive operation" in item.detail
-            for item in errors
+        # Derived from the cause the graph named, not recomputed by searching the
+        # error text for "destructive operation". Two vocabularies for one fact
+        # is what let a refused answer be filed as a provider outage, and this
+        # dict has no business repeating the mistake one key after recording the
+        # fix. An apply run is never interactive, so the guardrail's refusal ends
+        # the run at the node that names it and the two agree by construction.
+        "destructive_authorization_blocked": (
+            state.get("stop_cause") == StopCause.DESTRUCTIVE_AUTHORIZATION_BLOCKED.value
         ),
     }
     # Optional post-APPROVED delivery (ADR 6). Default delivery_backend remains

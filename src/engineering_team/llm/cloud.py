@@ -20,7 +20,7 @@ from engineering_team.guardrails.secrets import (
     require_safe_cloud_context,
 )
 from engineering_team.llm.prompting import build_role_prompts, governed_output_schema
-from engineering_team.models.context import ContextEnvelope
+from engineering_team.models.context import ContextEnvelope, _bounded_utf8_tail
 
 from .model_health import ModelHealth
 from .registry import ModelSelection
@@ -159,6 +159,23 @@ _CLOUD_MAP[AgentRole.REVIEWER] = ("groq", "openai/gpt-oss-120b")
 
 
 _FENCED_JSON = re.compile(r"```(?:json)?[ \t]*\n(.*?)\n[ \t]*```", re.DOTALL)
+
+# What a failed generation may attach to its trace, in bytes, per string. A
+# whole Developer prompt is tens of kilobytes and a trace is not an archive;
+# the tail is where the task, the candidate artifact and the answer's verdict
+# are, the same reason models/context.py bounds its diagnostics from the end.
+_FAILED_GENERATION_EXCERPT_LIMIT = 2000
+
+
+def _excerpt(value: str) -> str:
+    """The last bytes of a prompt or an answer, for the trace of a failure.
+
+    Bounding only. Prompts reach here already redacted for transport and the
+    answer is what the provider returned, so there is nothing left to redact
+    that redacting again would catch -- and cutting a string that still held a
+    secret could remove the very token that lets the detector recognise it.
+    """
+    return _bounded_utf8_tail(value, _FAILED_GENERATION_EXCERPT_LIMIT)
 
 
 def _json_payload(raw: str) -> str:
@@ -506,6 +523,11 @@ class CloudModelRuntime:
         owns_client = self.client is None
         client = self.client or httpx.Client(timeout=request_timeout)
         started = time.perf_counter()
+        # The provider's own answer, once one has been extracted. A failure
+        # before that -- a transport error, or a response with no such field --
+        # has no answer to report, and None states it instead of leaving the
+        # handler to ask whether a local name happens to be bound.
+        raw: str | None = None
         try:
             if selection.provider in _GOOGLE_CREDENTIALS:
                 credential = _GOOGLE_CREDENTIALS[selection.provider]
@@ -616,6 +638,10 @@ class CloudModelRuntime:
                 self.trace.record(
                     f"{role.value} cloud {'primary' if self.primary else 'fallback'}",
                     as_type="generation",
+                    input={
+                        "system_prompt": _excerpt(system_prompt),
+                        "user_prompt": _excerpt(user_prompt),
+                    },
                     metadata=info.model_dump(mode="json"), level="ERROR",
                     status_message=error,
                 )
@@ -667,12 +693,21 @@ class CloudModelRuntime:
                     "schema_validation" if isinstance(exc, ValidationError) else "invalid_response"
                 ),
                 retryable=True,
+                # Already computed to render `detail` above; kept typed as well,
+                # so a rejection can be grouped by the rule it broke.
+                violated_rule=exc.reason if contradiction else None,
+                governed_fields_diff=exc.fields if contradiction else None,
             )
             self._remember(info)
             if self.trace is not None:
                 self.trace.record(
                     f"{role.value} cloud {'primary' if self.primary else 'fallback'}",
                     as_type="generation",
+                    input={
+                        "system_prompt": _excerpt(system_prompt),
+                        "user_prompt": _excerpt(user_prompt),
+                    },
+                    output=None if raw is None else {"response": _excerpt(raw)},
                     metadata=info.model_dump(mode="json"), level="ERROR",
                     status_message=error,
                 )

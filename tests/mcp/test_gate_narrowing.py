@@ -68,3 +68,29 @@ def test_the_filter_reaches_quality_from_settings(tmp_path: Path) -> None:
         assert quality.test_filter == "FullyQualifiedName!~E2ETests"
     finally:
         quality.close()
+
+
+def test_the_refusal_is_this_systems_own_decision_not_an_environment_failure(
+    tmp_path: Path,
+) -> None:
+    """The refusal above is ours: a configuration this profile cannot honour.
+
+    Nothing in the environment failed -- no container, workspace or daemon was
+    even asked -- so it must not carry `INFRASTRUCTURE_ERROR`, or the ghcycle
+    scorer files an operator's filter choice as an environment failure. With
+    no code of its own it falls back to `MCP_ERROR`, the label it had before
+    phase 1.
+    """
+    quality = QualityMCP(
+        tmp_path,
+        runner=ContainerRunner(tmp_path, image=profile_for("jvm").image),
+        profile=profile_for("jvm"),
+        test_filter="SomeExpression",
+    )
+    try:
+        result = quality.run_tests(AgentRole.TESTING)
+
+        assert result.status is ToolStatus.UNAVAILABLE
+        assert result.error_code is None
+    finally:
+        quality.close()

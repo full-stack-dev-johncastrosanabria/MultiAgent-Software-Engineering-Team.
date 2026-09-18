@@ -9,12 +9,15 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import AgentRole
 from engineering_team.contracts.models import ProductSpecification
 from engineering_team.llm.cloud import CloudModelRuntime
+from engineering_team.llm.runtime import LocalModelRuntime
 from engineering_team.models.context import ContextEnvelope
+from engineering_team.observability.langfuse import TraceSession
 from engineering_team.run_events import _route_steps
 
 
@@ -83,6 +86,77 @@ def test_the_trace_and_the_record_agree() -> None:
         runtime = _succeeding_runtime(primary=primary)
         _, info = runtime.invoke_artifact(AgentRole.PRODUCT, _envelope(), _candidate())
         assert info.fallback_used is not primary
+
+
+# -- finding 5, second half: the attempts a failed fallback leaves behind ----
+
+
+def _failing_local_runtime(
+    trace: TraceSession | None = None, *, max_local_retries: int = 1,
+) -> LocalModelRuntime:
+    """A local runtime whose Ollama endpoint answers 503 on every attempt."""
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(503, json={"error": "service unavailable"})
+    )
+    return LocalModelRuntime(
+        Settings(max_local_retries=max_local_retries),
+        client=httpx.Client(transport=transport),
+        trace=trace,
+    )
+
+
+def test_a_local_fallback_attempt_that_fails_is_still_marked_as_a_fallback() -> None:
+    """A failed attempt is the only record a fully exhausted chain leaves.
+
+    The successful return value was the one place the fallback was stamped, so
+    the attempts collected on the failure path -- the exact path that ends in
+    HUMAN_REVIEW_REQUIRED -- said the replacement runtime had never run.
+    """
+    trace = TraceSession(trace_id="trace", run_id="run", live=False)
+    runtime = _failing_local_runtime(trace)
+
+    with pytest.raises(RuntimeError, match="LLM_AVAILABILITY_ERROR"):
+        runtime.invoke_artifact(
+            AgentRole.PRODUCT, _envelope(), _candidate(),
+            fallback_reason="LLM_AVAILABILITY_ERROR",
+        )
+
+    assert runtime.attempts
+    assert all(attempt.fallback_used for attempt in runtime.attempts)
+    assert {attempt.fallback_reason for attempt in runtime.attempts} == {
+        "LLM_AVAILABILITY_ERROR"
+    }
+    recorded = [event for event in trace.events if event["type"] == "generation"]
+    assert recorded
+    assert all(event["metadata"]["fallback_used"] is True for event in recorded)
+
+
+def test_a_local_primary_attempt_that_fails_is_not_marked_as_a_fallback() -> None:
+    """The fix must not stamp every failure as a fallback either."""
+    runtime = _failing_local_runtime()
+
+    with pytest.raises(RuntimeError, match="LLM_AVAILABILITY_ERROR"):
+        runtime.invoke_artifact(AgentRole.PRODUCT, _envelope(), _candidate())
+
+    assert runtime.attempts
+    assert not any(attempt.fallback_used for attempt in runtime.attempts)
+    assert not any(attempt.fallback_reason for attempt in runtime.attempts)
+
+
+def test_every_retry_of_a_failing_fallback_carries_the_same_fallback_reason() -> None:
+    """One retry is still the same escalation, and must not read as a new one."""
+    runtime = _failing_local_runtime(max_local_retries=1)
+
+    with pytest.raises(RuntimeError, match="LLM_AVAILABILITY_ERROR"):
+        runtime.invoke_artifact(
+            AgentRole.PRODUCT, _envelope(), _candidate(),
+            fallback_reason="LLM_AVAILABILITY_ERROR",
+        )
+
+    assert len(runtime.attempts) == 2
+    assert {attempt.fallback_reason for attempt in runtime.attempts} == {
+        "LLM_AVAILABILITY_ERROR"
+    }
 
 
 # -- finding 6: past decisions shown with the latest review's numbers --------

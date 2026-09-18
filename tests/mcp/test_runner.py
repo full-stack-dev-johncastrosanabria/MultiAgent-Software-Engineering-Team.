@@ -31,7 +31,7 @@ class RecordingRunner:
         self._stdout = stdout
         self.environment: Path | None = None
 
-    def require_available(self) -> None:
+    def require_available(self, deadline: float | None = None) -> None:
         return None
 
     def prepare_scratch(self) -> Path:
@@ -300,7 +300,7 @@ def test_quality_refuses_when_the_runner_reports_no_boundary() -> None:
     """An unsupported host fails before any command is built."""
 
     class UnavailableRunner(RecordingRunner):
-        def require_available(self) -> None:
+        def require_available(self, deadline: float | None = None) -> None:
             raise RuntimeError("quality process sandbox is unavailable")
 
     runner = UnavailableRunner()

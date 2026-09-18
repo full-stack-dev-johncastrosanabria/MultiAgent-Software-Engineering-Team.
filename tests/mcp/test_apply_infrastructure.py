@@ -1,4 +1,5 @@
 """The production container path owns dependencies before baseline and until exit."""
+import json
 import subprocess
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ import pytest
 from engineering_team import apply_run
 from engineering_team.components import Component
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import AgentRole, ToolStatus
+from engineering_team.contracts.enums import AgentRole, ErrorCode, ToolStatus
 from engineering_team.services import (
     ComposeError,
     ServiceStack,
@@ -28,7 +29,7 @@ def infrastructure(tmp_path, monkeypatch):
         network = "aset-test-default"
         networks = ("aset-test-default", "aset-test-admin")
 
-        def __init__(self, root, run_id, project=""):
+        def __init__(self, root, run_id, project="", model=None):
             assert root == tmp_path
             stacks.append(self)
 
@@ -65,6 +66,14 @@ def infrastructure(tmp_path, monkeypatch):
             events.append("close")
 
     monkeypatch.setattr("engineering_team.services.ServiceStack", Stack)
+    # These tests exercise the Python-side orchestration (ServiceStack, the
+    # component runners), not the real Docker sweep -- so the runtime is
+    # faked absent here rather than left to whatever `docker` a machine or a
+    # PATH shim happens to expose. Before this, `sweep()` reached the real
+    # `subprocess` module unmocked and a hung `docker` on PATH hung these
+    # tests too (A-13/B-11), which this isolation removes regardless of what
+    # else is on PATH.
+    monkeypatch.setattr("engineering_team.docker_labels.shutil.which", lambda _name: None)
     monkeypatch.setattr(
         "engineering_team.mcp.quality.build_runner",
         lambda root, _settings, **_kwargs: Runner(root),
@@ -137,6 +146,300 @@ def test_failed_start_cleans_and_reports_infrastructure(tmp_path, monkeypatch, i
     assert not runners
 
 
+def test_a_sweep_that_never_got_an_answer_refuses_to_start(
+    tmp_path, monkeypatch, infrastructure
+):
+    """Deferred L1068: the caller's half of T9's typed sweep refusal.
+
+    `sweep` reporting `INFRASTRUCTURE_ERROR` means cleanup is unknown, not
+    done, so nothing may start on top of it: no stack, no runner, and a
+    `ServiceStartupError` the CLI can carry across the process boundary."""
+    events, stacks, runners = infrastructure
+    monkeypatch.setattr(apply_run, "sweep", lambda run_id: {
+        "containers": [], "networks": [], "volumes": [], "images": [],
+        "error_code": ErrorCode.INFRASTRUCTURE_ERROR,
+    })
+
+    with (
+        pytest.raises(ServiceStartupError) as caught,
+        apply_run.open_project_quality(
+            tmp_path, Settings(quality_runner="container"), timeout_seconds=30
+        ),
+    ):
+        pytest.fail("nothing may start after an unanswered sweep")
+
+    assert caught.value.code is ErrorCode.INFRASTRUCTURE_ERROR
+    assert not stacks and not runners and events == []
+
+
+def test_a_daemon_that_refuses_the_sweep_listing_refuses_the_start_too(
+    tmp_path, monkeypatch, infrastructure
+):
+    """The same refusal, reached through the real `sweep` by the other way a
+    runtime fails to answer (L1069): `docker ps` exiting non-zero at once, as
+    it does with the daemon stopped or the socket denied."""
+    _, stacks, runners = infrastructure
+    monkeypatch.setattr(
+        "engineering_team.docker_labels.shutil.which", lambda _name: "/usr/bin/docker"
+    )
+    monkeypatch.setattr(
+        "engineering_team.docker_labels.subprocess.run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 1, "", "denied"),
+    )
+
+    with (
+        pytest.raises(ServiceStartupError),
+        apply_run.open_project_quality(
+            tmp_path, Settings(quality_runner="container"), timeout_seconds=30
+        ),
+    ):
+        pytest.fail("nothing may start after a refused sweep")
+
+    assert not stacks and not runners
+
+
+def _docker_compose_config(monkeypatch, answer):
+    """Fake the one Docker call building the stack makes, `docker compose
+    config`, and nothing else: `read_compose_model`, `ServiceStack` and its
+    isolation policy run for real. The sweep finds no runtime to ask."""
+    real_run = subprocess.run
+
+    def run(argv, *args, **kwargs):
+        if list(argv[:2]) == ["docker", "compose"] and "config" in argv:
+            return answer(argv, kwargs.get("timeout"))
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr("engineering_team.services.subprocess.run", run)
+    monkeypatch.setattr("engineering_team.docker_labels.shutil.which", lambda _name: None)
+
+
+def _compose_resolves_to(model):
+    return lambda argv, _timeout: subprocess.CompletedProcess(argv, 0, json.dumps(model), "")
+
+
+def _compose_hangs(argv, timeout):
+    raise subprocess.TimeoutExpired(argv, timeout)
+
+
+_RUNTIME_SOCKET = {"services": {"db": {
+    "image": "postgres:16", "volumes": ["/var/run/docker.sock:/var/run/docker.sock"],
+}}}
+
+
+@pytest.mark.parametrize(("model", "refusal"), [
+    (_RUNTIME_SOCKET, "requests a host runtime socket"),
+    ({"services": {"db": {"image": "postgres:16", "volumes": [{
+        "type": "bind", "source": "../outside", "target": "/data",
+    }]}}}, "bind outside the project checkout"),
+    ({"services": {"db": {"image": "postgres:16", "privileged": True}}},
+     "non-isolated container settings"),
+    ({"services": {"db": {"image": "postgres:16"}},
+      "networks": {"shared": {"external": True}}}, "external Compose networks"),
+    ({"services": {"db": {"image": "postgres:16", "networks": {"_backend": None}}},
+      "networks": {"_backend": {}}}, "refusing to override a name like '_backend'"),
+], ids=["runtime-socket", "bind-outside-checkout", "privileged", "external-network",
+        "name-the-override-cannot-write"])
+def test_asets_refusal_of_the_compose_model_is_not_dressed_as_infrastructure(
+    tmp_path, monkeypatch, model, refusal
+):
+    """The compose model was read -- the infrastructure answered -- and ASET's
+    own isolation policy refused what it said. That is ASET declining the
+    project's configuration, so it reaches the caller as the `ComposeError`
+    it is and never as `ServiceStartupError`, which the CLI would turn into
+    the infrastructure exit status. Goes through the real `__enter__` and the
+    real `ServiceStack`; only `docker compose config` is faked."""
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (tmp_path / "outside").mkdir()
+    (root / "compose.yaml").write_text("services: {}")
+    _docker_compose_config(monkeypatch, _compose_resolves_to(model))
+    handle = apply_run.open_project_quality(
+        root, Settings(quality_runner="container"), timeout_seconds=30
+    )
+
+    with pytest.raises(ComposeError, match=refusal) as caught, handle:
+        pytest.fail("a refused compose model must not start")
+
+    assert not isinstance(caught.value, ServiceStartupError)
+    assert handle.services is None  # refused before anything was started
+
+
+def _asets_own_attribute_error(monkeypatch):
+    """A bug in ASET's own wiring, after every infrastructure step succeeded."""
+
+    def broken(self, stack, root):
+        raise AttributeError("'Stack' object has no attribute 'environment'")
+
+    monkeypatch.setattr("engineering_team.services.ServiceStack.environment_for_component", broken)
+    return AttributeError
+
+
+def _quality_constructor_refusal(monkeypatch):
+    """`QualityMCP(...)` refusing its own configuration (a `ValueError`)."""
+
+    def refuse(root, _settings, **_kwargs):
+        raise ValueError("container image must be pinned by digest")
+
+    monkeypatch.setattr("engineering_team.mcp.quality.build_runner", refuse)
+    return ValueError
+
+
+@pytest.mark.parametrize(
+    "inject", [_asets_own_attribute_error, _quality_constructor_refusal],
+    ids=["environment_for_component-bug", "QualityMCP-refusal"],
+)
+def test_a_failure_after_the_infrastructure_steps_is_not_dressed_as_infrastructure(
+    tmp_path, monkeypatch, infrastructure, inject
+):
+    """N-1: only the infrastructure steps (`sweep`, reading the compose model,
+    `services.up`, `daemon.up`) may become `ServiceStartupError`. A failure in
+    wiring the components on top of a stack that came up -- ASET's own bug or
+    its own refusal -- propagates as itself, so the CLI exits as a crash
+    instead of with the infrastructure status. Cleanup still runs."""
+    events, _, _ = infrastructure
+    expected = inject(monkeypatch)
+
+    with (
+        pytest.raises(expected) as caught,
+        apply_run.open_project_quality(
+            tmp_path, Settings(quality_runner="container"), timeout_seconds=30
+        ),
+    ):
+        pytest.fail("the components must not be wired")
+
+    assert not isinstance(caught.value, ServiceStartupError)
+    # Torn down all the same: any runner already built is closed, then the stack.
+    assert events[0] == "up" and events[-1] == "down" and events.count("down") == 1
+    assert "command" not in events
+
+
+def _run_project_through_the_real_startup(tmp_path, monkeypatch):
+    """`engineering-team run-project` down to `_ProjectInfrastructureQuality.
+    __enter__`, with only the model runtimes, tracer and repository client
+    faked -- none of which the startup path under test touches."""
+    from typer.testing import CliRunner
+
+    from engineering_team import cli
+
+    monkeypatch.setattr(apply_run, "MCPRepositoryClient", lambda *a, **k: nullcontext(object()))
+    monkeypatch.setattr(apply_run, "LocalModelRuntime", lambda *a, **k: object())
+    monkeypatch.setattr(apply_run, "build_retriever", lambda *a, **k: object())
+    monkeypatch.setattr(apply_run, "LangfuseTracer", lambda **k: SimpleNamespace(
+        start_run=lambda *a: SimpleNamespace(trace_id="test")
+    ))
+    monkeypatch.setattr(
+        cli, "Settings", lambda: Settings(quality_runner="container", cloud_enabled=False)
+    )
+    return CliRunner().invoke(cli.app, [
+        "run-project", str(tmp_path), "--spec", "add endpoint",
+        "--report-path", str(tmp_path / "report.json"),
+    ])
+
+
+def test_run_project_exits_as_a_crash_for_an_aset_bug_during_stack_startup(
+    tmp_path, monkeypatch, infrastructure
+):
+    """N-1 at the process boundary, on the real path rather than a patched
+    `run_on_project`: the scorer must read this run as `crash`, never as
+    `infrastructure_unavailable`."""
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    _asets_own_attribute_error(monkeypatch)
+
+    result = _run_project_through_the_real_startup(tmp_path, monkeypatch)
+
+    assert result.exit_code not in (0, INFRASTRUCTURE_EXIT_CODE)
+    assert isinstance(result.exception, AttributeError)
+
+
+def test_run_project_exits_with_the_infrastructure_status_when_a_dependency_never_came_up(
+    tmp_path, monkeypatch, infrastructure
+):
+    """The other half, on the same real path: a failed infrastructure step is
+    what the infrastructure status exists for."""
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    def fail(self, deadline):
+        raise RuntimeError("database unhealthy")
+
+    monkeypatch.setattr("engineering_team.services.ServiceStack.up", fail)
+
+    result = _run_project_through_the_real_startup(tmp_path, monkeypatch)
+
+    assert result.exit_code == INFRASTRUCTURE_EXIT_CODE
+
+
+def test_run_project_exits_as_a_crash_when_aset_refuses_the_compose_model(
+    tmp_path, monkeypatch
+):
+    """N-1 in miniature, at the process boundary: a compose file that mounts
+    the Docker socket is refused by ASET's isolation policy, not by the
+    infrastructure, so the scorer must read the run as `crash` and never as
+    `infrastructure_unavailable`. Real `ServiceStack`; only `docker compose
+    config` is faked."""
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    (tmp_path / "compose.yaml").write_text("services: {}")
+    _docker_compose_config(monkeypatch, _compose_resolves_to(_RUNTIME_SOCKET))
+
+    result = _run_project_through_the_real_startup(tmp_path, monkeypatch)
+
+    assert result.exit_code not in (0, INFRASTRUCTURE_EXIT_CODE)
+    assert isinstance(result.exception, ComposeError)
+    assert "requests a host runtime socket" in str(result.exception)
+
+
+def test_run_project_exits_with_the_infrastructure_status_when_compose_cannot_be_read(
+    tmp_path, monkeypatch
+):
+    """The half that must not swing: reading the compose model is the part of
+    building the stack that asks the infrastructure something, so `docker
+    compose config` hanging past its deadline still exits with the
+    infrastructure status."""
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    (tmp_path / "compose.yaml").write_text("services: {}")
+    _docker_compose_config(monkeypatch, _compose_hangs)
+
+    result = _run_project_through_the_real_startup(tmp_path, monkeypatch)
+
+    assert result.exit_code == INFRASTRUCTURE_EXIT_CODE
+    assert "compose could not read compose.yaml" in result.stderr
+
+
+def test_a_run_daemon_that_never_came_up_is_an_infrastructure_failure(
+    tmp_path, monkeypatch, infrastructure
+):
+    """The fourth infrastructure step, pinned like the sweep, the compose read
+    and `services.up`: without this, unwrapping `daemon.up` left every test
+    green and a daemon that never came up read as an ASET crash."""
+    from engineering_team.mcp.run_daemon import RunDaemon, RunDaemonStartupError
+
+    events, _, runners = infrastructure
+
+    def fail(self, deadline):
+        raise RunDaemonStartupError("run daemon startup deadline exceeded")
+
+    monkeypatch.setattr(RunDaemon, "up", fail)
+    monkeypatch.setattr(RunDaemon, "down", lambda self: events.append("daemon-down"))
+    settings = Settings(
+        quality_runner="container",
+        quality_run_daemon_image="docker@sha256:" + "0" * 64,
+    )
+
+    with (
+        pytest.raises(
+            ServiceStartupError, match="INFRASTRUCTURE_ERROR: run daemon startup deadline"
+        ) as caught,
+        apply_run.open_project_quality(tmp_path, settings, timeout_seconds=30),
+    ):
+        pytest.fail("the components must not be wired")
+
+    assert isinstance(caught.value.__cause__, RunDaemonStartupError)
+    assert events == ["up", "daemon-down", "down"]
+    assert not runners
+
+
 @pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
 def test_interrupted_start_cleans_and_preserves_interruption(
     tmp_path, monkeypatch, infrastructure, interruption
@@ -162,7 +465,7 @@ def test_interrupted_start_cleans_and_preserves_interruption(
 
 def test_declared_compose_environment_matches_build_context(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "db": {"image": "postgres"},
             "app": {"build": {"context": str(tmp_path / "api")},
@@ -183,7 +486,7 @@ def test_declared_compose_environment_matches_build_context(tmp_path, monkeypatc
 ])
 def test_declared_unsafe_infrastructure_is_refused(tmp_path, monkeypatch, service):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {"db": {"image": "postgres", **service}}
     })
     with pytest.raises(ComposeError):
@@ -202,7 +505,7 @@ def test_bind_outside_checkout_is_refused(tmp_path, monkeypatch, source_kind, re
     source = {"absolute": str(outside), "relative": "../outside", "symlink": "./link"}[
         source_kind
     ]
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {"db": {"image": "postgres", "volumes": [{
             "type": "bind", "source": source, "target": "/data", "read_only": read_only,
         }]}}
@@ -214,7 +517,7 @@ def test_bind_outside_checkout_is_refused(tmp_path, monkeypatch, source_kind, re
 def test_bind_inside_checkout_is_available_for_database_initialization(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
     (tmp_path / "init.sql").write_text("CREATE DATABASE orders;")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {"db": {"image": "postgres", "volumes": [{
             "type": "bind", "source": str(tmp_path / "init.sql"),
             "target": "/docker-entrypoint-initdb.d/init.sql", "read_only": True,
@@ -225,7 +528,7 @@ def test_bind_inside_checkout_is_available_for_database_initialization(tmp_path,
 
 def test_volume_driver_cannot_escape_checkout_by_renaming_a_bind(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {"db": {"image": "postgres", "volumes": [{
             "type": "volume", "source": "database", "target": "/data",
         }]}},
@@ -247,7 +550,7 @@ def test_declared_database_mapping_uses_image_and_supports_both_spring_versions(
         "spring.datasource.username=app\n"
         "spring.datasource.password=test\n"
     )
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "documents": {"image": "mongo:7"},
             "database": {"image": "postgres:16"},
@@ -262,7 +565,7 @@ def test_declared_database_mapping_uses_image_and_supports_both_spring_versions(
 
 def test_ambiguous_build_context_fails_instead_of_selecting_arbitrary_env(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "one": {"build": ".", "environment": {"DB_HOST": "database-one"}},
             "two": {"build": ".", "environment": {"DB_HOST": "database-two"}},
@@ -274,7 +577,7 @@ def test_ambiguous_build_context_fails_instead_of_selecting_arbitrary_env(tmp_pa
 
 def test_shared_maven_context_merges_compatible_service_environment(tmp_path, monkeypatch):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "postgres": {"image": "postgres"},
             "mongo": {"image": "mongo"},
@@ -295,7 +598,7 @@ def test_prueba_services_get_isolated_names_without_rejecting_multiple_networks(
     tmp_path, monkeypatch
 ):
     (tmp_path / "compose.yaml").write_text("services: {}")
-    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _: {
+    monkeypatch.setattr("engineering_team.services.read_compose_model", lambda _, deadline=None: {
         "services": {
             "kafka": {"image": "apache/kafka:4.3.1"},
             "kafka-init": {"image": "apache/kafka:4.3.1"},

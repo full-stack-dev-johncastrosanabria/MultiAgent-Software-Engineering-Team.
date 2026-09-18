@@ -15,6 +15,10 @@ from .enums import (
     ToolStatus,
 )
 
+# Security's description of dependency advisories on manifests this change did not
+# touch. Consumers use it to keep pre-existing risk out of what a change is asked to fix.
+BASELINE_RISK_PREFIX = "Residual baseline dependency risk"
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -168,6 +172,21 @@ class ToolResult(StrictModel):
     duration_ms: int = Field(ge=0)
     evidence_reference: str | None = None
     error: str | None = None
+    error_code: ErrorCode | None = None
+    """What kind of failure this is, for consumers that must not read `error`.
+
+    `error` is free text assembled for a human, and it does not survive the trip:
+    `CompositeQuality._aggregate` relabels every component's message with its
+    evidence reference, so any marker a producer wrote at the front of the string
+    stops being at the front as soon as a project has two components. A run that
+    was stopped by an environment that never came up therefore reached the graph
+    indistinguishable from an MCP server that went quiet, and remediation was
+    sent at the code under test. This field carries that distinction in a form
+    aggregation can forward and consumers can match on.
+
+    None means the producer said nothing, and the consumer falls back to the
+    status -- which is what every result recorded before this field existed does.
+    """
     # None preserves legacy stdout evidence. [] means report-aware execution
     # produced no passing cases; a zero exit code alone cannot fill coverage.
     test_cases: list[ExecutedTestCase] | None = None
@@ -204,6 +223,21 @@ class ModelExecutionInfo(StrictModel):
     http_status: int | None = None
     error_category: str | None = None
     retryable: bool | None = None
+    violated_rule: str | None = None
+    """The governed rule the rejected answer broke, as its validator stated it.
+
+    Set only when the rejection was a target-plan violation, whose validator
+    names the exact rule. None for every other error, including a governed
+    contradiction with no captured rule text. `error` renders the same fact as
+    one English string for humans; this is the same fact for machines, so that
+    rejections can be grouped by cause without parsing prose.
+    """
+    governed_fields_diff: list[str] | None = None
+    """The governed keys the model actually changed, sorted.
+
+    None when the failure was not a governed contradiction: a transport error
+    rejected no answer, and an empty list there would claim it did.
+    """
 
 
 class CloudFallbackContext(StrictModel):

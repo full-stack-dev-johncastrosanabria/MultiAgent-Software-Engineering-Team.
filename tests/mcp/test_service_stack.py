@@ -7,12 +7,13 @@ against a real repository lives in test_service_stack_e2e.py.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
+from _docker import DOCKER_AVAILABLE
+from _docker import needs_docker as _needs_real_docker
 
 from engineering_team.contracts.enums import ErrorCode
 from engineering_team.services import ServiceStack, ServiceStartupError
@@ -41,9 +42,15 @@ BASE = "debian:bookworm-slim"
 
 
 def _docker_ready() -> bool:
-    if shutil.which("docker") is None:
-        return False
-    if subprocess.run(["docker", "info"], capture_output=True, check=False).returncode:
+    """Whether the daemon answers, and the base image is already pulled.
+
+    Daemon reachability is delegated to tests/_docker.py's DOCKER_AVAILABLE --
+    the same 5s-bounded probe every other file's needs_docker mark uses,
+    computed once at import time. This file used to run its own unbounded
+    `docker info` here, which under a hung daemon stalled the whole
+    collection phase rather than resolving to "skip" (A-13/B-11).
+    """
+    if not DOCKER_AVAILABLE:
         return False
     return subprocess.run(
         ["docker", "image", "inspect", BASE], capture_output=True, check=False
@@ -74,6 +81,14 @@ def test_a_project_without_compose_has_no_stack(tmp_path: Path) -> None:
     assert stack.networks == ()
 
 
+# The three tests below construct a real ServiceStack against a compose file
+# they write themselves, which reaches services.py's read_compose_model (a
+# real `docker compose config`) with no test-side seam to fake it. Gated on
+# the shared, image-agnostic `_needs_real_docker` rather than this file's own
+# `needs_docker` below: that one additionally requires the base image pulled,
+# a condition these three never need -- config only parses the file, it never
+# runs the image it names.
+@_needs_real_docker
 def test_all_distinct_infrastructure_networks_are_discovered(tmp_path: Path, monkeypatch) -> None:
     stack = ServiceStack(_project(tmp_path), run_id="two-networks")
     monkeypatch.setattr(
@@ -97,6 +112,7 @@ def test_all_distinct_infrastructure_networks_are_discovered(tmp_path: Path, mon
     )
 
 
+@_needs_real_docker
 def test_the_stack_reads_only_infrastructure(tmp_path: Path) -> None:
     stack = ServiceStack(_project(tmp_path), run_id="r1")
     assert stack.services == ("cache",), "a build: service must not be started"
@@ -239,6 +255,7 @@ def test_a_project_needing_nothing_derives_nothing(tmp_path: Path) -> None:
     assert stack.derived is False
 
 
+@_needs_real_docker
 def test_a_declared_compose_is_never_overridden_by_inference(tmp_path: Path) -> None:
     """The project's own file wins; guessing over it would be presumptuous."""
     _spring_project(tmp_path)

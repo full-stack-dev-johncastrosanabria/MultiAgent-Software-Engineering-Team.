@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from engineering_team.apply_run import tool_outcomes
+from engineering_team.contracts.enums import ErrorCode
 from engineering_team.contracts.models import AgentRole, ToolResult, ToolStatus
 from engineering_team.ephemeral_checkout import ephemeral_checkout
 
@@ -176,8 +177,9 @@ def test_tool_outcomes_names_every_tool_and_its_status():
             "tool": "run_tests",
             "status": "UNAVAILABLE",
             "error": "venv creation failed in container",
+            "error_code": None,
         },
-        {"tool": "get_diff", "status": "SUCCESS"},
+        {"tool": "get_diff", "status": "SUCCESS", "error_code": None},
     ]
 
 
@@ -190,7 +192,29 @@ def test_a_successful_tool_carries_no_error_excerpt():
             duration_ms=3, error="stale text from an earlier attempt",
         ),
     ]
-    assert tool_outcomes(results) == [{"tool": "run_tests", "status": "SUCCESS"}]
+    assert tool_outcomes(results) == [
+        {"tool": "run_tests", "status": "SUCCESS", "error_code": None}
+    ]
+
+
+def test_error_code_travels_through_to_the_outcome_when_a_tool_degrades():
+    """T6, Ruling 2: the ghcycle scorer needs a typed per-tool environment
+    signal, and `ToolResult.error_code` was being dropped on the floor here --
+    the only place that outranked it (`stop_cause`) only ever sees the very
+    last thing that happened, not a mid-run infrastructure blip the run later
+    recovered from.
+    """
+    results = [
+        ToolResult(
+            tool_name="run_tests", allowed_role=AgentRole.TESTING,
+            status=ToolStatus.UNAVAILABLE, input_summary="", output_summary="",
+            duration_ms=0, error="isolated environment unavailable: WorkspaceSyncError: x",
+            error_code=ErrorCode.INFRASTRUCTURE_ERROR,
+        ),
+    ]
+    outcome = tool_outcomes(results)[0]
+
+    assert outcome["error_code"] == "INFRASTRUCTURE_ERROR"
 
 
 def test_a_failing_tool_reports_why_it_failed():

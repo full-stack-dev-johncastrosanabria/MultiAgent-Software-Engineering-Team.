@@ -66,7 +66,7 @@ class _DaemonRecordingRunner:
         self.environment: Path | None = Path("/recorded/env")
         self.closed = False
 
-    def require_available(self) -> None:
+    def require_available(self, deadline: float | None = None) -> None:
         return None
 
     def prepare_scratch(self) -> Path:

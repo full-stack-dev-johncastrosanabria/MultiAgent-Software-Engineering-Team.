@@ -40,7 +40,7 @@ class _Runner:
         self.environment = environment
         self.calls: list[dict] = []
 
-    def require_available(self) -> None:
+    def require_available(self, deadline: float | None = None) -> None:
         return None
 
     @property

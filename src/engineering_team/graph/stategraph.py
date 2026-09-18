@@ -51,10 +51,12 @@ from engineering_team.repository_evidence import (
 )
 
 from .routers import (
-    remediation_fingerprint,
+    classify_stop_cause,
+    code_unchanged_since_earlier_rejection,
+    failure_repetitions,
+    rejection_record,
     review_route,
     security_route,
-    trailing_failure_repetitions,
 )
 
 MAX_DEVELOPER_DEPENDENCY_DEPTH = 2
@@ -83,6 +85,7 @@ class WorkflowState(TypedDict, total=False):
     model_usage: list
     iteration: int
     failure_fingerprints: list
+    applied_diff_fingerprints: list
     errors: list
     human_review_required: bool
     final_status: str
@@ -96,6 +99,7 @@ class WorkflowState(TypedDict, total=False):
     route_history: list
     final_report: object
     human_decision: str
+    stop_cause: str
 
 
 def _visit(role: str):
@@ -211,8 +215,13 @@ def build_engineering_graph(
         """
         tool_results.append(result)
         if trace is not None:
+            # The span carries which tool ran, not that some tool ran. A single
+            # literal made every tool observation in a campaign identical, so
+            # Langfuse could neither group nor filter by tool without parsing
+            # each payload for `output.tool_name` -- the identity was already
+            # there, just not where the backend indexes it.
             trace.record(
-                "MCP call", as_type="tool", output=result.model_dump(mode="json"),
+                result.tool_name, as_type="tool", output=result.model_dump(mode="json"),
                 metadata=mcp_trace_metadata(adapter),
             )
         blocking = (
@@ -222,7 +231,12 @@ def build_engineering_graph(
         )
         if not blocking:
             return False
-        code = (
+        # What the producer said it was, when it said anything. Folding every
+        # UNAVAILABLE result into MCP_ERROR reported an environment that never
+        # came up as a silent MCP server, and pointed remediation at the code
+        # under test. The status still answers for every result carrying no code
+        # of its own -- which is all of them recorded before the field existed.
+        code = result.error_code or (
             ErrorCode.MCP_ERROR
             if result.status is ToolStatus.UNAVAILABLE
             else ErrorCode.TOOL_ERROR
@@ -869,10 +883,7 @@ def build_engineering_graph(
                 patch["review_history"] = [*current.review_history, output]
             if role is AgentRole.REVIEWER and output.status is ReviewerStatus.REJECTED:
                 patch["iteration"] = current.iteration + 1
-                patch["failure_fingerprints"] = [
-                    *current.failure_fingerprints,
-                    remediation_fingerprint(output),
-                ]
+                patch.update(rejection_record(current, output))
                 patch["remediation_request"] = output.reason
                 patch["next_validation_path"] = (
                     "testing_only"
@@ -926,12 +937,14 @@ def build_engineering_graph(
         state = EngineeringState.model_validate(raw_state)
         if state.human_review_required:
             return "HUMAN_REVIEW_REQUIRED"
-        repeated_failures = trailing_failure_repetitions(state.failure_fingerprints)
+        repeated_failures = failure_repetitions(state.failure_fingerprints)
+        unchanged_code = code_unchanged_since_earlier_rejection(state.applied_diff_fingerprints)
         route = review_route(
             state.review,
             state.iteration,
             max_iterations=max_remediation_iterations,
             repeated_failures=repeated_failures,
+            unchanged_code=unchanged_code,
         )
         if trace is not None:
             trace.record(
@@ -941,6 +954,7 @@ def build_engineering_graph(
                     "to": route,
                     "iteration": state.iteration,
                     "repeated_failures": repeated_failures,
+                    "unchanged_code": unchanged_code,
                 },
             )
         return route
@@ -948,11 +962,17 @@ def build_engineering_graph(
     def final_node(raw_state: dict[str, Any]) -> dict[str, Any]:
         state = EngineeringState.model_validate(raw_state)
         report = _report(state, "APPROVED")
+        # An approved run never passes through `human_node`, so naming the cause
+        # only there would leave `stop_cause` empty for every run that succeeded
+        # -- and a field that is only populated on failure is one more thing a
+        # consumer has to infer rather than read.
+        cause = classify_stop_cause(state, max_iterations=max_remediation_iterations)
         if trace is not None:
             trace.finish(report.model_dump(mode="json"))
         return {
             "route_history": [*state.route_history, "FinalReport"],
             "final_status": "APPROVED", "final_report": report,
+            "stop_cause": cause.value,
         }
 
     def human_node(raw_state: dict[str, Any], name: str = "HUMAN_REVIEW_REQUIRED") -> dict[str, Any]:
@@ -976,13 +996,22 @@ def build_engineering_graph(
                     "human_decision": human_decision,
                 }
         report = _report(state, "HUMAN_REVIEW_REQUIRED")
+        # The decision to stop was taken upstream; this only names it, once,
+        # while the typed evidence is still here. Everything downstream reads
+        # the name instead of guessing at the last error's wording.
+        cause = classify_stop_cause(state, max_iterations=max_remediation_iterations)
         if trace is not None:
-            trace.record(name, metadata={"iteration": state.iteration, "hitl": True})
+            trace.record(
+                name,
+                metadata={
+                    "iteration": state.iteration, "hitl": True, "stop_cause": cause.value,
+                },
+            )
             trace.finish(report.model_dump(mode="json"))
         return {
             "route_history": [*state.route_history, name], "human_review_required": True,
             "final_status": "HUMAN_REVIEW_REQUIRED", "final_report": report,
-            "human_decision": human_decision,
+            "human_decision": human_decision, "stop_cause": cause.value,
         }
 
     graph.add_node("FinalReport", final_node)

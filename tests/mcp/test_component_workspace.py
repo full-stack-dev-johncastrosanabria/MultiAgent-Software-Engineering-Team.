@@ -76,7 +76,13 @@ def test_apply_components_keep_repository_mount_with_shared_infrastructure(tmp_p
         environment_for_component=lambda stack, root: (),
     )
     monkeypatch.setattr("engineering_team.services.ServiceStack", lambda *args, **kwargs: services)
-    monkeypatch.setattr(module, "sweep", lambda run_id: None)
+    # A `SweepReport`, not `None`: the caller reads `["error_code"]` off this
+    # return value (A-13/B-11 -- a hung runtime must not be mistaken for a
+    # sweep that ran and found nothing), so the stub has to answer the same
+    # shape the real function does.
+    monkeypatch.setattr(module, "sweep", lambda run_id: {
+        "containers": [], "networks": [], "volumes": [], "images": [], "error_code": None,
+    })
     monkeypatch.setattr(module, "detect_prerequisite", lambda *args: None)
     with open_project_quality(tmp_path, settings(), timeout_seconds=30) as quality:
         assert {backend.root for backend in quality._backends} == {tmp_path / "app", tmp_path / "shared"}

@@ -2,6 +2,7 @@ from collections import deque
 
 import httpx
 import pytest
+from _docker import needs_docker
 
 from engineering_team.agents.reviewer import ReviewerAgent
 from engineering_team.agents.security import SecurityAgent
@@ -106,7 +107,7 @@ def test_third_rejected_cycle_stops_without_a_fourth_cycle():
     assert reviewer.calls == 3
 
 
-def test_repeated_failure_routes_through_architecture_then_stops_early():
+def test_repeated_failure_stays_with_the_developer_and_stops_at_its_third_occurrence():
     decision = rejected(RemediationCategory.IMPLEMENTATION, RouteTarget.DEVELOPER)
     reviewer = ScriptedReviewer([decision, decision, decision, decision])
     graph = build_engineering_graph(
@@ -118,10 +119,31 @@ def test_repeated_failure_routes_through_architecture_then_stops_early():
     reviewer_positions = [
         index for index, stage in enumerate(result["route_history"]) if stage == "Reviewer"
     ]
-    assert result["route_history"][reviewer_positions[1] + 1] == "Architecture"
+    assert result["route_history"][reviewer_positions[1] + 1] == "Developer"
+    assert "Architecture" not in result["route_history"][reviewer_positions[0]:]
     assert result["iteration"] == 3
     assert result["human_review_required"] is True
     assert reviewer.calls == 3
+
+
+def test_alternating_failures_stop_when_one_recurs_a_third_time():
+    """spring-demo-dry-20260916e: two failures alternated and a trailing-streak
+    count never saw a repetition."""
+    first = rejected(RemediationCategory.IMPLEMENTATION, RouteTarget.DEVELOPER)
+    second = ReviewerDecision(
+        status=ReviewerStatus.REJECTED, score=40, subscores={}, problems=["other"],
+        reason="other", remediation_category=RemediationCategory.IMPLEMENTATION,
+        return_to=RouteTarget.DEVELOPER, confidence=0.9,
+    )
+    reviewer = ScriptedReviewer([first, second, first, second, first, second, first])
+    graph = build_engineering_graph(
+        agent_overrides={AgentRole.REVIEWER: reviewer}, max_remediation_iterations=10
+    )
+
+    result = graph.invoke({"run_id": "alternating", "requirement": "bounded change"})
+
+    assert reviewer.calls == 5
+    assert result["human_review_required"] is True
 
 
 def test_remediation_diagnostics_become_developer_search_terms(tmp_path):
@@ -217,6 +239,7 @@ def test_failed_mcp_test_result_changes_reviewer_route_and_is_remediated():
     assert result["route_history"][-4:] == ["Developer", "Testing", "Reviewer", "FinalReport"]
 
 
+@needs_docker
 def test_real_mcp_protocol_failure_changes_reviewer_route_and_is_remediated(tmp_path):
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "safe.py").write_text("value = 1\n", encoding="utf-8")
@@ -246,12 +269,21 @@ def test_real_mcp_protocol_failure_changes_reviewer_route_and_is_remediated(tmp_
         "Developer", "Testing", "Reviewer"
     ]
     assert result["final_status"] == "APPROVED"
+    # What this asserts is that a stdio call carries its protocol version, which
+    # does not depend on what the span happens to be called. Selecting by the
+    # observation's type rather than by one name keeps it that way the next time
+    # a name improves -- it used to select the literal "MCP call", which every
+    # tool observation shared.
     protocol_events = [
         event for event in trace.events
-        if event["name"] == "MCP call" and event["metadata"].get("transport") == "stdio"
+        if event["type"] == "tool" and event["metadata"].get("transport") == "stdio"
     ]
     assert protocol_events
     assert all(event["metadata"]["protocol_version"] for event in protocol_events)
+    assert {event["name"] for event in protocol_events} <= {
+        item.tool_name for item in result["tool_results"]
+    }
+    assert "run_tests" in {event["name"] for event in protocol_events}
     assert any(item.code is ErrorCode.TOOL_ERROR for item in result["errors"])
     assert any(event["name"] == "TOOL_ERROR" for event in trace.events)
 

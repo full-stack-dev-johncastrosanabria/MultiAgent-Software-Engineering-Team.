@@ -26,6 +26,7 @@ from pathlib import Path, PurePosixPath
 
 from engineering_team.docker_labels import label_arguments
 from engineering_team.mcp.command import (
+    _HEAD_RETENTION_LIMIT,
     _OUTPUT_LIMIT,
     _STRUCTURED_OUTPUT_LIMIT,
     CommandOutput,
@@ -122,19 +123,31 @@ class ContainerRunner:
 
     # -- interface ---------------------------------------------------------
 
-    def require_available(self) -> None:
-        """Raise unless the runtime is installed and its daemon answers."""
+    def require_available(self, deadline: float | None = None) -> None:
+        """Raise unless the runtime is installed and its daemon answers.
+
+        The probe is bounded by `deadline`, not a fixed 30s, when the caller
+        gives one. A hung daemon is not merely slow to answer: without this,
+        an operation whose deadline had all but elapsed still paid up to the
+        full 30s here before its own deadline-bounded lock ever ran, which is
+        the same "hung is not absent, and must not silently outlast the
+        caller's own bound" defect A-13/B-11 name for `docker_labels.sweep`
+        -- this is the same class of bug reached from production code instead
+        of from cleanup. `min(30, ...)` keeps the probe from waiting longer
+        than before when a caller has plenty of time left.
+        """
         executable = shutil.which(self.runtime)
         if executable is None:
             raise RuntimeError(
                 f"quality container runtime is unavailable: {self.runtime} not found"
             )
+        probe_timeout = 30.0 if deadline is None else min(30.0, _remaining(deadline))
         try:
             probe = subprocess.run(
                 [executable, "version", "--format", "{{.Server.Version}}"],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=probe_timeout,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
@@ -401,8 +414,12 @@ class ContainerRunner:
     ) -> subprocess.CompletedProcess[str]:
         timeout = _remaining(request.deadline)
         output_limit = _STRUCTURED_OUTPUT_LIMIT if request.structured_output else _OUTPUT_LIMIT
-        stdout_buffer = _BoundedOutput(output_limit)
-        stderr_buffer = _BoundedOutput(output_limit)
+        # Head retention only for the ordinary path. A dependency scan already
+        # gets a 4 MiB tail -- wide enough that a second window would add
+        # nothing -- and must keep reading exactly as it did before this.
+        head_budget = 0 if request.structured_output else _HEAD_RETENTION_LIMIT
+        stdout_buffer = _BoundedOutput(output_limit, keep_head=head_budget)
+        stderr_buffer = _BoundedOutput(output_limit, keep_head=head_budget)
         created = self._quiet(args, timeout=max(1.0, min(timeout, 120.0)))
         if created is None or created.returncode != 0:
             detail = "" if created is None else created.stderr.strip()[-400:]
@@ -474,6 +491,8 @@ class ContainerRunner:
                 stdout_buffer.truncated or stderr_buffer.truncated
                 or readers_incomplete
             ),
+            stdout_head=stdout_buffer.head_text(),
+            stderr_head=stderr_buffer.head_text(),
         )
 
     @staticmethod
