@@ -17,15 +17,12 @@ tests pin is the verdict and which dimensions found evidence.
 """
 
 import pytest
-from _replay import load_trace
+from _replay import load_trace, run_testing_then_review
 
-from engineering_team.agents.reviewer import ReviewerAgent
-from engineering_team.agents.testing import TestingAgent
 from engineering_team.contracts.enums import AgentRole, ReviewerStatus, ToolStatus
 from engineering_team.contracts.models import ExecutedTestCase, ToolResult
 from engineering_team.contracts.models import TestResult as ContractTestResult
 from engineering_team.contracts.state import EngineeringState
-from engineering_team.models.context import build_context
 
 _TRACE = load_trace("38863321ef")
 
@@ -95,18 +92,21 @@ def _green_suite(cases: tuple[tuple[str, str], ...]) -> ToolResult:
     )
 
 
-def _testing_then_review(cases) -> tuple[ContractTestResult, object]:
-    """What Testing claims the suite covers, and what Reviewer does about it."""
+def _run_testing_then_review(cases) -> tuple[ContractTestResult, object]:
+    """What Testing claims the suite covers, and what Reviewer does about it.
+
+    Delegates to `_replay.run_testing_then_review`, Task 7's shared Testing-then-
+    Reviewer chain (moved there in task 8's fix round 1 so
+    `test_known_bad_patches.py` could reuse it instead of keeping a second
+    copy). Only the state-building is specific to this file's replayed trace.
+    """
     state = EngineeringState(
         run_id="c04-replay",
         requirement=_TRACE.specification.source_requirement,
         specification=_TRACE.specification,
         tool_results=[_green_suite(cases)],
     )
-    testing = TestingAgent().execute(build_context(AgentRole.TESTING, state, "test"))
-    reviewed = state.model_copy(update={"test_results": [testing]})
-    decision = ReviewerAgent().execute(build_context(AgentRole.REVIEWER, reviewed, "review"))
-    return testing, decision
+    return run_testing_then_review(state)
 
 
 def _dimensions_without_evidence(testing: ContractTestResult) -> list[str]:
@@ -125,7 +125,7 @@ def _dimensions_without_evidence(testing: ContractTestResult) -> list[str]:
     ),
 )
 def test_a_green_suite_satisfying_the_rule_in_english_is_not_rejected_for_spanish_wording() -> None:
-    _testing, decision = _testing_then_review(_ENGLISH_SUITE)
+    _testing, decision = _run_testing_then_review(_ENGLISH_SUITE)
 
     assert decision.status is ReviewerStatus.APPROVED
 
@@ -138,8 +138,8 @@ def test_the_same_green_suite_is_approved_once_its_names_use_the_specifications_
     approved, which is what makes the xfail above a statement about the gate
     rather than about a suite that really was thin.
     """
-    english, english_decision = _testing_then_review(_ENGLISH_SUITE)
-    spanish, spanish_decision = _testing_then_review(_SPANISH_SUITE)
+    english, english_decision = _run_testing_then_review(_ENGLISH_SUITE)
+    spanish, spanish_decision = _run_testing_then_review(_SPANISH_SUITE)
 
     assert english.status is ToolStatus.SUCCESS
     assert spanish.status is ToolStatus.SUCCESS
@@ -156,7 +156,7 @@ def test_the_rejected_english_suite_really_did_run_and_really_did_pass() -> None
     `run_tests` was SUCCESS in all five real cycles of 38863321ef; the gate's
     objection was never that a test broke.
     """
-    testing, decision = _testing_then_review(_ENGLISH_SUITE)
+    testing, decision = _run_testing_then_review(_ENGLISH_SUITE)
 
     assert testing.status is ToolStatus.SUCCESS
     assert len(testing.executed_tests) == 1

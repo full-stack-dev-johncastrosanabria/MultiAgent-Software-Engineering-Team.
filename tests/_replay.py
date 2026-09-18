@@ -17,11 +17,17 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from engineering_team.agents.reviewer import ReviewerAgent
+from engineering_team.agents.testing import TestingAgent
+from engineering_team.contracts.enums import AgentRole
 from engineering_team.contracts.models import (
     ArchitectureProposal,
     ProductSpecification,
     ReviewerDecision,
+    TestResult,
 )
+from engineering_team.contracts.state import EngineeringState
+from engineering_team.models.context import build_context
 
 _DIR = Path(__file__).parent / "fixtures" / "replay"
 
@@ -97,3 +103,22 @@ def load_trace(label: str) -> ReplayTrace:
             for entry in data["cycles"]
         ),
     )
+
+
+def run_testing_then_review(state: EngineeringState) -> tuple[TestResult, ReviewerDecision]:
+    """Run the real Testing agent, then the real Reviewer agent, on one state.
+
+    Shared because more than one test module needs the identical two-agent
+    chain: feed a state that already carries a specification and
+    `tool_results` through `TestingAgent` to get the coverage claim it
+    derives, copy that claim into `test_results`, then run `ReviewerAgent`
+    against it. Built by task 7 for the C-04 reproduction
+    (`tests/unit/test_lexical_coverage_gate.py`), and moved here in task 8's
+    fix round 1 so `tests/unit/test_known_bad_patches.py` could reuse it
+    instead of keeping a second copy under a different name -- both files now
+    import this one function rather than each defining their own.
+    """
+    testing = TestingAgent().execute(build_context(AgentRole.TESTING, state, "test"))
+    reviewed = state.model_copy(update={"test_results": [testing]})
+    decision = ReviewerAgent().execute(build_context(AgentRole.REVIEWER, reviewed, "review"))
+    return testing, decision

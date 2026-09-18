@@ -35,15 +35,26 @@ above already assert with synthetic paths. Reusing task 7's fixture loader
 just to restate an already-covered guard with different literal strings would
 be the duplication the task brief asks not to create; the report for this
 task cites the existing tests as the evidence for bad patch 1 instead.
+
+Fix round 1 (task review, two Important findings): the Testing-then-Reviewer
+chain bad patch 5 needs is Task 7's own `_run_testing_then_review`
+(`tests/unit/test_lexical_coverage_gate.py`), moved to
+`tests/_replay.py::run_testing_then_review` and imported from both files rather
+than kept as a second copy under a different name; and bad patch 5's
+happy-path-only specification was checked against all four real frozen
+specs and confirmed to match none of them (every one requires `boundary`, and
+three of four also `business_rule`/`validation`) -- a second, realistic-spec
+variant of bad patch 5 is added below, replayed directly against trace
+`d29547c7b7`, rather than leaving that comparison as a report-only claim.
 """
 
 from __future__ import annotations
 
 import pytest
+from _replay import load_trace, run_testing_then_review
 
 from engineering_team.agents.reviewer import ReviewerAgent
 from engineering_team.agents.security import SecurityAgent
-from engineering_team.agents.testing import TestingAgent
 from engineering_team.contracts.enums import (
     ActionMode,
     AgentRole,
@@ -296,10 +307,21 @@ def test_bad_patch_4_control_every_pairing_a_real_reviewer_produces_is_accepted_
 
 
 def _vacuous_suite_state(*, business_rules: list[str]) -> EngineeringState:
-    """A specification and a 'passing' suite whose one test asserts nothing
-    about the requirement: the entire body is `assert True`. Whether this is
-    caught depends only on whether the specification implies a coverage
-    dimension besides `happy_path` (agents/testing.py:_MARKERS)."""
+    """A SYNTHETIC specification and a 'passing' suite whose one test asserts
+    nothing about the requirement: the entire body is `assert True`. Whether
+    this is caught depends only on whether the specification implies a
+    coverage dimension besides `happy_path` (agents/testing.py:_MARKERS).
+
+    This spec shape is deliberately thin -- one acceptance criterion, no
+    business rules by default -- and it matches none of the four real
+    specifications frozen in tests/fixtures/replay/: every one of those
+    requires `boundary` beyond happy_path (three of four also `business_rule`
+    and `validation`; verified by running TestingAgent's own dimension
+    derivation against all four with no tool_results, reading `proposed_
+    tests`). The test below is a demonstrated worst case for the happy-
+    path-only shape, not an observed one -- `test_bad_patch_5_real_spec_...`
+    further down measures the same finding against a real frozen spec.
+    """
     specification = ProductSpecification(
         objective="Add a health check endpoint", actors=["client"],
         business_rules=business_rules, constraints=[],
@@ -321,12 +343,6 @@ def _vacuous_suite_state(*, business_rules: list[str]) -> EngineeringState:
     )
 
 
-def _review_after_testing(state: EngineeringState) -> ReviewerDecision:
-    testing_result = TestingAgent().execute(build_context(AgentRole.TESTING, state, "test"))
-    reviewed = state.model_copy(update={"test_results": [testing_result]})
-    return ReviewerAgent().execute(build_context(AgentRole.REVIEWER, reviewed, "review"))
-
-
 @pytest.mark.xfail(
     strict=True,
     reason=(
@@ -338,13 +354,21 @@ def _review_after_testing(state: EngineeringState) -> ReviewerDecision:
         "specification implies no coverage dimension beyond happy_path, a "
         "single `assert True` test satisfies every gate in "
         "ReviewerAgent.execute and the run is APPROVED at score 100 with zero "
-        "problems. Delete this marker once the gate requires evidence a test "
-        "body demonstrates something, not merely that some test with that "
-        "name reported PASSED -- a strict xpass here is that signal."
+        "problems. CAVEAT (added in fix round 1): the happy-path-only spec "
+        "shape used here does not occur in any of the four real 2026-09-16 "
+        "specs on file -- every one requires `boundary` beyond happy_path. "
+        "This test demonstrates a worst case the code path allows, not an "
+        "observed production shape; see "
+        "test_bad_patch_5_real_spec_a_vacuous_suite_named_with_the_right_words_"
+        "is_approved for the same finding measured against a real, multi-"
+        "dimension frozen specification. Delete this marker once the gate "
+        "requires evidence a test body demonstrates something, not merely "
+        "that some test with that name reported PASSED -- a strict xpass "
+        "here is that signal."
     ),
 )
 def test_bad_patch_5_a_vacuous_assert_true_test_is_wrongly_approved() -> None:
-    decision = _review_after_testing(_vacuous_suite_state(business_rules=[]))
+    _testing_result, decision = run_testing_then_review(_vacuous_suite_state(business_rules=[]))
 
     assert decision.status is ReviewerStatus.REJECTED, (
         "the Reviewer approved a test whose entire body is `assert True`: "
@@ -358,9 +382,113 @@ def test_bad_patch_5_control_the_same_vacuous_test_is_caught_when_another_dimens
     a required dimension too, and the same `assert True` test is correctly
     rejected -- it happens to speak to no dimension's vocabulary. The gap is
     specifically the happy-path-only case, not "every vacuous test passes"."""
-    decision = _review_after_testing(_vacuous_suite_state(
+    _testing_result, decision = run_testing_then_review(_vacuous_suite_state(
         business_rules=["The endpoint returns 200 when the service is healthy."],
     ))
 
     assert decision.status is ReviewerStatus.REJECTED
     assert any("business_rule" in problem for problem in decision.problems)
+
+
+# -----------------------------------------------------------------------------
+# Bad patch 5, realistic-spec variant -- the same finding measured against a
+# REAL frozen specification rather than the synthetic one above (fix round 1,
+# task review Important finding 1). Trace d29547c7b7 is one of the four real
+# 2026-09-16 runs frozen by task 7; TestingAgent's own dimension derivation
+# requires `boundary`, `business_rule`, `happy_path` and `validation` for its
+# specification -- the exact shape none of the four traces lacks, and the
+# opposite of the "happy_path-only" spec above.
+# -----------------------------------------------------------------------------
+
+_REAL_TRACE = load_trace("d29547c7b7")
+
+
+def _vacuous_suite_against_real_spec(
+    cases: tuple[tuple[str, str], ...],
+) -> EngineeringState:
+    """Wrap `cases` (identifier, source_excerpt) pairs as one SUCCESS
+    `run_tests` result against `_REAL_TRACE`'s own specification."""
+    tool = ToolResult(
+        tool_name="run_tests", allowed_role=AgentRole.TESTING, status=ToolStatus.SUCCESS,
+        input_summary="pytest", output_summary=f"{len(cases)} passed", duration_ms=5,
+        evidence_reference="mcp://quality/run_tests",
+        test_cases=[
+            ExecutedTestCase(identifier=identifier, report="PASSED", source_excerpt=source)
+            for identifier, source in cases
+        ],
+    )
+    return EngineeringState(
+        run_id="battery-5-real-spec", requirement=_REAL_TRACE.specification.source_requirement,
+        specification=_REAL_TRACE.specification, tool_results=[tool],
+    )
+
+
+# Four `assert True` tests, named only to carry the literal words the lexical
+# gate (agents/testing.py:_MARKERS, _business_terms) looks for in each of
+# d29547c7b7's four required dimensions: boundary ("vacio", a literal boundary
+# marker), business_rule ("validar", one of the specification's own >=6-letter
+# business-rule words -- computed and confirmed via `_business_terms`),
+# validation ("requerido", a literal validation marker), and happy_path
+# (automatic from any non-empty, SUCCESS test_cases list). None of the four
+# bodies demonstrates anything about the requirement; only the identifiers do
+# the lexical work Task 7 showed the gate performs
+# (test_lexical_coverage_gate.py).
+_NAMED_BUT_VACUOUS_CASES = (
+    ("test_happy_path_creates_resource", "assert True"),
+    ("test_boundary_nombre_vacio_returns_400", "assert True"),
+    ("test_business_rule_validar_nombre_obligatorio", "assert True"),
+    ("test_validation_nombre_requerido", "assert True"),
+)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "task 8 finding (council 2026-09-17), stronger form measured in fix "
+        "round 1: the same happy_path mis-attribution (agents/testing.py:"
+        "151-158) also APPROVES a fully vacuous suite against a REAL frozen "
+        "2026-09-16 specification (trace d29547c7b7, tests/fixtures/replay/"
+        "d29547c7b7.json), which requires boundary, business_rule, "
+        "validation and happy_path -- not a contrived happy_path-only shape. "
+        "Four `assert True` tests, named only to carry the specification's "
+        "own lexical markers, satisfy every required dimension and the run "
+        "is APPROVED at score 100 with zero problems. This demonstrates the "
+        "finding on the same kind of specification ASET's own 2026-09-16 "
+        "campaign actually produced, which is what makes it a phase-4 "
+        "concern rather than a corner case. Delete this marker once the "
+        "gate requires evidence a test body demonstrates something."
+    ),
+)
+def test_bad_patch_5_real_spec_a_vacuous_suite_named_with_the_right_words_is_approved() -> None:
+    state = _vacuous_suite_against_real_spec(_NAMED_BUT_VACUOUS_CASES)
+    testing_result, decision = run_testing_then_review(state)
+
+    assert testing_result.proposed_tests == [
+        "boundary", "business_rule", "happy_path", "validation",
+    ], (
+        "this test's premise is that the real spec requires more than "
+        f"happy_path; got {testing_result.proposed_tests}"
+    )
+    assert decision.status is ReviewerStatus.REJECTED, (
+        "the Reviewer approved a fully vacuous suite against a real, multi-"
+        f"dimension specification: score={decision.score}, "
+        f"reason={decision.reason!r}, problems={decision.problems!r}"
+    )
+
+
+def test_bad_patch_5_real_spec_control_generic_names_leave_the_same_real_spec_correctly_rejected() -> None:
+    """Evidence the finding above turns on the naming trick, not on this real
+    spec being uncatchable in general: identical vacuous bodies under generic
+    names (no lexical markers) leave `boundary`, `business_rule` and
+    `validation` genuinely uncovered, and the same real specification is
+    correctly rejected with those three gaps named."""
+    generic_cases = (("test_case_one", "assert True"), ("test_case_two", "assert True"))
+    state = _vacuous_suite_against_real_spec(generic_cases)
+    testing_result, decision = run_testing_then_review(state)
+
+    assert testing_result.coverage_mapping["boundary"] == []
+    assert testing_result.coverage_mapping["business_rule"] == []
+    assert testing_result.coverage_mapping["validation"] == []
+    assert decision.status is ReviewerStatus.REJECTED
+    for dimension in ("boundary", "business_rule", "validation"):
+        assert any(dimension in problem for problem in decision.problems)
