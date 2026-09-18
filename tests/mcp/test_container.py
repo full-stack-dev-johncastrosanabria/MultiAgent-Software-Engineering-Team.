@@ -590,3 +590,131 @@ def test_runner_reports_truncation_at_the_requested_output_limit(tmp_path, monke
     result = runner._run_container("probe", runner._container_command("probe", request), request)
     assert result.output_truncated
     assert len(getattr(result, stream).encode()) == limit
+
+
+# Shaped like a real Maven failure: the cause is near the head, and a build
+# verbose enough to need any truncation routinely has this much (or far more)
+# dependency-resolution noise ahead of its own error.
+_MAVEN_LOG_WITH_HEAD_ERROR = (
+    "[INFO] Scanning for projects...\n"
+    "[ERROR] COMPILATION ERROR : \n"
+    "[ERROR] /project-root/src/main/java/ProductController.java:[5,37] cannot find symbol\n"
+    "  symbol:   class InvalidProductNameException\n"
+    "[INFO] ------------------------------------------------------\n"
+    "[INFO] BUILD FAILURE\n"
+    + "[INFO] Downloading from central: https://repo.maven.apache.org/artifact.jar\n" * 200
+)
+
+
+def test_a_maven_error_at_the_head_survives_the_runners_own_streaming_truncation(
+    tmp_path, monkeypatch
+):
+    """`ContainerRunner._run_container` caps each stream to its last
+    `_OUTPUT_LIMIT` bytes *as data streams past* (`_BoundedOutput.append`),
+    before `mcp/quality.py`'s `_run` ever builds `full_output` from the result.
+    For an ordinary (non-dependency-scan) command -- exactly the `mvn
+    test`/`mvn compile` invocations the Maven-error extraction targets -- a
+    build whose own dependency-resolution logging alone exceeds `_OUTPUT_LIMIT`
+    (4096 bytes, routine for a real Maven run) already lost its `[ERROR]` block
+    by the time any downstream tail-cut or extraction could see it. This drives
+    the real capture path with a fake process -- no Docker daemon required, same
+    seam as `test_runner_reports_truncation_at_the_requested_output_limit` above
+    -- so the log is truncated by the actual streaming buffer, not a
+    hand-truncated string handed to `extract_build_errors`.
+    """
+    assert len(_MAVEN_LOG_WITH_HEAD_ERROR) > 4096
+    # Sanity: the error really is at the head, not somewhere the tail alone
+    # would still reach.
+    assert "COMPILATION ERROR" not in _MAVEN_LOG_WITH_HEAD_ERROR[-4096:]
+
+    runner = _runner(tmp_path)
+
+    class Process:
+        returncode = 1
+
+        def __init__(self, *args, **kwargs):
+            self.stdout = BytesIO(_MAVEN_LOG_WITH_HEAD_ERROR.encode())
+            self.stderr = BytesIO(b"")
+
+        def wait(self, timeout):
+            return 1
+
+    monkeypatch.setattr(
+        runner, "_quiet", lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", "")
+    )
+    monkeypatch.setattr(subprocess, "Popen", Process)
+    request = _request(tmp_path, "mvn", "test")  # structured_output defaults to False
+    result = runner._run_container(
+        "probe", runner._container_command("probe", request), request
+    )
+
+    assert result.output_truncated
+    # The tail alone -- what `.stdout` has always meant -- still loses it; this
+    # is the defect, reproduced against the real capture code.
+    assert "COMPILATION ERROR" not in result.stdout
+    # But it survives separately, captured live before the tail-keep could drop it.
+    assert "COMPILATION ERROR" in result.stdout_head
+    assert "cannot find symbol" in result.stdout_head
+
+    from engineering_team.mcp.quality import _reconstruct_stream
+
+    combined = _reconstruct_stream(result.stdout_head, result.stdout)
+    assert "COMPILATION ERROR" in combined
+    assert "ProductController.java" in combined
+    # This fixture's total size sits between `_OUTPUT_LIMIT` (4096) and
+    # `_HEAD_RETENTION_LIMIT` (64 KiB): the head budget captured the *entire*
+    # stream, so the tail `result.stdout` is wholly a suffix of it. A naive
+    # `head + marker + tail` would repeat that suffix and print a gap marker
+    # where nothing was actually lost -- `head_text()` must trim the overlap
+    # instead, so the reconstruction is exact and marker-free here.
+    assert combined == _MAVEN_LOG_WITH_HEAD_ERROR
+    assert "...[stream truncated]..." not in combined
+    assert combined.count("COMPILATION ERROR") == 1
+
+
+def test_a_stream_that_fits_entirely_inside_the_head_budget_reconstructs_without_duplication():
+    """Direct regression for the same duplication bug, isolated to
+    `_BoundedOutput` so the band it targets (total length between the tail
+    limit and the head budget) doesn't depend on a fixture's exact size.
+
+    When a stream's total length is small enough that the head budget
+    captured all of it, `text()`'s tail is just a suffix of `head_text()`'s
+    head. Concatenating them without trimming the overlap would repeat that
+    suffix and claim a gap that never happened.
+    """
+    from engineering_team.mcp.command import _BoundedOutput
+
+    buffer = _BoundedOutput(limit=4096, keep_head=65536)
+    body = ("[ERROR] cannot find symbol\n" + "[INFO] noise line\n" * 400).encode()
+    assert 4096 < len(body) < 65536  # exercises the head-fully-contains-stream band
+    buffer.append(body)
+
+    assert buffer.truncated  # the tail alone did drop bytes -- there is something to restore
+    reconstructed = buffer.head_text() + buffer.text()
+
+    assert reconstructed == body.decode()
+    assert "...[stream truncated]..." not in reconstructed
+    assert reconstructed.count("cannot find symbol") == 1
+
+
+def test_a_stream_that_exceeds_both_budgets_keeps_a_gap_marker_between_head_and_tail():
+    """The other side of the same fix: when the head budget itself is not
+    enough to reach where the tail begins, bytes genuinely are missing in the
+    middle, and the marker must still appear -- trimming the overlap in the
+    no-gap case must not suppress it in the real-gap case.
+    """
+    from engineering_team.mcp.command import _BoundedOutput
+
+    buffer = _BoundedOutput(limit=4096, keep_head=8192)
+    head_part = b"[ERROR] cannot find symbol\n"
+    filler = b"[INFO] noise line\n" * 2000  # far past head (8192) + tail (4096) combined
+    tail_part = b"[ERROR] build failed at the end\n"
+    buffer.append(head_part + filler + tail_part)
+
+    head = buffer.head_text()
+    tail = buffer.text()
+
+    assert head.endswith("...[stream truncated]...\n")
+    assert "cannot find symbol" in head
+    assert "build failed at the end" in tail
+    assert "build failed at the end" not in head  # no duplication across the real gap

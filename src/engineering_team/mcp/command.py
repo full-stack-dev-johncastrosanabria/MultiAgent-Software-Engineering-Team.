@@ -18,6 +18,21 @@ from typing import Protocol, runtime_checkable
 
 _OUTPUT_LIMIT = 4096
 _STRUCTURED_OUTPUT_LIMIT = 4 * 1024 * 1024
+# A separate, generous budget for the *earliest* bytes of an ordinary (not
+# structured-output) stream, captured once as they stream past and kept
+# alongside -- not instead of -- the tail `_OUTPUT_LIMIT` already keeps. This
+# module still knows nothing about what those bytes mean; it only agrees to
+# remember more than one window of them. Sized well past the download-noise
+# a real, verbose build phase produces before its own failure detail
+# (observed: ~9.6 KB in a representative fixture) so that detail commonly
+# reaches whichever caller reads a stream's start, without approaching
+# `_STRUCTURED_OUTPUT_LIMIT`, which stays reserved for the dependency-scan
+# path this budget is never applied to.
+_HEAD_RETENTION_LIMIT = 64 * 1024
+# Marks a genuine gap between a stream's retained head and its retained tail --
+# never printed when the two windows already meet or overlap, because then
+# nothing was actually lost. See `_BoundedOutput.head_text`.
+_STREAM_GAP_MARKER = "\n...[stream truncated]...\n"
 
 
 def _remaining(deadline: float) -> float:
@@ -26,15 +41,32 @@ def _remaining(deadline: float) -> float:
 
 
 class _BoundedOutput:
-    def __init__(self, limit: int = _OUTPUT_LIMIT) -> None:
+    def __init__(self, limit: int = _OUTPUT_LIMIT, *, keep_head: int = 0) -> None:
         self._limit = limit
         self._buffer = bytearray()
+        # Captured once, independently of the tail: the tail keeps sliding as
+        # more arrives, so without a separate copy the earliest bytes of any
+        # stream longer than `limit` are gone by the time a caller can ask for
+        # them -- which is exactly the case a build long enough to need
+        # truncation at all is in.
+        self._head = bytearray()
+        self._head_limit = keep_head
+        # Total bytes ever appended, independent of how much either window
+        # currently retains. `head_text` needs this to tell "the tail's window
+        # starts inside what the head already captured" (no bytes missing)
+        # apart from "the tail's window starts past where the head stopped"
+        # (a real gap) -- a distinction neither window's own length exposes
+        # once the head has stopped growing at `keep_head`.
+        self._total = 0
         self.truncated = False
         self._lock = threading.Lock()
 
     def append(self, chunk: bytes) -> None:
         with self._lock:
+            if len(self._head) < self._head_limit:
+                self._head.extend(chunk[: self._head_limit - len(self._head)])
             self._buffer.extend(chunk)
+            self._total += len(chunk)
             if len(self._buffer) > self._limit:
                 self.truncated = True
                 del self._buffer[:-self._limit]
@@ -43,16 +75,50 @@ class _BoundedOutput:
         with self._lock:
             return bytes(self._buffer).decode("utf-8", errors="replace")
 
+    def head_text(self) -> str:
+        """The stream's earliest bytes not already covered by `text()`'s tail.
+
+        Ready to prepend directly ahead of `text()`: concatenating the two
+        reconstructs the original stream. "" when there is nothing to add --
+        `keep_head` was never requested, or the stream never grew past what
+        the tail alone already retains.
+
+        Otherwise trimmed to end exactly where the tail's own window begins,
+        so a stream short enough to fit entirely inside `keep_head` (routine:
+        `keep_head` is sized generously past `limit`) reconstructs with the
+        tail's bytes appearing once, not twice. A gap marker is appended only
+        when the head actually stopped -- at `keep_head` -- before reaching
+        where the tail begins; when the two windows meet or overlap instead,
+        nothing was lost and no marker is printed.
+        """
+        with self._lock:
+            if not self.truncated or not self._head_limit:
+                return ""
+            tail_start = self._total - self._limit  # > 0: `truncated` implies this
+            head_end = len(self._head)  # == min(self._total, self._head_limit)
+            prefix = bytes(self._head[: min(head_end, tail_start)]).decode(
+                "utf-8", errors="replace"
+            )
+            if not prefix:
+                return ""
+            return prefix if head_end >= tail_start else prefix + _STREAM_GAP_MARKER
+
 
 class CommandOutput(subprocess.CompletedProcess[str]):
     """A bounded result that explicitly marks incomplete output evidence."""
 
     def __init__(
         self, args: list[str], returncode: int, stdout: str, stderr: str,
-        *, output_truncated: bool = False,
+        *, output_truncated: bool = False, stdout_head: str = "", stderr_head: str = "",
     ) -> None:
         super().__init__(args, returncode, stdout, stderr)
         self.output_truncated = output_truncated
+        # "" unless the runner requested head retention and a stream actually
+        # grew past its tail budget -- see `_BoundedOutput.head_text`. A caller
+        # that never asked for this (every dependency-scan/structured-output
+        # command) sees the same two empty strings it always did.
+        self.stdout_head = stdout_head
+        self.stderr_head = stderr_head
 
 
 @dataclass(frozen=True)

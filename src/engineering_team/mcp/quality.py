@@ -134,6 +134,31 @@ def retained_output(full_output: str) -> str:
     return (full_output[-keep:] if keep > 0 else "") + suffix
 
 
+def _reconstruct_stream(head: str, tail: str) -> str:
+    """One stream's text, with any earlier bytes `_BoundedOutput.head_text`
+    captured restored ahead of the tail `_run` below already had.
+
+    `_run` builds `full_output` from a `CommandOutput` whose `.stdout`/
+    `.stderr` are already tail-only: `ContainerRunner` caps each stream to the
+    last `_OUTPUT_LIMIT` bytes *as they stream past*, before this function or
+    `retained_output` ever runs, which for an ordinary (non-dependency-scan)
+    command sits ahead of both tail cuts this module already reorders against.
+    A Maven failure long enough to need any of that truncation routinely
+    exceeds that cap before its own `[ERROR]` block is reached -- the
+    dependency-resolution logging alone commonly does -- so the block was
+    already gone by the time `extract_build_errors` got a chance to see it.
+
+    `head` arrives pre-trimmed to the exact bytes the tail does not already
+    cover, and already carries its own gap marker when, and only when, bytes
+    were genuinely dropped between the two windows (`_BoundedOutput.head_text`
+    decides both). So this is plain concatenation: `""` for `head` -- a
+    command that never truncated, and the whole dependency-scan path, which
+    never requests one -- reconstructs to exactly `tail`, byte for byte what
+    `full_output` was before head retention existed.
+    """
+    return tail if not head else head + tail
+
+
 def build_runner(
     root: Path, settings: Settings, *, interpreter: Any = None,
     run_id: str = "", project: str = "",
@@ -798,7 +823,14 @@ class QualityMCP:
             )
         except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
             return self._unavailable(role, tool, exc, started)
-        full_output = completed.stdout + completed.stderr
+        # getattr, not an attribute a `CommandOutput` always has: several tests
+        # in this suite hand `_execute_process` a bare `subprocess.CompletedProcess`
+        # to skip the real runner, and that type has no head to restore.
+        full_output = _reconstruct_stream(
+            getattr(completed, "stdout_head", ""), completed.stdout
+        ) + _reconstruct_stream(
+            getattr(completed, "stderr_head", ""), completed.stderr
+        )
         output = retained_output(full_output)
         if completed.returncode < 0:
             return self._unavailable(

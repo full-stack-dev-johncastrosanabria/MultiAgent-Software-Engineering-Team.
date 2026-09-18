@@ -26,6 +26,7 @@ from pathlib import Path, PurePosixPath
 
 from engineering_team.docker_labels import label_arguments
 from engineering_team.mcp.command import (
+    _HEAD_RETENTION_LIMIT,
     _OUTPUT_LIMIT,
     _STRUCTURED_OUTPUT_LIMIT,
     CommandOutput,
@@ -401,8 +402,12 @@ class ContainerRunner:
     ) -> subprocess.CompletedProcess[str]:
         timeout = _remaining(request.deadline)
         output_limit = _STRUCTURED_OUTPUT_LIMIT if request.structured_output else _OUTPUT_LIMIT
-        stdout_buffer = _BoundedOutput(output_limit)
-        stderr_buffer = _BoundedOutput(output_limit)
+        # Head retention only for the ordinary path. A dependency scan already
+        # gets a 4 MiB tail -- wide enough that a second window would add
+        # nothing -- and must keep reading exactly as it did before this.
+        head_budget = 0 if request.structured_output else _HEAD_RETENTION_LIMIT
+        stdout_buffer = _BoundedOutput(output_limit, keep_head=head_budget)
+        stderr_buffer = _BoundedOutput(output_limit, keep_head=head_budget)
         created = self._quiet(args, timeout=max(1.0, min(timeout, 120.0)))
         if created is None or created.returncode != 0:
             detail = "" if created is None else created.stderr.strip()[-400:]
@@ -474,6 +479,8 @@ class ContainerRunner:
                 stdout_buffer.truncated or stderr_buffer.truncated
                 or readers_incomplete
             ),
+            stdout_head=stdout_buffer.head_text(),
+            stderr_head=stderr_buffer.head_text(),
         )
 
     @staticmethod
