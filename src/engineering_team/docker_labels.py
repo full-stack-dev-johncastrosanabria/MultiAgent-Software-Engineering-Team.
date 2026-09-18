@@ -92,31 +92,49 @@ def compose_label_lines(
     return lines
 
 
-class RuntimeUnresponsive(Exception):
+class RuntimeCouldNotBeAsked(Exception):
+    """The runtime is installed, but a question the sweep put to it got no answer.
+
+    Raised out of `_listed` so `sweep` can stop at the very first one: a
+    listing that exits non-zero (the daemon is stopped, the socket denies
+    permission -- B-11's "permisos Docker") or that cannot even be executed
+    after `shutil.which` found the binary. Either way the question was never
+    answered, and reading the empty result as "ASET owns nothing" fails open:
+    an unanswered listing of what the *current* run owns, or of which images
+    are cache, would make those resources candidates for removal. Distinct
+    from the runtime not being installed at all (`sweep`'s `shutil.which`
+    check), where there is truly nothing this host could have asked it to
+    create.
+    """
+
+
+class RuntimeUnresponsive(RuntimeCouldNotBeAsked):
     """`docker` (or whichever runtime was named) did not answer in time.
 
-    Raised out of `_listed`/`_removed` so `sweep` can stop at the very first
-    one instead of enduring the same timeout for every remaining resource
-    kind. Deliberately distinct from the `(OSError, SubprocessError)` case
-    below: a missing binary or a malformed invocation means there is nothing
-    to report, but a hang means the question was never answered, which is a
-    different fact and must not collapse into the same empty result (A-13,
-    B-11 -- a hung daemon is not an absent one).
+    Raised out of `_listed`/`_removed`: a hang means the question was never
+    answered, and ending the sweep at the first one spares it enduring the
+    same timeout for every remaining resource kind (A-13, B-11 -- a hung
+    daemon is not an absent one).
     """
 
 
 class SweepReport(TypedDict):
     """What one sweep removed, or why it could not look.
 
-    `error_code` is `None` when the sweep queried the runtime for every
-    resource kind, whether or not anything came back -- an empty `containers`
-    list under `error_code=None` truly means "nothing to clean" for that
-    kind. `ErrorCode.INFRASTRUCTURE_ERROR` means the runtime stopped
-    answering partway through: everything up to that point is real (a kind
-    already swept keeps its actual removals), but any kind the sweep never
-    reached is empty because it was never looked at, not because there was
-    nothing there. A caller must not read the empty kinds under
-    `INFRASTRUCTURE_ERROR` as "ASET owns nothing" -- only as "unknown". This
+    `error_code` is `None` when the runtime answered every listing the sweep
+    made (exit status 0), whether or not anything came back -- an empty
+    `containers` list under `error_code=None` means "nothing to clean" for
+    that kind. It is also `None`, with every kind empty, when no runtime is
+    installed at all: there is nothing this host could have asked it to
+    create. `ErrorCode.INFRASTRUCTURE_ERROR` means the runtime is installed
+    but stopped answering partway through -- a listing hung, or exited
+    non-zero, or could not be executed: everything up to that point is real
+    (a kind already swept keeps its actual removals), but any kind the sweep
+    never reached is empty because it was never looked at, not because there
+    was nothing there. A caller must not read the empty kinds under
+    `INFRASTRUCTURE_ERROR` as "ASET owns nothing" -- only as "unknown". A
+    single removal the runtime declines (a network still in use) is an
+    answer, not silence: that resource is just not listed as removed. This
     reuses the vocabulary `ToolResult.error_code` and `ServiceStartupError.code`
     already carry elsewhere, rather than a new marker every caller would have
     to learn to compare against.
@@ -139,10 +157,13 @@ def _listed(runtime: str, arguments: list[str], *, timeout: float = 60) -> set[s
         raise RuntimeUnresponsive(
             f"{runtime} did not answer within {timeout}s: {arguments}"
         ) from exc
-    except (OSError, subprocess.SubprocessError):
-        return set()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeCouldNotBeAsked(f"{runtime} could not be run: {arguments}") from exc
     if completed.returncode != 0:
-        return set()
+        # The exit status is the whole signal; stderr is never read to decide.
+        raise RuntimeCouldNotBeAsked(
+            f"{runtime} exited {completed.returncode} listing {arguments}"
+        )
     return {line.strip() for line in completed.stdout.splitlines() if line.strip()}
 
 
@@ -198,17 +219,19 @@ def sweep(
     Order matters: a network with a container attached cannot be removed, and a
     volume in use by a container cannot either.
 
-    A hung runtime is not an absent one. `shutil.which` finding nothing below
-    returns immediately with `error_code=None`: there truly is nothing to
-    look at. But once a runtime is found, this makes ~8 listing calls (one or
-    two per resource kind) and each one can wait up to `timeout` seconds; a
-    daemon that stops answering mid-sweep used to cost minutes of silent
-    waiting and then report `error_code=None` with everything empty, as if it
-    had looked and found nothing (A-13, B-11). `RuntimeUnresponsive` from the
+    A hung or refusing runtime is not an absent one. `shutil.which` finding
+    nothing below returns immediately with `error_code=None`: there truly is
+    nothing to look at. But once a runtime is found, this makes ~8 listing
+    calls (one or two per resource kind) and each one can wait up to
+    `timeout` seconds; a daemon that stops answering mid-sweep used to cost
+    minutes of silent waiting and then report `error_code=None` with
+    everything empty, as if it had looked and found nothing (A-13, B-11). A
+    stopped daemon or a denied socket did the same at once, since `docker ps`
+    exits 1 immediately. `RuntimeCouldNotBeAsked` (a hang included) from the
     first `_listed`/`_removed` call ends the sweep right there instead --
-    keeping whatever kinds of resource were already swept before the hang, so
-    a hang on, say, the network sweep does not also erase the record that the
-    container sweep genuinely ran and removed something.
+    keeping whatever kinds of resource were already swept before it, so a
+    failure on, say, the network sweep does not also erase the record that
+    the container sweep genuinely ran and removed something.
     """
     empty: SweepReport = {
         "containers": [], "networks": [], "volumes": [], "images": [],
@@ -250,10 +273,10 @@ def sweep(
             runtime, ["image", "rm", "--force"], sorted(built - cached),
             timeout=remove_timeout,
         )
-    except RuntimeUnresponsive:
+    except RuntimeCouldNotBeAsked:
         # Whatever kind already completed stays real: only the kind that
-        # hung, and any kind after it, are still at their initial empty
-        # value -- which `error_code` says to read as "not looked at", not
-        # as "nothing there".
+        # went unanswered, and any kind after it, are still at their initial
+        # empty value -- which `error_code` says to read as "not looked at",
+        # not as "nothing there".
         return {**report, "error_code": ErrorCode.INFRASTRUCTURE_ERROR}
     return report

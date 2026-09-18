@@ -6,10 +6,12 @@ import typer
 
 from engineering_team.apply_run import run_on_project
 from engineering_team.config import Settings
+from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
 from engineering_team.docker_labels import sweep
 from engineering_team.ephemeral_checkout import ephemeral_checkout
 from engineering_team.observability.evaluation import run_multimodel_acceptance
 from engineering_team.reset_project import reset_project
+from engineering_team.services import ServiceStartupError
 
 app = typer.Typer(help="Governed autonomous software-engineering workflow")
 
@@ -91,15 +93,23 @@ def run_project(
         raise typer.BadParameter("give a project path or --repo")
 
     def _go(root: Path) -> None:
-        evidence = run_on_project(
-            Settings(),
-            project_path=root,
-            specification=specification,
-            test_specification=test_specification,
-            authorize_writes=authorize_writes,
-            confirm_delivery=confirm_delivery,
-            report_path=report_path,
-        )
+        try:
+            evidence = run_on_project(
+                Settings(),
+                project_path=root,
+                specification=specification,
+                test_specification=test_specification,
+                authorize_writes=authorize_writes,
+                confirm_delivery=confirm_delivery,
+                report_path=report_path,
+            )
+        except ServiceStartupError as exc:
+            # Raised before the graph -- the pre-run sweep got no answer, the
+            # compose file was refused, a dependency never came up -- so no
+            # report exists to carry the typed code. The exit status carries
+            # it instead, and the scorer reads that, never this message.
+            typer.echo(f"infrastructure unavailable before the run started: {exc}", err=True)
+            raise typer.Exit(code=INFRASTRUCTURE_EXIT_CODE) from exc
         typer.echo(json.dumps(evidence, ensure_ascii=False))
 
     if repository_url is not None:
@@ -135,14 +145,16 @@ def docker_sweep_command(
     """
     report = sweep()
     if report["error_code"] is not None:
-        # The runtime never answered, so this is not a clean run: printing the
-        # report and exiting 0 here would tell the operator the sweep
-        # succeeded (apply_run.py:217 makes the same typed refusal for the
-        # entry-point sweep, per A-13/B-11). --build-cache is skipped too --
-        # a daemon that just stopped answering `docker` is not one to hand a
-        # further `docker builder prune` to.
+        # The runtime never answered -- it hung, or refused a listing because
+        # the daemon is stopped or the socket denied -- so this is not a clean
+        # run: printing the report and exiting 0 here would tell the operator
+        # the sweep succeeded (`apply_run.py` makes the same typed refusal for
+        # the entry-point sweep, per A-13/B-11), and it exits with the same
+        # infrastructure status `run-project` uses. --build-cache is skipped
+        # too -- a daemon that just stopped answering `docker` is not one to
+        # hand a further `docker builder prune` to.
         typer.echo(json.dumps(report, ensure_ascii=False))
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=INFRASTRUCTURE_EXIT_CODE)
     if build_cache:
         import subprocess
 

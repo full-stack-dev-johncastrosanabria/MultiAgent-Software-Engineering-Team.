@@ -103,6 +103,22 @@ class StopCause(StrEnum):
     DESTRUCTIVE_AUTHORIZATION_BLOCKED = "destructive_authorization_blocked"
     WRITE_FAILED = "write_failed"
     # Never produced inside the graph: a crashed run never reaches the node
-    # that names its cause. It exists for the scorer, which sees the exit code.
+    # that names its cause. It exists for the ghcycle scorer, which sees the
+    # exit code: a CLI that exited non-zero without writing a report, for any
+    # reason other than INFRASTRUCTURE_EXIT_CODE below, crashed.
     CRASH = "crash"
     UNKNOWN = "unknown"
+
+
+# The exit status `engineering-team` uses when a typed infrastructure failure
+# stopped it before any report could be written: `services.ServiceStartupError`,
+# which is how the pre-run Docker sweep that got no answer, a compose file that
+# could not be read or that binds outside the checkout, and a dependency that
+# never became ready all reach the CLI. `run-project` writes its report only at
+# the end of a completed run, so without this the typed code died with the
+# process and the scorer saw the same thing as an ASET crash. Named here, next
+# to `StopCause`, for the same reason: the CLI and the scorer read one
+# definition. 3, because the lower values already mean something at this
+# boundary: 0 is a CLI that completed (its report carries the verdict), 1 is
+# any other uncaught exception or an abort, 2 is a usage error (Click's own).
+INFRASTRUCTURE_EXIT_CODE = 3

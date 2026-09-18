@@ -315,5 +315,152 @@ def test_a_hang_during_removal_is_also_caught_and_reported_typed(
     }
 
 
+def _refused(argv, **_kwargs):
+    """`docker` found but answering a listing with an error, as it does at once
+    when the daemon is stopped or the socket denies permission (B-11's
+    "permisos Docker"). The text is never read: only the exit status counts."""
+    return subprocess.CompletedProcess(argv, 1, "", "Cannot connect to the Docker daemon")
+
+
+def test_a_runtime_that_refuses_to_list_is_reported_typed_not_as_nothing_to_clean(
+    monkeypatch,
+) -> None:
+    """Deferred L1069: the same "nothing to clean" lie T9 fixed for the hang,
+    reached by the other way a runtime can fail to answer."""
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+    calls: list[list[str]] = []
+
+    def runtime(argv, **kwargs):
+        calls.append(argv)
+        return _refused(argv, **kwargs)
+
+    monkeypatch.setattr(docker_labels.subprocess, "run", runtime)
+
+    report = sweep("now")
+
+    assert report == {
+        "containers": [], "networks": [], "volumes": [], "images": [],
+        "error_code": ErrorCode.INFRASTRUCTURE_ERROR,
+    }
+    # Stops at the first refusal, exactly as it does at the first hang.
+    assert len(calls) == 1
+
+
+def test_a_refused_listing_of_the_current_run_does_not_reap_the_current_run(
+    monkeypatch,
+) -> None:
+    """Failing open here deletes, it does not merely misreport: an unanswered
+    "what does the current run own" read as "nothing" made every one of the
+    current run's resources a candidate for removal."""
+    removed: list[list[str]] = []
+
+    def runtime(argv, **kwargs):
+        key = tuple(argv[1:])
+        if key == ("ps", "-a", "--quiet", *OWNED):
+            return subprocess.CompletedProcess(argv, 0, "dead\nalive\n", "")
+        if key == ("ps", "-a", "--quiet", *OWNED, "--filter", "label=aset.run=now"):
+            return _refused(argv)
+        if "rm" in argv:
+            removed.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        pytest.fail(f"unexpected call: {argv}")
+
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(docker_labels.subprocess, "run", runtime)
+
+    report = sweep("now")
+
+    assert removed == []
+    assert report["error_code"] is ErrorCode.INFRASTRUCTURE_ERROR
+
+
+def test_a_refused_cache_listing_does_not_remove_a_pulled_image(monkeypatch) -> None:
+    """Same fail-open, on images: an unanswered cache listing read as "no
+    cached image" handed every pulled base image to `image rm`."""
+    removed: list[list[str]] = []
+
+    def runtime(argv, **kwargs):
+        key = tuple(argv[1:])
+        if key == ("images", "--quiet", *OWNED):
+            return subprocess.CompletedProcess(argv, 0, "built\npulled\n", "")
+        if key == ("images", "--quiet", *OWNED, "--filter", "label=aset.lifetime=cache"):
+            return _refused(argv)
+        if "rm" in argv:
+            removed.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(docker_labels.subprocess, "run", runtime)
+
+    report = sweep("now")
+
+    assert ["docker", "image", "rm", "--force", "pulled"] not in removed
+    assert report["images"] == []
+    assert report["error_code"] is ErrorCode.INFRASTRUCTURE_ERROR
+
+
+def test_a_refused_listing_after_the_first_kind_keeps_what_was_already_removed(
+    monkeypatch,
+) -> None:
+    """Partial progress survives a refusal the same way it survives a hang."""
+
+    def runtime(argv, **kwargs):
+        key = tuple(argv[1:])
+        if key == ("ps", "-a", "--quiet", *OWNED):
+            return subprocess.CompletedProcess(argv, 0, "dead\n", "")
+        if key == ("ps", "-a", "--quiet", *OWNED, "--filter", "label=aset.run=now"):
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if key == ("rm", "--force", "dead"):
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if key == ("network", "ls", "--quiet", *OWNED):
+            return _refused(argv)
+        pytest.fail(f"unexpected call: {argv}")
+
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(docker_labels.subprocess, "run", runtime)
+
+    report = sweep("now")
+
+    assert report["containers"] == ["dead"]
+    assert report["networks"] == [] and report["volumes"] == [] and report["images"] == []
+    assert report["error_code"] is ErrorCode.INFRASTRUCTURE_ERROR
+
+
+def test_a_runtime_found_but_impossible_to_execute_is_reported_typed(monkeypatch) -> None:
+    """`shutil.which` found it, so this is not "no runtime installed": the
+    question was asked and never answered, which is the same flaw."""
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+
+    def runtime(argv, **kwargs):
+        raise PermissionError(13, "Permission denied", argv[0])
+
+    monkeypatch.setattr(docker_labels.subprocess, "run", runtime)
+
+    assert sweep("now")["error_code"] is ErrorCode.INFRASTRUCTURE_ERROR
+
+
+def test_a_removal_the_runtime_declines_is_not_a_runtime_that_could_not_be_asked(
+    monkeypatch,
+) -> None:
+    """Only listings are typed. A single `rm` that exits non-zero (a network
+    still has an endpoint, a volume is in use) is an answer, not silence: the
+    resource is simply not reported as removed and the sweep goes on."""
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+
+    def runtime(argv, **kwargs):
+        if tuple(argv[1:]) == ("rm", "--force", "busy"):
+            return subprocess.CompletedProcess(argv, 1, "", "container is in use")
+        if tuple(argv[1:]) == ("ps", "-a", "--quiet", *OWNED):
+            return subprocess.CompletedProcess(argv, 0, "busy\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(docker_labels.subprocess, "run", runtime)
+
+    report = sweep("now")
+
+    assert report["containers"] == []
+    assert report["error_code"] is None
+
+
 def test_the_label_arguments_are_a_docker_command_line() -> None:
     assert label_arguments("apply-1", "ingresos")[:2] == ["--label", "aset.owner=aset"]

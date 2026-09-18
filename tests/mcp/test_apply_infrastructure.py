@@ -8,7 +8,7 @@ import pytest
 from engineering_team import apply_run
 from engineering_team.components import Component
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import AgentRole, ToolStatus
+from engineering_team.contracts.enums import AgentRole, ErrorCode, ToolStatus
 from engineering_team.services import (
     ComposeError,
     ServiceStack,
@@ -143,6 +143,92 @@ def test_failed_start_cleans_and_reports_infrastructure(tmp_path, monkeypatch, i
         pytest.fail("baseline must not run")
     assert events == ["up", "down"]
     assert not runners
+
+
+def test_a_sweep_that_never_got_an_answer_refuses_to_start(
+    tmp_path, monkeypatch, infrastructure
+):
+    """Deferred L1068: the caller's half of T9's typed sweep refusal.
+
+    `sweep` reporting `INFRASTRUCTURE_ERROR` means cleanup is unknown, not
+    done, so nothing may start on top of it: no stack, no runner, and a
+    `ServiceStartupError` the CLI can carry across the process boundary."""
+    events, stacks, runners = infrastructure
+    monkeypatch.setattr(apply_run, "sweep", lambda run_id: {
+        "containers": [], "networks": [], "volumes": [], "images": [],
+        "error_code": ErrorCode.INFRASTRUCTURE_ERROR,
+    })
+
+    with (
+        pytest.raises(ServiceStartupError) as caught,
+        apply_run.open_project_quality(
+            tmp_path, Settings(quality_runner="container"), timeout_seconds=30
+        ),
+    ):
+        pytest.fail("nothing may start after an unanswered sweep")
+
+    assert caught.value.code is ErrorCode.INFRASTRUCTURE_ERROR
+    assert not stacks and not runners and events == []
+
+
+def test_a_daemon_that_refuses_the_sweep_listing_refuses_the_start_too(
+    tmp_path, monkeypatch, infrastructure
+):
+    """The same refusal, reached through the real `sweep` by the other way a
+    runtime fails to answer (L1069): `docker ps` exiting non-zero at once, as
+    it does with the daemon stopped or the socket denied."""
+    _, stacks, runners = infrastructure
+    monkeypatch.setattr(
+        "engineering_team.docker_labels.shutil.which", lambda _name: "/usr/bin/docker"
+    )
+    monkeypatch.setattr(
+        "engineering_team.docker_labels.subprocess.run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 1, "", "denied"),
+    )
+
+    with (
+        pytest.raises(ServiceStartupError),
+        apply_run.open_project_quality(
+            tmp_path, Settings(quality_runner="container"), timeout_seconds=30
+        ),
+    ):
+        pytest.fail("nothing may start after a refused sweep")
+
+    assert not stacks and not runners
+
+
+def test_a_bind_mount_refusal_reaches_the_caller_as_a_typed_startup_error(
+    tmp_path, monkeypatch
+):
+    """B-11's own example: a compose file that binds outside the checkout is
+    refused before anything starts (`_validate_isolation`), and that refusal
+    reaches `execute_on_project`'s caller as `ServiceStartupError` -- the one
+    type the CLI maps to its infrastructure exit code."""
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (root / "compose.yaml").write_text("services: {}")
+    monkeypatch.setattr("engineering_team.docker_labels.shutil.which", lambda _name: None)
+    monkeypatch.setattr(
+        "engineering_team.services.read_compose_model", lambda _, deadline=None: {
+            "services": {"db": {"image": "postgres", "volumes": [{
+                "type": "bind", "source": str(tmp_path), "target": "/data",
+            }]}},
+        },
+    )
+    monkeypatch.setattr(apply_run, "quality_targets_for", lambda *_: [
+        Component(path=".", stack="jvm", manifest="pom.xml"),
+    ])
+
+    with (
+        pytest.raises(ServiceStartupError) as caught,
+        apply_run.open_project_quality(
+            root, Settings(quality_runner="container"), timeout_seconds=30
+        ),
+    ):
+        pytest.fail("a refused compose file must not start")
+
+    assert isinstance(caught.value.__cause__, ComposeError)
+    assert caught.value.code is ErrorCode.INFRASTRUCTURE_ERROR
 
 
 @pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
