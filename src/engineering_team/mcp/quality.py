@@ -385,7 +385,7 @@ class QualityMCP:
     def _interpreter(self, deadline: float | None = None) -> str:
         """Get the interpreter for this instance, provisioning it once."""
         deadline = self._deadline() if deadline is None else deadline
-        self._runner.require_available()
+        self._runner.require_available(deadline)
         if not self._environment_lock.acquire(timeout=self._remaining(deadline)):
             raise TimeoutError("quality environment lock deadline exceeded")
         try:

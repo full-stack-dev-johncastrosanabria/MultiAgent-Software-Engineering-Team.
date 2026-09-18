@@ -134,6 +134,15 @@ def docker_sweep_command(
     half of the same sweep an apply run performs at startup.
     """
     report = sweep()
+    if report["error_code"] is not None:
+        # The runtime never answered, so this is not a clean run: printing the
+        # report and exiting 0 here would tell the operator the sweep
+        # succeeded (apply_run.py:217 makes the same typed refusal for the
+        # entry-point sweep, per A-13/B-11). --build-cache is skipped too --
+        # a daemon that just stopped answering `docker` is not one to hand a
+        # further `docker builder prune` to.
+        typer.echo(json.dumps(report, ensure_ascii=False))
+        raise typer.Exit(code=1)
     if build_cache:
         import subprocess
 

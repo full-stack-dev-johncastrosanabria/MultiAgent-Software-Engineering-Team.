@@ -108,14 +108,18 @@ class RuntimeUnresponsive(Exception):
 class SweepReport(TypedDict):
     """What one sweep removed, or why it could not look.
 
-    `error_code` is `None` when the sweep genuinely queried the runtime,
-    whether or not anything came back -- an empty `containers` list under
-    `error_code=None` truly means "nothing to clean". `ErrorCode.INFRASTRUCTURE_ERROR`
-    means the runtime never answered a single query, so every list below is
-    empty for that reason alone and must not be read as "ASET owns nothing".
-    This reuses the vocabulary `ToolResult.error_code` and
-    `ServiceStartupError.code` already carry elsewhere, rather than a new
-    marker every caller would have to learn to compare against.
+    `error_code` is `None` when the sweep queried the runtime for every
+    resource kind, whether or not anything came back -- an empty `containers`
+    list under `error_code=None` truly means "nothing to clean" for that
+    kind. `ErrorCode.INFRASTRUCTURE_ERROR` means the runtime stopped
+    answering partway through: everything up to that point is real (a kind
+    already swept keeps its actual removals), but any kind the sweep never
+    reached is empty because it was never looked at, not because there was
+    nothing there. A caller must not read the empty kinds under
+    `INFRASTRUCTURE_ERROR` as "ASET owns nothing" -- only as "unknown". This
+    reuses the vocabulary `ToolResult.error_code` and `ServiceStartupError.code`
+    already carry elsewhere, rather than a new marker every caller would have
+    to learn to compare against.
     """
 
     containers: list[str]
@@ -201,7 +205,10 @@ def sweep(
     daemon that stops answering mid-sweep used to cost minutes of silent
     waiting and then report `error_code=None` with everything empty, as if it
     had looked and found nothing (A-13, B-11). `RuntimeUnresponsive` from the
-    first `_listed`/`_removed` call ends the sweep right there instead.
+    first `_listed`/`_removed` call ends the sweep right there instead --
+    keeping whatever kinds of resource were already swept before the hang, so
+    a hang on, say, the network sweep does not also erase the record that the
+    container sweep genuinely ran and removed something.
     """
     empty: SweepReport = {
         "containers": [], "networks": [], "volumes": [], "images": [],
@@ -244,8 +251,9 @@ def sweep(
             timeout=remove_timeout,
         )
     except RuntimeUnresponsive:
-        return {
-            "containers": [], "networks": [], "volumes": [], "images": [],
-            "error_code": ErrorCode.INFRASTRUCTURE_ERROR,
-        }
+        # Whatever kind already completed stays real: only the kind that
+        # hung, and any kind after it, are still at their initial empty
+        # value -- which `error_code` says to read as "not looked at", not
+        # as "nothing there".
+        return {**report, "error_code": ErrorCode.INFRASTRUCTURE_ERROR}
     return report

@@ -167,11 +167,15 @@ class CommandRunner(Protocol):
     environment: Path | None
     """Writable directory the boundary must grant, once the owner has created it."""
 
-    def require_available(self) -> None:
+    def require_available(self, deadline: float | None = None) -> None:
         """Raise if this runner cannot enforce its boundary on this host.
 
         Asked before any work is prepared, so an unsupported host fails before a
         command is built rather than after one has already run unprotected.
+
+        `deadline`, when given, bounds how long this may spend probing an
+        external dependency (a container runtime's daemon, say) -- a runner
+        with nothing to probe can ignore it.
         """
         ...
 

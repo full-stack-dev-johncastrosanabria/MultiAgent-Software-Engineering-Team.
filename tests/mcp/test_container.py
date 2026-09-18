@@ -528,7 +528,7 @@ def test_no_command_carries_a_host_path_into_the_container(tmp_path: Path) -> No
             seen.append(list(request.args))
             return subprocess.CompletedProcess(list(request.args), 0, "ok", "")
 
-        def require_available(self) -> None:
+        def require_available(self, deadline: float | None = None) -> None:
             return None
 
         def prepare_environment(self, deadline: float) -> str:

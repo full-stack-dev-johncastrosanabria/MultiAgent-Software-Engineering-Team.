@@ -26,7 +26,7 @@ class FakeRunner:
         self.environment: Path | None = None
         self.closed = False
 
-    def require_available(self) -> None:
+    def require_available(self, deadline: float | None = None) -> None:
         return None
 
     def prepare_environment(self, deadline: float) -> str:

@@ -61,7 +61,9 @@ def _patch_executor(monkeypatch, callback) -> None:
     # The callback above is the whole boundary: no command reaches a container,
     # so the daemon probe is a precondition these tests never intended to
     # depend on. Removing it does not add any path that could reach a daemon.
-    monkeypatch.setattr(ContainerRunner, "require_available", lambda self: None)
+    monkeypatch.setattr(
+        ContainerRunner, "require_available", lambda self, deadline=None: None
+    )
 
 
 def _base_python() -> str:

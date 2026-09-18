@@ -8,11 +8,11 @@ first run, which is the behaviour `test_needs_network` declares.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from _docker import DOCKER_AVAILABLE
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.mcp.container import ContainerRunner
@@ -50,7 +50,15 @@ public class ProbeTests { [Fact] public void Suma() { Assert.Equal(2, 1 + 1); } 
 
 
 def _image_present(reference: str) -> bool:
-    if shutil.which("docker") is None:
+    """Whether the daemon answers, and this specific image is already pulled.
+
+    Daemon reachability is delegated to tests/_docker.py's DOCKER_AVAILABLE --
+    the same 5s-bounded probe every other file's needs_docker mark uses,
+    computed once at import time, rather than this file's own unbounded
+    `docker image inspect`, which under a hung daemon stalled collection for
+    every one of the four @_needs(...) decorators below (A-13/B-11).
+    """
+    if not DOCKER_AVAILABLE:
         return False
     return subprocess.run(
         ["docker", "image", "inspect", reference], capture_output=True, check=False

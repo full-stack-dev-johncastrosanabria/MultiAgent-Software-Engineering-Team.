@@ -256,5 +256,64 @@ def test_the_sweep_stops_at_the_first_hang_instead_of_repeating_it_per_kind(
     assert len(calls) == 1
 
 
+def test_a_hang_after_the_first_kind_keeps_what_was_already_removed(
+    monkeypatch,
+) -> None:
+    """A daemon that answers for containers and then stops responding for
+    networks must not erase the record that the container sweep genuinely
+    ran and removed something (review of e83cfad, Important #1)."""
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+
+    def runtime(argv, **kwargs):
+        key = tuple(argv[1:])
+        if key == ("ps", "-a", "--quiet", *OWNED):
+            return subprocess.CompletedProcess(argv, 0, "dead\n", "")
+        if key == ("ps", "-a", "--quiet", *OWNED, "--filter", "label=aset.run=now"):
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if key == ("rm", "--force", "dead"):
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if key == ("network", "ls", "--quiet", *OWNED):
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+        pytest.fail(f"unexpected call: {argv}")
+
+    monkeypatch.setattr(docker_labels.subprocess, "run", runtime)
+
+    report = sweep("now", timeout=0.01)
+
+    assert report["containers"] == ["dead"]
+    assert report["networks"] == []
+    assert report["volumes"] == []
+    assert report["images"] == []
+    assert report["error_code"] is ErrorCode.INFRASTRUCTURE_ERROR
+
+
+def test_a_hang_during_removal_is_also_caught_and_reported_typed(
+    monkeypatch,
+) -> None:
+    """The hang can happen while removing a listed resource, not only while
+    listing what to remove -- `_removed` raises `RuntimeUnresponsive` too,
+    and `sweep` reports it the same typed way (review of e83cfad, Important #1)."""
+    monkeypatch.setattr(docker_labels.shutil, "which", lambda _name: "/usr/bin/docker")
+
+    def runtime(argv, **kwargs):
+        key = tuple(argv[1:])
+        if key == ("ps", "-a", "--quiet", *OWNED):
+            return subprocess.CompletedProcess(argv, 0, "dead\n", "")
+        if key == ("ps", "-a", "--quiet", *OWNED, "--filter", "label=aset.run=now"):
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if key == ("rm", "--force", "dead"):
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+        pytest.fail(f"unexpected call: {argv}")
+
+    monkeypatch.setattr(docker_labels.subprocess, "run", runtime)
+
+    report = sweep("now", timeout=0.01)
+
+    assert report == {
+        "containers": [], "networks": [], "volumes": [], "images": [],
+        "error_code": ErrorCode.INFRASTRUCTURE_ERROR,
+    }
+
+
 def test_the_label_arguments_are_a_docker_command_line() -> None:
     assert label_arguments("apply-1", "ingresos")[:2] == ["--label", "aset.owner=aset"]

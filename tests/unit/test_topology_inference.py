@@ -9,6 +9,7 @@ strings.
 from __future__ import annotations
 
 import pytest
+from _docker import DOCKER_AVAILABLE
 
 from engineering_team.topology import (
     Dependency,
@@ -246,11 +247,16 @@ def test_no_probe_can_break_the_document_it_is_written_into() -> None:
 
 
 def test_a_derived_document_is_accepted_by_compose(tmp_path) -> None:
-    """The only check that matters: compose itself has to read it."""
-    import shutil
+    """The only check that matters: compose itself has to read it.
+
+    Gated on tests/_docker.py's DOCKER_AVAILABLE, the same 5s-bounded probe
+    every other file's needs_docker mark uses, rather than this test's own
+    `shutil.which` check followed by an unbounded `docker compose config` --
+    which under a hung daemon ran anyway and stalled (A-13/B-11).
+    """
     import subprocess
 
-    if shutil.which("docker") is None:
+    if not DOCKER_AVAILABLE:
         pytest.skip("needs docker")
     from engineering_team.topology import Dependency
 

@@ -221,7 +221,8 @@ class _ProjectInfrastructureQuality:
             if swept["error_code"] is not None:
                 raise ServiceStartupError(
                     "the pre-run Docker sweep never got an answer from the "
-                    "runtime; nothing was confirmed removed"
+                    "runtime partway through; cleanup is incomplete, not "
+                    "confirmed done"
                 )
             self.services = ServiceStack(
                 self.root, self.run_id or str(uuid.uuid4()), project=self.project

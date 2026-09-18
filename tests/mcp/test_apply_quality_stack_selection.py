@@ -39,7 +39,7 @@ class _Recorder(ContainerRunner):
         super().__init__(root, image=PINNED)
         self.commands: list[list[str]] = []
 
-    def require_available(self) -> None:
+    def require_available(self, deadline: float | None = None) -> None:
         return None
 
     def prepare_environment(self, deadline: float) -> str:

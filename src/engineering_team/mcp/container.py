@@ -123,19 +123,31 @@ class ContainerRunner:
 
     # -- interface ---------------------------------------------------------
 
-    def require_available(self) -> None:
-        """Raise unless the runtime is installed and its daemon answers."""
+    def require_available(self, deadline: float | None = None) -> None:
+        """Raise unless the runtime is installed and its daemon answers.
+
+        The probe is bounded by `deadline`, not a fixed 30s, when the caller
+        gives one. A hung daemon is not merely slow to answer: without this,
+        an operation whose deadline had all but elapsed still paid up to the
+        full 30s here before its own deadline-bounded lock ever ran, which is
+        the same "hung is not absent, and must not silently outlast the
+        caller's own bound" defect A-13/B-11 name for `docker_labels.sweep`
+        -- this is the same class of bug reached from production code instead
+        of from cleanup. `min(30, ...)` keeps the probe from waiting longer
+        than before when a caller has plenty of time left.
+        """
         executable = shutil.which(self.runtime)
         if executable is None:
             raise RuntimeError(
                 f"quality container runtime is unavailable: {self.runtime} not found"
             )
+        probe_timeout = 30.0 if deadline is None else min(30.0, _remaining(deadline))
         try:
             probe = subprocess.run(
                 [executable, "version", "--format", "{{.Server.Version}}"],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=probe_timeout,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
