@@ -571,7 +571,7 @@ def _deliver_infrastructure_first(
 ERROR_EXCERPT_LIMIT = 600
 
 
-def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
+def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, Any]]:
     """Name every tool the run invoked, how it ended, and why when it did not.
 
     The evidence recorded which files were written but never which tools ran,
@@ -593,14 +593,24 @@ def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
     The tail is what is kept: the reason a tool failed is the last line of the
     process output far more often than the first. A tool that succeeded carries
     no excerpt; its output is bulk, not evidence.
+
+    ``error_code`` travels alongside ``error`` on every entry, present or not:
+    a reader who wants a run's environment failures cannot filter ``dict``
+    entries that lack the key at all, and the whole point (a ghcycle scorer
+    that never has to compare error *text*) is defeated if the discriminator
+    is itself conditional. Its value is ``ToolResult.error_code``
+    (``contracts/models.py:175``) -- the typed enum ``mcp.quality`` already
+    stamps on an UNAVAILABLE result -- or ``None``, never derived from
+    ``error``'s prefix.
     """
-    outcomes: list[dict[str, str]] = []
+    outcomes: list[dict[str, Any]] = []
     for item in results:
-        outcome = {"tool": item.tool_name, "status": item.status.value}
+        outcome: dict[str, Any] = {"tool": item.tool_name, "status": item.status.value}
         if item.status is not ToolStatus.SUCCESS:
             reason = item.error or item.output_summary or ""
             if reason:
                 outcome["error"] = redact_secrets(reason)[-ERROR_EXCERPT_LIMIT:]
+        outcome["error_code"] = item.error_code.value if item.error_code is not None else None
         outcomes.append(outcome)
     return outcomes
 
