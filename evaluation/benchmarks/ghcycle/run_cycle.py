@@ -17,7 +17,13 @@ sys.path.insert(0, str(_ASET_ROOT / "src"))
 
 from engineering_team.apply_run import target_repo_sha
 from engineering_team.config import Settings
-from engineering_team.contracts.enums import AgentRole, ErrorCode, ReviewerStatus, StopCause
+from engineering_team.contracts.enums import (
+    INFRASTRUCTURE_EXIT_CODE,
+    AgentRole,
+    ErrorCode,
+    ReviewerStatus,
+    StopCause,
+)
 from engineering_team.docker_labels import CACHE_LIFETIME, LIFETIME_LABEL, OWNER_FILTER
 from engineering_team.guardrails.secrets import redacted_document
 from engineering_team.llm.cloud import CloudRouter
@@ -30,13 +36,17 @@ RESULTS = Path(__file__).resolve().parent / "results"
 # default is bound once, at import time, from the real module.
 _default_runner = subprocess.run
 
-# Schema version 2 is everything Task 6 adds: `aset_sha`, `aset_dirty`,
-# `specification`, `test_specification`, `model_chain`, `started_at`/
-# `finished_at`, `target_repo_sha`, `stop_cause`, `environment_failure`,
-# `review_status`, and the `stages.clone` rule that additionally requires
-# `target_repo_sha` on top of a report having been written at all. An
-# artifact with no `schema_version` key is v1 by convention (see
-# `evaluation/benchmarks/README.md`); this scorer never rewrites one.
+# Schema version 2 is everything Task 6 and phase 1's final review add:
+# `aset_sha`, `aset_dirty` and `aset_changed_during_run` (read before the run,
+# re-read after), `specification`, `test_specification`, `model_chain`,
+# `started_at`/`finished_at`, `target_repo_sha`, `stop_cause` (from the report,
+# or from the CLI's exit status when there is none), `environment_failure`,
+# `review_status`, `exercised` on every stage with `passed: null` for a stage
+# that was not, `all_exercised_stages_passed`, `stages_not_exercised`, and the
+# `stages.clone` rule that additionally requires `target_repo_sha` on top of a
+# report having been written at all. An artifact with no `schema_version` key
+# is v1 by convention (see `evaluation/benchmarks/README.md`); this scorer
+# never rewrites one.
 SCHEMA_VERSION = 2
 
 _DOCKER_TIMEOUT_SECONDS = 30
@@ -120,33 +130,98 @@ def _labelled_resources() -> list[str]:
 _GIT_STATUS_TIMEOUT_SECONDS = 10
 
 
-def _aset_dirty() -> bool | None:
-    """Whether the ASET checkout that is about to run has uncommitted changes.
+# What `_aset_dirty` asks git, in order. Tracked changes count anywhere in the
+# checkout. Untracked files count only under `src/`, where a new module is
+# imported by the run whether or not anyone `git add`-ed it: elsewhere this
+# checkout routinely carries untracked, non-ignored files of its own -- the
+# benchmark's scored `results/*.json`, editor and tool state such as `.tgrep/`
+# and `.vscode/` -- and counting those would flag ordinary use of this
+# benchmark as a modified harness. Ignored files (`results/raw/`, `.venv`,
+# `__pycache__`) never appear in either answer.
+_DIRTY_QUERIES = (
+    ("status", "--porcelain", "--untracked-files=no"),
+    ("ls-files", "--others", "--exclude-standard", "--", "src"),
+)
 
-    `aset_sha` names a commit; this says whether the working tree matched it.
+
+def _aset_dirty() -> bool | None:
+    """Whether the ASET checkout differs from the commit `aset_sha` names.
+
     A clean SHA next to a dirty tree would let a run be attributed to code
-    that was never actually committed. Untracked files are excluded on
-    purpose (`--untracked-files=no`): this same checkout accumulates its own
-    git-ignored output while the benchmark runs (`results/raw/`, the shared
-    `.venv`), and counting those would flag ordinary use of this benchmark as
-    a modified harness.
+    that was never actually committed. Dirty means a tracked change anywhere,
+    or an untracked, non-ignored file under `src/` (see `_DIRTY_QUERIES` for
+    why only there). The gap this leaves is named, not hidden: an untracked
+    file outside `src/` that the run still reads -- a new document under
+    `knowledge/`, say -- does not make the tree dirty.
 
     `None` means the question itself could not be answered -- git is
-    missing, `_ASET_ROOT` is not a repository, or the command exits non-zero
+    missing, `_ASET_ROOT` is not a repository, or a command exits non-zero
     or times out -- and is deliberately distinct from `False` ("asked, and
     the tree is clean"): a failed check must not read as a clean result.
     """
-    try:
-        completed = subprocess.run(
-            ["git", "-C", str(_ASET_ROOT), "status", "--porcelain", "--untracked-files=no"],
-            capture_output=True, text=True,
-            timeout=_GIT_STATUS_TIMEOUT_SECONDS, check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
+    dirty = False
+    for query in _DIRTY_QUERIES:
+        try:
+            completed = subprocess.run(
+                ["git", "-C", str(_ASET_ROOT), *query],
+                capture_output=True, text=True,
+                timeout=_GIT_STATUS_TIMEOUT_SECONDS, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if completed.returncode != 0:
+            return None
+        dirty = dirty or bool(completed.stdout.strip())
+    return dirty
+
+
+def _aset_changed(
+    before: tuple[str | None, bool | None], after: tuple[str | None, bool | None]
+) -> bool | None:
+    """Whether the ASET checkout moved while the run was in flight.
+
+    `before` and `after` are `(aset_sha, aset_dirty)` read on either side of
+    the CLI subprocess. `True` as soon as any pair both sides could read
+    differs -- a commit, an amend, a branch switch, a first edit to a clean
+    tree -- because then the pre-run SHA is no longer guaranteed to name what
+    ran. `None` when nothing that could be read differs but something could
+    not be read: "could not tell" is not "unchanged". `False` only when all
+    four readings exist and match.
+
+    Comparing the dirty *flag* rather than the diff is enough for the one
+    guarantee this field backs: a run that starts clean and ends clean on the
+    same SHA ran that commit. A run that started dirty is already flagged by
+    `aset_dirty` and is not attributable whatever happens next. What no pair
+    of readings can see is a change made and undone entirely inside the run
+    (the package imports some modules lazily); that is the limit of reading
+    twice, not something this function claims to rule out.
+    """
+    pairs = tuple(zip(before, after, strict=True))
+    if any(b is not None and a is not None and b != a for b, a in pairs):
+        return True
+    if any(b is None or a is None for b, a in pairs):
         return None
-    if completed.returncode != 0:
-        return None
-    return bool(completed.stdout.strip())
+    return False
+
+
+def _stop_cause(evidence: dict, *, cli_returncode: int) -> str | None:
+    """Why the run stopped: the report's own word, or the exit status's.
+
+    With a report, its `stop_cause` is copied verbatim (Task 3) and the exit
+    status adds nothing. Without one, the CLI died before writing it, and the
+    exit status is the only typed channel left: `INFRASTRUCTURE_EXIT_CODE` is
+    the CLI saying a typed infrastructure failure stopped it before the graph
+    (`cli.py`); any other non-zero status is an ASET crash, which is what
+    `StopCause.CRASH` exists for. A zero status with no readable report names
+    nothing it could stand behind, so it stays `None`.
+    """
+    if evidence:
+        return evidence.get("stop_cause")
+    if cli_returncode == INFRASTRUCTURE_EXIT_CODE:
+        return StopCause.INFRASTRUCTURE_UNAVAILABLE.value
+    if cli_returncode != 0:
+        return StopCause.CRASH.value
+    return None
 
 
 # Named once so the clone stage's `detail` and `evaluation/benchmarks/README.md`
@@ -294,14 +369,16 @@ def _model_chain(evidence: dict) -> dict[str, dict]:
     return chain
 
 
-def _classify_environment_failure(evidence: dict) -> dict | None:
+def _classify_environment_failure(
+    evidence: dict, *, cli_returncode: int | None = None
+) -> dict | None:
     """Say whether the *environment* failed, apart from why the run stopped.
 
     Not "the harness" -- ASET is the harness, and a bind-mount failure is not
     a failure of ASET (B-11); it is a failure of the infrastructure ASET
     depends on to run at all. Separate from `stop_cause` on purpose: a
     bind-mount that never came up is not the same finding as an architectural
-    hole, even when both end the run the same way. Three typed signals, none
+    hole, even when both end the run the same way. Four typed signals, none
     of them a substring match on any message:
 
     1. `stop_cause == StopCause.INFRASTRUCTURE_UNAVAILABLE.value` -- the graph
@@ -315,8 +392,14 @@ def _classify_environment_failure(evidence: dict) -> dict | None:
        (`apply_run.tool_outcomes()`, Ruling 2), never the `errors` list, whose
        entries carry the code as a text prefix (Ruling 3) and are off-limits to
        this phase's no-text-parsing rule.
+    4. There is no report and the CLI exited `INFRASTRUCTURE_EXIT_CODE` -- a
+       typed infrastructure failure (`ServiceStartupError`: the pre-run Docker
+       sweep got no answer, a compose file was refused, a dependency never
+       came up) stopped it before the graph, so no report could carry signals
+       1-3. The exit status is the typed code crossing the process boundary;
+       `cli_stderr_tail` is never read to decide this.
 
-    Returns `None` when none of the three fired: "no environment failure was
+    Returns `None` when none of the four fired: "no environment failure was
     detected", not "the environment is known good" -- a run whose evidence
     predates `error_code` (before this task) can still slip an infrastructure
     failure past signal 3 with no way for this function to know.
@@ -331,12 +414,49 @@ def _classify_environment_failure(evidence: dict) -> dict | None:
         for item in tool_outcomes
         if item.get("error_code") == ErrorCode.INFRASTRUCTURE_ERROR.value
     ]
-    if not stop_cause_flagged and delivery_error is None and not flagged_tools:
+    cli_exit_flagged = not evidence and cli_returncode == INFRASTRUCTURE_EXIT_CODE
+    if (
+        not stop_cause_flagged
+        and delivery_error is None
+        and not flagged_tools
+        and not cli_exit_flagged
+    ):
         return None
     return {
         "stop_cause_was_infrastructure_unavailable": stop_cause_flagged,
         "infrastructure_delivery_error": delivery_error,
         "tools_with_infrastructure_error": flagged_tools,
+        "cli_exited_infrastructure_unavailable": cli_exit_flagged,
+    }
+
+
+def _infrastructure_stage(evidence: dict, *, delivered: bool) -> dict:
+    """Score ADR 18's prerequisite delivery, or say it was not exercised.
+
+    Three answers, not two. A recorded `None` prerequisite is a legitimate
+    pass: the project needed nothing, dry run or not. A prerequisite on a
+    delivered run passes only with the infrastructure branch it had to open.
+    A prerequisite on a dry run was never delivered, so the stage was never
+    exercised -- `passed: None`, not the vacuous `True` v1 recorded (S1). A
+    report with no `infrastructure_prerequisite` key at all (no report, or one
+    older than ADR 18) never determined the prerequisite either, which is the
+    same missing-key-is-not-`None` distinction `_clone_stage` draws for its SHA.
+    """
+    prerequisite = evidence.get("infrastructure_prerequisite")
+    determined = "infrastructure_prerequisite" in evidence
+    exercised = determined and (prerequisite is None or delivered)
+    return {
+        "exercised": exercised,
+        "passed": (
+            None if not exercised
+            else prerequisite is None or bool(evidence.get("infrastructure_branch"))
+        ),
+        "detail": (
+            json.dumps(prerequisite) if determined
+            else "no report recorded an infrastructure prerequisite"
+        ),
+        "branch": evidence.get("infrastructure_branch"),
+        "error": evidence.get("infrastructure_delivery_error"),
     }
 
 
@@ -345,23 +465,22 @@ def _score(evidence: dict, *, delivered: bool) -> dict[str, dict]:
 
     Nothing here re-runs anything: the run already answered these questions, and
     a second source of truth is a second thing to keep correct.
+
+    Every stage carries `exercised`. A stage the run never exercised --
+    `delivery` on a dry run, `infrastructure` when a prerequisite was never
+    delivered -- has `passed: None`: it is neither a pass nor a fail, and v1
+    scoring it `True` is exactly the "21/26 aprobados vacíos" of A-11 (S1/S2).
+    Every other stage is always exercised: `clone`, `execute`, `spec` and
+    `hygiene` each ask a question the scorer can answer from what it has, and
+    a red one there is a real red -- a run whose containers never came up
+    reads as a failed `execute`, not as an unexercised one.
     """
     review = evidence.get("review") or {}
     written = evidence.get("files_written") or []
-    prerequisite = evidence.get("infrastructure_prerequisite")
     stages: dict[str, dict] = {}
 
-    stages["clone"] = _clone_stage(evidence)
-    stages["infrastructure"] = {
-        "passed": (
-            prerequisite is None
-            or bool(evidence.get("infrastructure_branch"))
-            or not delivered
-        ),
-        "detail": json.dumps(prerequisite),
-        "branch": evidence.get("infrastructure_branch"),
-        "error": evidence.get("infrastructure_delivery_error"),
-    }
+    stages["clone"] = {"exercised": True, **_clone_stage(evidence)}
+    stages["infrastructure"] = _infrastructure_stage(evidence, delivered=delivered)
     outcomes = evidence.get("tool_outcomes") or []
     unavailable = [
         item for item in outcomes if item.get("status") == "UNAVAILABLE"
@@ -403,18 +522,24 @@ def _score(evidence: dict, *, delivered: bool) -> dict[str, dict]:
         # and a run that left the graph via human_review_required can carry a
         # stale PASS from an earlier cycle in run_tests_outcomes[-1] -- that is
         # not a completed TESTING pass, so it must not read as green either.
+        "exercised": True,
         "passed": execute_passed,
         "detail": execute_detail,
         "unavailable": unavailable[:5],
         "failed_by_tool": failed_by_tool,
     }
     stages["spec"] = {
+        "exercised": True,
         "passed": bool(written) and review.get("status") == "APPROVED",
         "detail": f"{len(written)} files written, reviewer said {review.get('status')}",
         "files_written": written,
     }
     stages["delivery"] = {
-        "passed": (not delivered) or bool(evidence.get("delivery_pr_url")),
+        # Nothing is pushed without `--deliver`, so a dry run never exercises
+        # this stage. `skipped` is the v1 name for the same fact, kept so a
+        # reader comparing v1 and v2 artifacts finds it where it always was.
+        "exercised": delivered,
+        "passed": bool(evidence.get("delivery_pr_url")) if delivered else None,
         "pull_request": evidence.get("delivery_pr_url"),
         "branch": evidence.get("delivery_branch"),
         "error": evidence.get("delivery_error") or evidence.get("delivery_blocked"),
@@ -426,9 +551,10 @@ def _score(evidence: dict, *, delivered: bool) -> dict[str, dict]:
         # The daemon could not be asked, so this stage did not measure a clean
         # state -- it measured nothing. Same rule as `execute`: the benchmark
         # does not hand out PASS for a question it could not answer.
-        stages["hygiene"] = {"passed": False, "detail": str(exc)}
+        stages["hygiene"] = {"exercised": True, "passed": False, "detail": str(exc)}
     else:
         stages["hygiene"] = {
+            "exercised": True,
             "passed": not leftovers,
             "leftover_labelled_resources": leftovers,
         }
@@ -482,6 +608,11 @@ def main(
         command.append("--confirm-delivery")
 
     started_at = datetime.now(timezone.utc).isoformat()
+    # Read the ASET checkout *before* the run, not after it: the run can take
+    # hours, and a commit, amend or branch switch in the meantime would
+    # otherwise let the artifact certify a SHA that did not run (M-03, A-11).
+    # Re-read afterwards so a checkout that moved mid-run says so.
+    aset_before = (target_repo_sha(_ASET_ROOT), _aset_dirty())
     # `aset_sha` below names the commit at `_ASET_ROOT`. Without pinning
     # `PYTHONPATH`, the subprocess resolves `engineering_team` however the
     # shared `.venv`'s own editable install points -- which, run from a
@@ -492,6 +623,7 @@ def main(
         env={**os.environ, "PYTHONPATH": str(_ASET_ROOT / "src")},
     )
     finished_at = datetime.now(timezone.utc).isoformat()
+    aset_after = (target_repo_sha(_ASET_ROOT), _aset_dirty())
     evidence: dict = {}
     if report_path.exists():
         try:
@@ -508,13 +640,17 @@ def main(
         "cli_returncode": completed.returncode,
         "cli_stderr_tail": (completed.stderr or "")[-2000:],
         # The ASET commit that produced this run, read from the checkout of
-        # ASET itself running the benchmark -- not the target project. The
-        # subprocess above is pinned to import from this same checkout via
-        # `PYTHONPATH`, so this SHA names the code that actually ran.
-        "aset_sha": target_repo_sha(_ASET_ROOT),
+        # ASET itself running the benchmark -- not the target project -- just
+        # before the run started. The subprocess above is pinned to import
+        # from this same checkout via `PYTHONPATH`, so this SHA names the code
+        # that actually ran, provided `aset_changed_during_run` is `False`.
+        "aset_sha": aset_before[0],
         # Whether that checkout had uncommitted changes when the run started.
         # `None` means the check itself could not be answered, not "clean".
-        "aset_dirty": _aset_dirty(),
+        "aset_dirty": aset_before[1],
+        # Whether the SHA or the dirty state differed after the run. `None`
+        # means a reading was missing on one side, not "unchanged".
+        "aset_changed_during_run": _aset_changed(aset_before, aset_after),
         # The TEXT handed to `--spec`/`--test-spec` (`cli.py:41,63`), not a
         # path: whatever the operator passed on run_cycle.py's own command
         # line travels through to the run being scored.
@@ -527,25 +663,42 @@ def main(
         # ("no SHA was obtained") both surface here as `None`; the distinction
         # that matters is scored in `stages.clone`, not duplicated here.
         "target_repo_sha": evidence.get("target_repo_sha"),
-        # Copied verbatim, never reconstructed from error text (Task 3).
-        "stop_cause": evidence.get("stop_cause"),
-        "environment_failure": _classify_environment_failure(evidence),
+        # Copied verbatim from the report, never reconstructed from error text
+        # (Task 3); from the CLI's exit status only when there is no report.
+        "stop_cause": _stop_cause(evidence, cli_returncode=completed.returncode),
+        "environment_failure": _classify_environment_failure(
+            evidence, cli_returncode=completed.returncode
+        ),
         "review_status": _review_status(evidence),
         "stages": _score(evidence, delivered=arguments.deliver),
     }
     # Single point of stamping: every artifact this function writes carries
     # this key, and nothing else in the module sets it.
     summary["schema_version"] = SCHEMA_VERSION
+    stages = summary["stages"]
+    # Strict, as in v1's name: every stage exercised *and* passed. A dry run
+    # therefore never reads `true` here -- `delivery` was not exercised.
     summary["all_stages_passed"] = all(
-        stage["passed"] for stage in summary["stages"].values()
+        stage["exercised"] and stage["passed"] is True for stage in stages.values()
     )
+    # What this run could be judged on, and the exit status: a green dry run
+    # still exits 0, without claiming the stages it never exercised.
+    summary["all_exercised_stages_passed"] = all(
+        stage["passed"] is True for stage in stages.values() if stage["exercised"]
+    )
+    summary["stages_not_exercised"] = [
+        name for name, stage in stages.items() if not stage["exercised"]
+    ]
     destination = results_dir / f"{arguments.name}.json"
     destination.write_text(
         json.dumps(redacted_document(summary), indent=2) + "\n", encoding="utf-8"
     )
-    for name, stage in summary["stages"].items():
-        print(f"{'PASS' if stage['passed'] else 'FAIL'}  {name}")
-    return 0 if summary["all_stages_passed"] else 1
+    for name, stage in stages.items():
+        if not stage["exercised"]:
+            print(f"SKIP  {name} (not exercised)")
+        else:
+            print(f"{'PASS' if stage['passed'] else 'FAIL'}  {name}")
+    return 0 if summary["all_exercised_stages_passed"] else 1
 
 
 if __name__ == "__main__":

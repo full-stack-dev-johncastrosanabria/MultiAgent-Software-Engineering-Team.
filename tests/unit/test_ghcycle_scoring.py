@@ -469,3 +469,265 @@ def test_listed_raises_docker_query_failed_on_nonzero_returncode(
 
     with pytest.raises(run_cycle.DockerQueryFailed):
         run_cycle._listed(["docker", "ps", "-a", "--format", "{{.Names}}"])
+
+
+# -- I-1 / m-7: the ASET checkout is read before the run, and again after ----
+
+
+def _main_with(tmp_path, runner, name="demo", *extra):
+    """Drive `main()` end to end and read back the artifact it actually wrote."""
+    exit_code = run_cycle.main(
+        [
+            "--repo", "https://example.test/r.git", "--name", name,
+            "--spec", "spec text", "--test-spec", "test spec text", *extra,
+        ],
+        runner=runner,
+        results_dir=tmp_path,
+    )
+    return exit_code, json.loads((tmp_path / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def _writes_report(evidence: dict, returncode: int = 0):
+    def _fake_runner(command, **kwargs):
+        report_path = Path(command[command.index("--report-path") + 1])
+        report_path.write_text(json.dumps(evidence), encoding="utf-8")
+        return subprocess.CompletedProcess(command, returncode, stdout="", stderr="")
+
+    return _fake_runner
+
+
+def test_main_records_the_aset_checkout_as_it_was_before_the_run(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I-1: a commit, amend or branch switch while the run is in flight must not
+    let the artifact certify code that did not run. The fake runner is the
+    operator committing mid-run: both readings change between the two reads."""
+    moved = {"on": False}
+    monkeypatch.setattr(
+        run_cycle, "target_repo_sha", lambda _root: "after" if moved["on"] else "before"
+    )
+    monkeypatch.setattr(run_cycle, "_aset_dirty", lambda: moved["on"])
+    report = _writes_report({"target_repo_sha": "deadbeef"})
+
+    def _operator_commits_mid_run(command, **kwargs):
+        moved["on"] = True
+        return report(command, **kwargs)
+
+    _, written = _main_with(tmp_path, _operator_commits_mid_run)
+
+    assert written["aset_sha"] == "before"
+    assert written["aset_dirty"] is False
+    assert written["aset_changed_during_run"] is True
+
+
+def test_main_says_the_checkout_held_still_when_it_did(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(run_cycle, "target_repo_sha", lambda _root: "same")
+    monkeypatch.setattr(run_cycle, "_aset_dirty", lambda: False)
+
+    _, written = _main_with(tmp_path, _writes_report({"target_repo_sha": "deadbeef"}))
+
+    assert written["aset_sha"] == "same"
+    assert written["aset_changed_during_run"] is False
+
+
+def test_main_cannot_vouch_for_a_checkout_it_could_not_read(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`None` is "could not tell", never "unchanged"; a difference it *can* see
+    is still a change."""
+    monkeypatch.setattr(run_cycle, "target_repo_sha", lambda _root: "same")
+    monkeypatch.setattr(run_cycle, "_aset_dirty", lambda: None)
+
+    _, written = _main_with(tmp_path, _writes_report({"target_repo_sha": "deadbeef"}))
+
+    assert written["aset_changed_during_run"] is None
+
+
+def _git(repo: Path, *arguments: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.test",
+         "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *arguments],
+        check=True, capture_output=True, text=True,
+    )
+
+
+def test_aset_dirty_sees_a_new_untracked_module_under_src(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m-7, against a real repository: a new module under `src/` runs whether
+    or not it was ever `git add`-ed, so a tree carrying one is not the commit
+    `aset_sha` names. Untracked output elsewhere (this benchmark's own
+    `results/*.json`) and ignored files under `src/` stay ordinary use."""
+    repo = tmp_path / "aset"
+    (repo / "src" / "engineering_team").mkdir(parents=True)
+    (repo / "src" / "engineering_team" / "existing.py").write_text("x = 1\n")
+    (repo / ".gitignore").write_text("__pycache__/\n")
+    _git(repo, "init", "--quiet")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "--quiet", "-m", "base")
+    monkeypatch.setattr(run_cycle, "_ASET_ROOT", repo)
+
+    assert run_cycle._aset_dirty() is False
+
+    (repo / "results").mkdir()
+    (repo / "results" / "run.json").write_text("{}")
+    (repo / "src" / "engineering_team" / "__pycache__").mkdir()
+    (repo / "src" / "engineering_team" / "__pycache__" / "existing.pyc").write_bytes(b"")
+    assert run_cycle._aset_dirty() is False
+
+    (repo / "src" / "engineering_team" / "new_module.py").write_text("y = 2\n")
+    assert run_cycle._aset_dirty() is True
+
+
+# -- I-3: a typed failure before the graph crosses the process boundary -------
+
+
+def _no_report(returncode: int):
+    def _fake_runner(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, returncode, stdout="", stderr="Traceback (most recent call last): ..."
+        )
+
+    return _fake_runner
+
+
+def test_main_maps_the_cli_infrastructure_exit_to_both_typed_fields(tmp_path) -> None:
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    exit_code, written = _main_with(tmp_path, _no_report(INFRASTRUCTURE_EXIT_CODE))
+
+    assert written["cli_returncode"] == INFRASTRUCTURE_EXIT_CODE
+    assert written["stop_cause"] == "infrastructure_unavailable"
+    assert written["environment_failure"] is not None
+    assert written["environment_failure"]["cli_exited_infrastructure_unavailable"] is True
+    assert exit_code == 1
+
+
+def test_main_names_any_other_nonzero_exit_without_a_report_a_crash(tmp_path) -> None:
+    """`StopCause.CRASH` exists for exactly this, and an ASET crash is not an
+    environment failure."""
+    _, written = _main_with(tmp_path, _no_report(1))
+
+    assert written["stop_cause"] == "crash"
+    assert written["environment_failure"] is None
+
+
+def test_main_reads_the_reports_own_stop_cause_whenever_there_is_a_report(tmp_path) -> None:
+    """The exit status only speaks when the report cannot."""
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    _, written = _main_with(tmp_path, _writes_report(
+        {"target_repo_sha": "deadbeef", "stop_cause": "iteration_limit"},
+        returncode=INFRASTRUCTURE_EXIT_CODE,
+    ))
+
+    assert written["stop_cause"] == "iteration_limit"
+    assert written["environment_failure"] is None
+
+
+# -- I-4: a dry run does not score unexercised stages as passed -------------------
+
+
+_PREREQUISITE = {"engines": ["mysql"], "read_from": ["src/main/resources/application.yaml"]}
+
+
+def test_a_dry_run_does_not_score_delivery_or_an_undelivered_prerequisite_as_passed() -> None:
+    """The "corrida en seco" test the spec row asks for (S1/S2, "21/26
+    aprobados vacíos"): nothing was pushed, so neither stage was exercised,
+    and a stage that was never exercised is neither a pass nor a fail."""
+    stages = run_cycle._score(
+        {"target_repo_sha": "deadbeef", "infrastructure_prerequisite": _PREREQUISITE},
+        delivered=False,
+    )
+
+    assert stages["delivery"]["exercised"] is False
+    assert stages["delivery"]["passed"] is None
+    assert stages["infrastructure"]["exercised"] is False
+    assert stages["infrastructure"]["passed"] is None
+
+
+def test_a_dry_run_with_nothing_to_deliver_passes_infrastructure_legitimately() -> None:
+    """A recorded `None` prerequisite is an answer: the project needed nothing."""
+    stages = run_cycle._score(
+        {"target_repo_sha": "deadbeef", "infrastructure_prerequisite": None},
+        delivered=False,
+    )
+
+    assert stages["infrastructure"]["exercised"] is True
+    assert stages["infrastructure"]["passed"] is True
+
+
+def test_a_run_that_wrote_no_report_never_answered_the_infrastructure_question() -> None:
+    """Absent is not `None`: with no report the prerequisite was never
+    determined, the same distinction the clone stage draws for its SHA."""
+    stages = run_cycle._score({}, delivered=False)
+
+    assert stages["infrastructure"]["exercised"] is False
+    assert stages["infrastructure"]["passed"] is None
+
+
+def test_every_stage_says_whether_it_was_exercised() -> None:
+    stages = run_cycle._score(
+        {"target_repo_sha": "deadbeef", "infrastructure_prerequisite": _PREREQUISITE},
+        delivered=True,
+    )
+
+    assert set(stages) == {"clone", "infrastructure", "execute", "spec", "delivery", "hygiene"}
+    assert all(stage["exercised"] is True for stage in stages.values())
+    assert all(isinstance(stage["passed"], bool) for stage in stages.values())
+
+
+_GREEN_DRY_RUN = {
+    "target_repo_sha": "deadbeef",
+    "infrastructure_prerequisite": _PREREQUISITE,
+    "tool_outcomes": [{"tool": "run_tests", "status": "PASS", "error_code": None}],
+    "files_written": ["src/app.py"],
+    "review": {"status": "APPROVED"},
+    "human_review_required": False,
+    "stop_cause": "approved",
+}
+
+
+def test_main_on_a_green_dry_run_exits_zero_without_claiming_every_stage_passed(
+    tmp_path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code, written = _main_with(tmp_path, _writes_report(_GREEN_DRY_RUN))
+
+    assert exit_code == 0
+    assert written["all_stages_passed"] is False
+    assert written["all_exercised_stages_passed"] is True
+    assert written["stages_not_exercised"] == ["infrastructure", "delivery"]
+    assert written["stages"]["delivery"]["passed"] is None
+    assert written["stages"]["infrastructure"]["passed"] is None
+    printed = capsys.readouterr().out.splitlines()
+    for name in ("infrastructure", "delivery"):
+        line = next(item for item in printed if item.split()[1] == name)
+        assert not line.startswith(("PASS", "FAIL"))
+        assert "not exercised" in line
+
+
+def test_main_on_a_red_dry_run_still_exits_nonzero(tmp_path) -> None:
+    rejected = {**_GREEN_DRY_RUN, "review": {"status": "REJECTED"}}
+
+    exit_code, written = _main_with(tmp_path, _writes_report(rejected))
+
+    assert exit_code == 1
+    assert written["all_exercised_stages_passed"] is False
+    assert written["all_stages_passed"] is False
+
+
+def test_main_on_a_green_delivered_run_passes_every_stage(tmp_path) -> None:
+    delivered = {
+        **_GREEN_DRY_RUN,
+        "infrastructure_branch": "aset/infra-1",
+        "delivery_pr_url": "https://example.test/pr/1",
+    }
+
+    exit_code, written = _main_with(tmp_path, _writes_report(delivered), "demo", "--deliver")
+
+    assert exit_code == 0
+    assert written["all_stages_passed"] is True
+    assert written["all_exercised_stages_passed"] is True
+    assert written["stages_not_exercised"] == []
