@@ -507,8 +507,32 @@ class QualityMCP:
         )
 
     def _unavailable(
-        self, role: AgentRole, tool: str, exc: BaseException, started: float
+        self,
+        role: AgentRole,
+        tool: str,
+        exc: BaseException,
+        started: float,
+        *,
+        error_code: ErrorCode | None = ErrorCode.INFRASTRUCTURE_ERROR,
     ) -> ToolResult:
+        """An UNAVAILABLE result, stamped with what failed when that is known.
+
+        The default is the common case: the isolated environment is what did
+        not come up -- a container, a workspace transfer, a daemon this suite
+        needed, an interpreter that could not be provisioned, a lock that never
+        freed. The code under test was never given a chance to run, which is
+        the distinction INFRASTRUCTURE_ERROR exists to draw, and the one the
+        message alone never carried: this wording has no marker in it at all.
+
+        `error_code=None` is for the two callers where that is false: the
+        suite command itself outliving its deadline (the environment came up
+        and the code ran -- it hung or was slow), and this system's own refusal
+        to run a configuration the profile cannot honour. Stamping either as
+        infrastructure would file a product failure, or an operator's choice,
+        as an environment failure (B-11 inverted). With no code the graph
+        falls back to MCP_ERROR / `mcp_unavailable`, the label these carried
+        before phase 1; a suite timeout still needs a typed cause of its own.
+        """
         result = ToolResult(
             tool_name=tool,
             allowed_role=role,
@@ -517,12 +541,7 @@ class QualityMCP:
             output_summary="",
             duration_ms=int((time.perf_counter() - started) * 1000),
             error=f"isolated environment unavailable: {type(exc).__name__}: {exc}",
-            # The isolated environment is what did not come up -- a container, a
-            # workspace transfer, a daemon this suite needed. The code under test
-            # was never given a chance to run, which is the distinction
-            # INFRASTRUCTURE_ERROR exists to draw, and the one the message alone
-            # never carried: this wording has no marker in it at all.
-            error_code=ErrorCode.INFRASTRUCTURE_ERROR,
+            error_code=error_code,
             evidence_reference=self._evidence_reference(tool),
         )
         self._last[tool] = result
@@ -821,7 +840,13 @@ class QualityMCP:
                 env=env,
                 structured_output=dependency_findings is not None,
             )
-        except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
+            # Only `ContainerRunner._run_container` raises this under
+            # `_execute_process`: the command itself ran past its deadline. The
+            # environment came up and the code under test ran, so this is not
+            # an infrastructure failure -- see `_unavailable`.
+            return self._unavailable(role, tool, exc, started, error_code=None)
+        except (OSError, RuntimeError, TimeoutError) as exc:
             return self._unavailable(role, tool, exc, started)
         # getattr, not an attribute a `CommandOutput` always has: several tests
         # in this suite hand `_execute_process` a bare `subprocess.CompletedProcess`
@@ -831,6 +856,11 @@ class QualityMCP:
         ) + _reconstruct_stream(
             getattr(completed, "stderr_head", ""), completed.stderr
         )
+        # The head window exists to restore build errors for extraction
+        # (`retained_output`). The two text heuristics below have always read
+        # the tail only, and widening their input would let, say, a transient
+        # `dial tcp:` early in a long download log flip a scan to UNAVAILABLE.
+        tail_output = completed.stdout + completed.stderr
         output = retained_output(full_output)
         if completed.returncode < 0:
             return self._unavailable(
@@ -839,7 +869,7 @@ class QualityMCP:
         infrastructure_error = (
             "structured scanner output exceeded its retention limit or was incomplete"
             if dependency_findings is not None and getattr(completed, "output_truncated", False)
-            else unavailable_on_output(full_output) if unavailable_on_output is not None else None
+            else unavailable_on_output(tail_output) if unavailable_on_output is not None else None
         )
         if infrastructure_error is not None:
             status = ToolStatus.UNAVAILABLE
@@ -848,7 +878,7 @@ class QualityMCP:
             if (
                 status is ToolStatus.SUCCESS
                 and fail_on_output is not None
-                and fail_on_output(full_output)
+                and fail_on_output(tail_output)
             ):
                 status = ToolStatus.FAIL
         findings = (
@@ -1252,12 +1282,14 @@ class QualityMCP:
         if boundary is not None:
             return self._unavailable(role, "run_tests", boundary, started)
         if self.test_filter and not self.profile.test_filter_arguments(self.test_filter):
+            # Our own refusal of a configuration, not an environment that
+            # failed: nothing was asked of a container, workspace or daemon.
             return self._unavailable(role, "run_tests", RuntimeError(
                 f"{self.profile.name} declares no test filter syntax, so "
                 f"quality_test_filter={self.test_filter!r} cannot be honoured. "
                 "Refusing before the run rather than executing the whole suite "
                 "the operator asked to narrow."
-            ), started)
+            ), started, error_code=None)
         deadline = self._deadline()
         unavailable = self._ensure_services(role, "run_tests", deadline)
         if unavailable is not None:

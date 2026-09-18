@@ -5,6 +5,8 @@ from message strings: the point of `classify_stop_cause` is that the graph stops
 needing to read its own error text back.
 """
 
+import importlib.util
+import subprocess
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -134,6 +136,44 @@ class IsolatedEnvironmentDown:
             for component in self._components
         ]
         return CompositeQuality._aggregate("run_tests", role, results)
+
+
+class SuiteRanPastItsDeadline:
+    """The quality MCP a run gets when the suite it launched never finished.
+
+    Built out of the real producer, like `IsolatedEnvironmentDown`: the
+    `subprocess.TimeoutExpired` below is exactly what `ContainerRunner.
+    _run_container` raises when the suite command itself outlives its deadline,
+    and `QualityMCP._run` is where it lands. The container came up and the code
+    under test ran -- it hung, or was slow -- so a patch that deadlocks its own
+    suite is a product failure, not an environment that never came up.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._backend = QualityMCP(root)
+
+    def run_tests(self, role, paths=None) -> ToolResult:
+        def _suite_outlived_its_deadline(args, **_kwargs):
+            raise subprocess.TimeoutExpired(list(args), 0.01)
+
+        self._backend._execute_process = _suite_outlived_its_deadline
+        return self._backend._run(
+            role, "run_tests", ["pytest"], {AgentRole.TESTING},
+            time.monotonic() + 1, cwd=self._backend.root,
+        )
+
+
+def _load_run_cycle():
+    """The ghcycle scorer, imported by path as `test_ghcycle_scoring.py` does."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "evaluation" / "benchmarks" / "ghcycle" / "run_cycle.py"
+    )
+    spec = importlib.util.spec_from_file_location("run_cycle_for_stop_cause", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_an_approved_review_that_never_raised_the_flag_is_approved() -> None:
@@ -661,6 +701,41 @@ def test_a_workspace_that_never_synchronised_is_not_filed_against_the_mcp_layer(
     assert state["errors"][-1].code is ErrorCode.INFRASTRUCTURE_ERROR
     assert state["final_status"] == "HUMAN_REVIEW_REQUIRED"
     assert state["stop_cause"] == StopCause.INFRASTRUCTURE_UNAVAILABLE.value
+
+
+def test_a_suite_that_outlived_its_deadline_is_not_filed_as_an_environment_failure(
+    tmp_path,
+) -> None:
+    """B-11 inverted is still B-11: a hung suite must not read as infrastructure.
+
+    End to end through the real producer (`QualityMCP._run`), the real graph
+    (`preserve_tool_result`, `classify_stop_cause`), the real receipt
+    (`apply_run.tool_outcomes`) and the real scorer
+    (`run_cycle._classify_environment_failure`). The run stops on the
+    UNAVAILABLE result as before; what changes is that nothing along the way
+    calls it an environment failure. It falls back to `MCP_ERROR` /
+    `mcp_unavailable`, the label it carried before phase 1, which the scorer
+    does not count as environment. A suite timeout still needs a typed cause of
+    its own (phase 2).
+    """
+    from engineering_team.apply_run import tool_outcomes
+
+    state = build_engineering_graph(
+        quality_mcp=SuiteRanPastItsDeadline(tmp_path)
+    ).invoke({"run_id": "hung-suite", "requirement": "safe bounded change"})
+
+    blocking = next(
+        item for item in state["tool_results"] if item.status is ToolStatus.UNAVAILABLE
+    )
+    assert blocking.error_code is None
+    assert state["errors"][-1].code is ErrorCode.MCP_ERROR
+    assert state["stop_cause"] == StopCause.MCP_UNAVAILABLE.value
+
+    evidence = {
+        "stop_cause": state["stop_cause"],
+        "tool_outcomes": tool_outcomes(state["tool_results"]),
+    }
+    assert _load_run_cycle()._classify_environment_failure(evidence) is None
 
 
 def test_an_approved_run_names_its_cause_too_instead_of_leaving_it_empty() -> None:

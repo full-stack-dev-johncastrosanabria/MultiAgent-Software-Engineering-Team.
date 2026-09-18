@@ -216,3 +216,59 @@ def test_truncated_scanner_output_cannot_confirm_findings_or_success(tmp_path, m
     assert result.status is ToolStatus.UNAVAILABLE
     assert not result.confirmed_dependency_findings
     assert len(result.output_summary) <= 4000
+
+
+def _go_scan_with_head(tmp_path, monkeypatch, *, head: str, tail: str):
+    """A Go security scan whose runner restored a head window ahead of its tail.
+
+    Go's security phase is the one non-structured path that reaches
+    `_security_infrastructure_error`, so it is the one where the 64 KiB head
+    `ContainerRunner` retains (task 4) could reach that text heuristic too.
+    """
+    from engineering_team.mcp.command import CommandOutput
+
+    quality = QualityMCP(tmp_path, runner=Mock(), profile=profile_for("go"))
+    monkeypatch.setattr(quality, "_sandbox_directory", lambda: "/aset/env")
+    monkeypatch.setattr(
+        quality, "_execute_process",
+        lambda args, **_kwargs: CommandOutput(
+            args, 0, tail, "", output_truncated=True, stdout_head=head,
+        ),
+    )
+    return quality._run_profile(
+        AgentRole.SECURITY, "run_security_scan", "security", [],
+        {AgentRole.SECURITY}, quality._deadline(),
+    )
+
+
+def test_an_early_network_blip_in_a_long_go_scan_log_does_not_flip_it_to_unavailable(
+    tmp_path, monkeypatch,
+):
+    """The head window restores build errors for extraction; it must not widen
+    the pre-existing outage heuristic, which has always read the tail only. A
+    transient `dial tcp:` early in a download log that the scan then recovered
+    from is not an advisory service that was unavailable."""
+    head = (
+        "go: downloading example.test/mod v1.0.0\n"
+        "dial tcp: lookup proxy.golang.org: i/o timeout\n"
+        + "go: downloading example.test/other v1.0.0\n" * 200
+    )
+    result = _go_scan_with_head(
+        tmp_path, monkeypatch, head=head, tail="No vulnerabilities found.\n",
+    )
+
+    assert result.status is ToolStatus.SUCCESS
+    assert result.error_code is None
+
+
+def test_the_same_marker_in_the_tail_still_reports_the_scanner_outage(
+    tmp_path, monkeypatch,
+):
+    """Control: the heuristic itself is unchanged -- only its input window is."""
+    result = _go_scan_with_head(
+        tmp_path, monkeypatch, head="",
+        tail="govulncheck: dial tcp: lookup vuln.go.dev: no such host\n",
+    )
+
+    assert result.status is ToolStatus.UNAVAILABLE
+    assert result.error and "INFRASTRUCTURE_ERROR" in result.error
