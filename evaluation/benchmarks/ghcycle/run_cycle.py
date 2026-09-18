@@ -6,6 +6,7 @@ stages are scored independently, so a red one names a place to look.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -29,11 +30,12 @@ RESULTS = Path(__file__).resolve().parent / "results"
 # default is bound once, at import time, from the real module.
 _default_runner = subprocess.run
 
-# Schema version 2 is everything Task 6 adds: `aset_sha`, `specification`,
-# `test_specification`, `model_chain`, `started_at`/`finished_at`,
-# `target_repo_sha`, `stop_cause`, `environment_failure`, `review_status`, and
-# the `stages.clone` rule keyed on `target_repo_sha` instead of `bool(evidence)`.
-# An artifact with no `schema_version` key is v1 by convention (see
+# Schema version 2 is everything Task 6 adds: `aset_sha`, `aset_dirty`,
+# `specification`, `test_specification`, `model_chain`, `started_at`/
+# `finished_at`, `target_repo_sha`, `stop_cause`, `environment_failure`,
+# `review_status`, and the `stages.clone` rule that additionally requires
+# `target_repo_sha` on top of a report having been written at all. An
+# artifact with no `schema_version` key is v1 by convention (see
 # `evaluation/benchmarks/README.md`); this scorer never rewrites one.
 SCHEMA_VERSION = 2
 
@@ -115,6 +117,38 @@ def _labelled_resources() -> list[str]:
     return found
 
 
+_GIT_STATUS_TIMEOUT_SECONDS = 10
+
+
+def _aset_dirty() -> bool | None:
+    """Whether the ASET checkout that is about to run has uncommitted changes.
+
+    `aset_sha` names a commit; this says whether the working tree matched it.
+    A clean SHA next to a dirty tree would let a run be attributed to code
+    that was never actually committed. Untracked files are excluded on
+    purpose (`--untracked-files=no`): this same checkout accumulates its own
+    git-ignored output while the benchmark runs (`results/raw/`, the shared
+    `.venv`), and counting those would flag ordinary use of this benchmark as
+    a modified harness.
+
+    `None` means the question itself could not be answered -- git is
+    missing, `_ASET_ROOT` is not a repository, or the command exits non-zero
+    or times out -- and is deliberately distinct from `False` ("asked, and
+    the tree is clean"): a failed check must not read as a clean result.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(_ASET_ROOT), "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True,
+            timeout=_GIT_STATUS_TIMEOUT_SECONDS, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return bool(completed.stdout.strip())
+
+
 # Named once so the clone stage's `detail` and `evaluation/benchmarks/README.md`
 # describe the same rule in the same words, rather than two prose renderings of
 # one decision drifting apart.
@@ -126,28 +160,56 @@ _CLONE_RULE_V2 = (
 def _clone_stage(evidence: dict) -> dict:
     """Score the clone stage on `target_repo_sha`, not on evidence merely existing.
 
-    `bool(evidence)` (the v1 rule) reads a hang anywhere after a successful
-    clone -- mid-execute, mid-delivery -- as a *clone* failure, because by the
-    time the run dies there is at least one other key already in the dict and
-    the checkout is long gone. `target_repo_sha` is recorded once, read while
-    the working copy is still on disk (`apply_run.py:684-722`), and is the one
-    fact in the report that can only be true if the checkout happened.
+    The real difference between the two rules is this: v1 asked only "was a
+    report written" (`bool(evidence)`); v2 asks "was a report written *and*
+    did it record a target SHA". v2 can therefore only turn a v1 pass into a
+    fail -- a report that exists but carries no `target_repo_sha` -- never
+    the reverse, because a report that satisfies v2 always satisfies v1 too.
 
-    Absence of the key and an explicit `None` value are not the same claim and
-    must not share one `detail`. A missing key means this evidence predates
-    Task 5 and the v2 rule has nothing to read -- "not demonstrable under this
-    rule", never "clone failed". An explicit `None` means Task 5's own lookup
-    ran and came back empty -- "no SHA was obtained". Both score `passed=False`
-    (a scorer that cannot demonstrate a pass does not hand out an unearned
-    one), but a reader comparing two red clone stages must be able to tell
-    "older report" from "this SHA lookup failed" without decoding anything.
+    This does not fix the case the brief named (a hang after a successful
+    clone reading as a clone failure): the CLI persists its report only once,
+    at the very end of a completed run (`apply_run.py:900-903`), so a run
+    that dies partway through leaves no report under v1 *or* v2, and neither
+    rule can distinguish a died-after-clone run from a died-before-clone run.
+    What v2 adds is a name for that case -- see the `not evidence` branch
+    below -- not a fix for it; fixing it would mean the CLI persisting clone
+    evidence before it can die, which changes Task 5's report contract and is
+    out of this task's scope.
+
+    Three distinct claims about the evidence, three distinct `detail`s, all
+    `passed=False` except the last (a scorer that cannot demonstrate a pass
+    does not hand out an unearned one):
+
+    1. `not evidence` -- no report exists to read at all: the run wrote none,
+       or what it wrote could not be parsed (`main()` folds both into `{}`).
+       This is the common case for a run that crashed, hung, or was killed;
+       it says nothing about whether the clone itself succeeded.
+    2. `evidence` is non-empty but lacks `target_repo_sha` -- a report was
+       written by a CLI old enough to predate Task 5, so the v2 rule has
+       nothing to read.
+    3. `evidence["target_repo_sha"] is None` -- a current CLI wrote the
+       report and Task 5's own lookup ran, but came back empty.
+
+    A reader comparing two red clone stages must be able to tell these three
+    apart without decoding anything.
     """
+    if not evidence:
+        return {
+            "passed": False,
+            "detail": (
+                f"{_CLONE_RULE_V2}; the run wrote no report (or it could not "
+                "be parsed), so the clone cannot be demonstrated from "
+                "evidence -- this does not mean the clone failed"
+            ),
+            "target_repo_sha": None,
+        }
     if "target_repo_sha" not in evidence:
         return {
             "passed": False,
             "detail": (
-                f"{_CLONE_RULE_V2}; the key is absent, so this evidence predates "
-                "Task 5 and cannot be scored by this rule"
+                f"{_CLONE_RULE_V2}; a report exists but the key is absent, so "
+                "this evidence predates Task 5 and cannot be scored by this "
+                "rule"
             ),
             "target_repo_sha": None,
         }
@@ -233,12 +295,14 @@ def _model_chain(evidence: dict) -> dict[str, dict]:
 
 
 def _classify_environment_failure(evidence: dict) -> dict | None:
-    """Say whether the *harness* failed, apart from why the run stopped.
+    """Say whether the *environment* failed, apart from why the run stopped.
 
-    Separate from `stop_cause` on purpose (B-11): a bind-mount that never came
-    up is not the same finding as an architectural hole, even when both end
-    the run the same way. Three typed signals, none of them a substring match
-    on any message:
+    Not "the harness" -- ASET is the harness, and a bind-mount failure is not
+    a failure of ASET (B-11); it is a failure of the infrastructure ASET
+    depends on to run at all. Separate from `stop_cause` on purpose: a
+    bind-mount that never came up is not the same finding as an architectural
+    hole, even when both end the run the same way. Three typed signals, none
+    of them a substring match on any message:
 
     1. `stop_cause == StopCause.INFRASTRUCTURE_UNAVAILABLE.value` -- the graph
        itself named this as why the run stopped (`contracts/enums.py:83-91`).
@@ -418,7 +482,15 @@ def main(
         command.append("--confirm-delivery")
 
     started_at = datetime.now(timezone.utc).isoformat()
-    completed = runner(command, capture_output=True, text=True, check=False)
+    # `aset_sha` below names the commit at `_ASET_ROOT`. Without pinning
+    # `PYTHONPATH`, the subprocess resolves `engineering_team` however the
+    # shared `.venv`'s own editable install points -- which, run from a
+    # worktree, is the *main checkout's* `src`, not this one's. Pinning it
+    # here is what makes `aset_sha` name the code that actually executed.
+    completed = runner(
+        command, capture_output=True, text=True, check=False,
+        env={**os.environ, "PYTHONPATH": str(_ASET_ROOT / "src")},
+    )
     finished_at = datetime.now(timezone.utc).isoformat()
     evidence: dict = {}
     if report_path.exists():
@@ -436,8 +508,13 @@ def main(
         "cli_returncode": completed.returncode,
         "cli_stderr_tail": (completed.stderr or "")[-2000:],
         # The ASET commit that produced this run, read from the checkout of
-        # ASET itself running the benchmark -- not the target project.
+        # ASET itself running the benchmark -- not the target project. The
+        # subprocess above is pinned to import from this same checkout via
+        # `PYTHONPATH`, so this SHA names the code that actually ran.
         "aset_sha": target_repo_sha(_ASET_ROOT),
+        # Whether that checkout had uncommitted changes when the run started.
+        # `None` means the check itself could not be answered, not "clean".
+        "aset_dirty": _aset_dirty(),
         # The TEXT handed to `--spec`/`--test-spec` (`cli.py:41,63`), not a
         # path: whatever the operator passed on run_cycle.py's own command
         # line travels through to the run being scored.

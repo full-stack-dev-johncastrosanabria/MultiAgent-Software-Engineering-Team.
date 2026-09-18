@@ -158,24 +158,46 @@ def test_clone_is_green_when_the_run_produced_any_evidence() -> None:
 
 
 def test_clone_is_red_when_there_is_no_evidence_at_all() -> None:
+    """`main()` folds "the run wrote no report" and "the report could not be
+    parsed" into `{}` alike (fix round 1, Important 1): this is the common
+    case for a run that crashed, hung, or was killed before it could persist
+    anything, and it says nothing about whether the clone itself succeeded --
+    it must not be reported as "this evidence predates Task 5", which is a
+    claim about an old but *present* report, not a claim about a missing one.
+    """
     evidence: dict = {}
     stages = run_cycle._score(evidence, delivered=False)
 
     assert stages["clone"]["passed"] is False
-    assert "target_repo_sha" in stages["clone"]["detail"]
-    assert "absent" in stages["clone"]["detail"]
+    assert "wrote no report" in stages["clone"]["detail"]
+    assert "predates Task 5" not in stages["clone"]["detail"]
+
+
+def test_clone_is_red_with_predates_task_5_detail_when_a_real_report_lacks_the_key() -> None:
+    """A *non-empty* report missing `target_repo_sha` is a different claim
+    from no report at all: it means a real, older CLI wrote this evidence
+    before Task 5 added the field, not that the run produced nothing."""
+    evidence = {"files_written": ["src/app.py"]}
+    stages = run_cycle._score(evidence, delivered=False)
+
+    assert stages["clone"]["passed"] is False
+    assert "predates Task 5" in stages["clone"]["detail"]
 
 
 def test_clone_is_red_with_distinct_detail_when_target_repo_sha_is_none() -> None:
-    """Absent key ("predates Task 5") and explicit `None` ("no SHA was
-    obtained") are different claims about the same evidence and must not
-    collapse into one `detail`, per the controller's ruling on this stage."""
-    absent = run_cycle._score({}, delivered=False)["clone"]
+    """No report, a real report predating Task 5, and a current report with
+    an explicit `None` are three different claims about the evidence and must
+    not collapse into shared `detail` text, per the controller's ruling on
+    this stage."""
+    no_report = run_cycle._score({}, delivered=False)["clone"]
+    predates_t5 = run_cycle._score({"files_written": ["x"]}, delivered=False)["clone"]
     none_valued = run_cycle._score({"target_repo_sha": None}, delivered=False)["clone"]
 
-    assert absent["passed"] is False
+    assert no_report["passed"] is False
+    assert predates_t5["passed"] is False
     assert none_valued["passed"] is False
-    assert absent["detail"] != none_valued["detail"]
+    details = {no_report["detail"], predates_t5["detail"], none_valued["detail"]}
+    assert len(details) == 3
     assert "no sha was obtained" in none_valued["detail"].lower()
 
 
@@ -325,6 +347,77 @@ def test_main_does_not_write_to_the_real_results_directory(tmp_path) -> None:
     finally:
         real_summary.unlink(missing_ok=True)
         real_raw.unlink(missing_ok=True)
+
+
+def test_main_pins_pythonpath_to_aset_root_for_the_runner(tmp_path) -> None:
+    """Fix round 1, Important 3: without pinning `PYTHONPATH`, the subprocess
+    resolves `engineering_team` however the shared `.venv`'s own editable
+    install points, which, run from a worktree, is the main checkout's `src`
+    -- not the one `aset_sha` names. `main()` must hand the runner an `env`
+    that pins the subprocess to import from `_ASET_ROOT` itself."""
+    captured_kwargs: dict = {}
+
+    def _fake_runner(command, **kwargs):
+        captured_kwargs.update(kwargs)
+        report_path = Path(command[command.index("--report-path") + 1])
+        report_path.write_text(
+            json.dumps({"target_repo_sha": "deadbeef"}), encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    run_cycle.main(
+        [
+            "--repo", "https://example.test/r.git", "--name", "envtest",
+            "--spec", "x", "--test-spec", "y",
+        ],
+        runner=_fake_runner,
+        results_dir=tmp_path,
+    )
+
+    assert captured_kwargs["env"]["PYTHONPATH"] == str(run_cycle._ASET_ROOT / "src")
+
+
+def test_aset_dirty_is_true_when_git_status_reports_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        run_cycle.subprocess, "run",
+        lambda *a, **kw: subprocess.CompletedProcess(a, 0, stdout=" M some/file.py\n", stderr=""),
+    )
+
+    assert run_cycle._aset_dirty() is True
+
+
+def test_aset_dirty_is_false_when_git_status_is_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        run_cycle.subprocess, "run",
+        lambda *a, **kw: subprocess.CompletedProcess(a, 0, stdout="", stderr=""),
+    )
+
+    assert run_cycle._aset_dirty() is False
+
+
+def test_aset_dirty_is_none_when_git_cannot_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Covers both ways the question can go unanswered: git raising (missing
+    binary, not a repository under some git versions) and git exiting
+    non-zero. Neither may read as `False` ("clean"): a failed check must not
+    be reported as a known-good result."""
+
+    def _raise(*_a: object, **_kw: object) -> None:
+        raise OSError("git: command not found")
+
+    monkeypatch.setattr(run_cycle.subprocess, "run", _raise)
+    assert run_cycle._aset_dirty() is None
+
+    monkeypatch.setattr(
+        run_cycle.subprocess, "run",
+        lambda *a, **kw: subprocess.CompletedProcess(a, 128, stdout="", stderr="not a git repository"),
+    )
+    assert run_cycle._aset_dirty() is None
 
 
 def test_hygiene_is_green_when_nothing_is_labelled() -> None:
