@@ -12,6 +12,7 @@ file content is written for real via ``create_file``/``update_file`` — see
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterable
@@ -23,7 +24,11 @@ from typing import Any
 from engineering_team.components import Component, components_in
 from engineering_team.config import Settings
 from engineering_team.contracts.enums import ReviewerStatus, StopCause, ToolStatus
-from engineering_team.contracts.models import ToolResult
+from engineering_team.contracts.models import (
+    BASELINE_RISK_PREFIX,
+    ReviewerDecision,
+    ToolResult,
+)
 from engineering_team.delivery import (
     BRANCH_NAMESPACE,
     DeliveryRefused,
@@ -32,6 +37,7 @@ from engineering_team.delivery import (
     build_delivery,
 )
 from engineering_team.docker_labels import project_slug, sweep
+from engineering_team.graph.routers import latest_successful_diff
 from engineering_team.graph.stategraph import build_engineering_graph
 from engineering_team.guardrails.secrets import redact_secrets
 from engineering_team.infrastructure_prerequisite import (
@@ -599,6 +605,123 @@ def tool_outcomes(results: Iterable[ToolResult]) -> list[dict[str, str]]:
     return outcomes
 
 
+def unresolved_risks(
+    results: Iterable[ToolResult], review: ReviewerDecision | None
+) -> list[dict[str, str]]:
+    """Say what the run left open, so that it cannot vanish by omission.
+
+    Everything here was already somewhere in the report, and that was the
+    problem: a reader had to reconstruct it. The receipt stated what changed,
+    what was written and what the Reviewer decided, and a run that ended with
+    untouched risk, unanswered objections or a suite that never ran looked, at a
+    glance, exactly like one that ended clean. Absence of a statement is not
+    evidence of absence, and the receipt was making it read as such.
+
+    Four things are left open, and each is a different kind:
+
+    ``baseline_risk`` is risk the system decided on purpose not to fix. Security
+    marks dependency advisories on manifests the change never touched, and
+    ``graph.routers.remediation_fingerprint`` then drops those from the failure
+    identity so that a repeat is not mistaken for a new failure. Nothing
+    remediates them and nothing ever will, so an approval that carries them is
+    an approval with risk standing behind it. It is reported whatever the
+    verdict was, because approval is what makes it easy to miss.
+
+    ``open_objection`` is the rest of a non-approved run's problems: raised,
+    never answered. An approved run's problems are not listed -- the Reviewer
+    approved with them in hand, which is a decision, not an omission.
+
+    ``unreviewed`` is a run that never got a verdict at all. ``review: null``
+    beside an empty problem list is the quietest way a receipt can report that
+    nothing was checked, and it is not the same outcome as approval.
+
+    ``unverified`` is a tool whose last word was not SUCCESS. Only the last one:
+    a suite that failed and then passed closed its own risk, and listing the
+    failed attempt would report a fixed problem as an open one -- the same
+    dishonesty as the first-diff receipt, pointing the other way.
+    """
+    risks: list[dict[str, str]] = []
+    if review is None:
+        risks.append({
+            "kind": "unreviewed",
+            "source": "reviewer",
+            "detail": "the run ended before a Reviewer decision",
+        })
+    else:
+        for problem in review.problems:
+            if problem.startswith(BASELINE_RISK_PREFIX):
+                kind = "baseline_risk"
+            elif review.status is not ReviewerStatus.APPROVED:
+                kind = "open_objection"
+            else:
+                continue
+            risks.append({
+                "kind": kind, "source": "reviewer", "detail": redact_secrets(problem),
+            })
+
+    last_outcome: dict[str, ToolResult] = {}
+    for item in results:
+        last_outcome[item.tool_name] = item
+    for name, item in last_outcome.items():
+        if item.status is ToolStatus.SUCCESS:
+            continue
+        reason = redact_secrets(
+            item.error or item.output_summary or ""
+        )[-ERROR_EXCERPT_LIMIT:]
+        risks.append({
+            "kind": "unverified",
+            "source": name,
+            "detail": f"{item.status.value}: {reason}" if reason else item.status.value,
+        })
+    return risks
+
+
+# A rev-parse against a local checkout. Short, because a report is owed either
+# way and a git that does not answer promptly is an answer of None.
+_GIT_SHA_TIMEOUT_SECONDS = 30
+
+
+def target_repo_sha(project_root: Path) -> str | None:
+    """The commit the run worked on, or ``None`` when there is no answer.
+
+    The receipt outlives the checkout. ``ephemeral_checkout`` removes its clone
+    in a ``finally`` block as the run returns, so by the time anyone reads the
+    report there is nothing left to ask. This has to be read while the working
+    copy is still on disk, which is why it is computed here rather than by
+    whoever reads the report afterwards.
+
+    It names the commit the run *started from*. Files the run wrote are in the
+    working tree and do not move HEAD, and this is read before the delivery
+    block below, so a branch this system commits cannot become the answer.
+
+    It never raises. A target that is not a git repository, a repository with no
+    commits, an absent git, a git that hangs -- each of those is a report
+    without a SHA, not a run that failed, and the run's real outcome must not be
+    replaced by this lookup's. ``GitDelivery._git`` is the wrong instrument for
+    exactly that reason: it turns a non-zero git into ``DeliveryRefused``. The
+    tolerant form is the one ``delivery.py`` uses inline for its own optional
+    lookups -- ``check=False``, then read ``returncode``.
+
+    The value is a SHA or ``None``, never ``""``, and ``run_on_project`` records
+    the key unconditionally. So ``None`` says "no SHA was obtained" and nothing
+    else: not "not computed yet", which would be a missing key, and not a falsy
+    string a reader could take for one. A repository with no commits reads
+    ``None`` too, because it has no SHA that a caller could have been given
+    instead.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+            timeout=_GIT_SHA_TIMEOUT_SECONDS, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
+
 def run_on_project(
     settings: Settings,
     *,
@@ -631,10 +754,7 @@ def run_on_project(
 
     implementation = state.get("implementation")
     review = state.get("review")
-    diff_result = next(
-        (item for item in state.get("tool_results", []) if item.tool_name == "get_diff"),
-        None,
-    )
+    diff_result = latest_successful_diff(state.get("tool_results", []))
     writes = [
         item for item in state.get("tool_results", [])
         if item.tool_name in {"create_file", "update_file"}
@@ -645,6 +765,9 @@ def run_on_project(
         "trace_id": trace.trace_id,
         "langfuse_live": trace.live,
         "project_path": str(project_root),
+        # Read here, with the checkout still on disk. Always present, so its
+        # absence can never be mistaken for "not computed"; None means no SHA.
+        "target_repo_sha": target_repo_sha(project_root),
         "cloud_first": cloud_first,
         "final_status": state.get("final_status"),
         "stop_cause": state.get("stop_cause"),
@@ -668,6 +791,7 @@ def run_on_project(
             f"{item.code.value}: {item.detail}" for item in errors
         ],
         "tool_outcomes": tool_outcomes(state.get("tool_results", [])),
+        "unresolved_risks": unresolved_risks(state.get("tool_results", []), review),
         "human_review_required": bool(state.get("human_review_required")),
         # ADR 18. A run that ends having delivered infrastructure and no
         # functional code is a success, and anything reading these outcomes has

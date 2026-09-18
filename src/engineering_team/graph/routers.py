@@ -69,13 +69,25 @@ def failure_repetitions(fingerprints: list[str]) -> int:
     return fingerprints.count(fingerprints[-1])
 
 
-def applied_diff_fingerprint(tool_results: list[ToolResult]) -> str:
-    """Identity of the code a cycle left in the workspace; empty when unknown.
+def latest_successful_diff(tool_results: list[ToolResult]) -> ToolResult | None:
+    """The one get_diff result that describes the code now in the workspace.
 
-    get_diff is cumulative, so its latest successful Developer result describes the
-    whole change the Reviewer just rejected.
+    get_diff is cumulative (``mcp/repository.py``'s ``get_diff`` re-derives the
+    whole diff from the originals every call), so an earlier result describes
+    the change as it stood before the latest cycle changed it, and the last
+    *successful* one describes all of it.
+
+    Status is half the answer, not a detail. A get_diff can come back DENIED or
+    UNAVAILABLE carrying an empty ``output_summary`` and a reason; treating that
+    as the latest diff presents a refusal as the change. Both halves belong in
+    one predicate because the two readers of it -- the router that decides a run
+    has stopped making progress, and the receipt that tells a human what was
+    applied -- have to be talking about the same code. When they were written
+    twice they disagreed: the receipt took the first result and read no status
+    at all (A-05), so a run could be stopped for repeating a diff the report
+    never showed.
     """
-    latest = next(
+    return next(
         (
             item
             for item in reversed(tool_results)
@@ -85,6 +97,11 @@ def applied_diff_fingerprint(tool_results: list[ToolResult]) -> str:
         ),
         None,
     )
+
+
+def applied_diff_fingerprint(tool_results: list[ToolResult]) -> str:
+    """Identity of the code a cycle left in the workspace; empty when unknown."""
+    latest = latest_successful_diff(tool_results)
     if latest is None or not latest.output_summary.strip():
         return ""
     return hashlib.sha256(latest.output_summary.encode("utf-8")).hexdigest()[:20]
