@@ -1,4 +1,10 @@
-from engineering_team.observability.langfuse import LangfuseTracer
+import pytest
+
+from engineering_team.agents.architecture import ArchitectureAgent
+from engineering_team.contracts.enums import AgentRole
+from engineering_team.graph.stategraph import build_engineering_graph
+from engineering_team.mcp.repository import RepositoryMCP
+from engineering_team.observability.langfuse import LangfuseTracer, TraceSession
 
 
 class FakeSpan:
@@ -64,13 +70,16 @@ def test_langfuse_adapter_creates_one_root_and_complete_child_telemetry() -> Non
         },
     )
     trace.record("RAG retrieval", as_type="retriever", metadata={"source": "security.md"})
-    trace.record("MCP call", as_type="tool", metadata={"tool_result": "SUCCESS"})
+    # Named after the tool, as the graph names it -- this used to record the
+    # literal "MCP call" and assert it back, which stayed green while production
+    # gave every tool observation in a campaign the same name.
+    trace.record("read_file", as_type="tool", metadata={"tool_result": "SUCCESS"})
     trace.finish({"final_status": "APPROVED"})
 
     assert trace.trace_id == "trace-run-123"
     assert len(client.roots) == 1
     root = client.roots[0]
-    assert [span.name for span in root.children] == ["Product", "RAG retrieval", "MCP call"]
+    assert [span.name for span in root.children] == ["Product", "RAG retrieval", "read_file"]
     assert "leak" not in str(root.children[0].kwargs)
     assert root.ended is True
     assert client.flushed is True
@@ -128,3 +137,34 @@ def test_adapter_uses_canonical_base_url_and_exports_live(monkeypatch) -> None:
     }
     assert trace.live is True
     assert client.flushed is True
+
+
+class _StopAfterArchitecture(ArchitectureAgent):
+    """Ends the run once the repository reads that feed Architecture have happened."""
+
+    def execute(self, envelope):
+        raise RuntimeError("architecture captured")
+
+
+def test_the_graph_names_a_tool_observation_after_the_tool_that_ran(tmp_path) -> None:
+    (tmp_path / "service.py").write_text("value = 1\n", encoding="utf-8")
+    trace = TraceSession(trace_id="tool-names", run_id="tool-names", live=False)
+    graph = build_engineering_graph(
+        repository_mcp=RepositoryMCP(tmp_path),
+        trace=trace,
+        agent_overrides={AgentRole.ARCHITECTURE: _StopAfterArchitecture()},
+    )
+
+    with pytest.raises(RuntimeError, match="architecture captured"):
+        graph.invoke({"run_id": "tool-names", "requirement": "Design the product service"})
+
+    tool_events = [event for event in trace.events if event["type"] == "tool"]
+    names = {event["name"] for event in tool_events}
+
+    assert tool_events
+    # The identity was always in the payload; what changed is that it is now also
+    # where Langfuse indexes it, so a campaign can be grouped and filtered by tool.
+    assert names == {event["output"]["tool_name"] for event in tool_events}
+    assert "MCP call" not in names
+    assert names <= {"list_files", "read_file", "search_code"}
+    assert "list_files" in names

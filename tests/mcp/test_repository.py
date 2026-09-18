@@ -1,9 +1,60 @@
 import subprocess
+import time
 from pathlib import Path
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
 from engineering_team.mcp.repository import RepositoryMCP
 from engineering_team.workspace.isolation import create_run_copy
+
+
+class _SlowWorkspace:
+    """A workspace whose every access costs a duration a millisecond clock can see.
+
+    A real tmp_path is far too fast to distinguish a measured duration from the
+    hardcoded zero this replaced, so the cost is made explicit instead of hoped for.
+    """
+
+    DELAY = 0.01
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def list_paths(self) -> list[Path]:
+        time.sleep(self.DELAY)
+        return [Path("file.txt")]
+
+    def read(self, relative: str) -> str:
+        time.sleep(self.DELAY)
+        return "hello"
+
+    def write(self, relative: str, content: str) -> None:
+        time.sleep(self.DELAY)
+
+    def exists(self, relative: str) -> bool:
+        return True
+
+    def search(self, query: str) -> list[Path]:
+        time.sleep(self.DELAY)
+        return [Path("file.txt")]
+
+
+def test_every_repository_tool_reports_the_time_it_actually_took(tmp_path: Path) -> None:
+    mcp = RepositoryMCP(workspace=_SlowWorkspace(tmp_path))
+
+    results = [
+        mcp.list_files(AgentRole.DEVELOPER),
+        mcp.read_file(AgentRole.DEVELOPER, "file.txt"),
+        mcp.search_code(AgentRole.DEVELOPER, "hello"),
+        mcp.update_file(AgentRole.DEVELOPER, "file.txt", "changed\n"),
+        mcp.get_diff(AgentRole.DEVELOPER),
+    ]
+
+    assert [item.tool_name for item in results] == [
+        "list_files", "read_file", "search_code", "update_file", "get_diff",
+    ]
+    for item in results:
+        assert item.status is ToolStatus.SUCCESS, item.error
+        assert item.duration_ms > 0, f"{item.tool_name} reported {item.duration_ms}"
 
 
 def test_repository_mcp_reads_and_writes_only_inside_run_workspace(tmp_path: Path) -> None:

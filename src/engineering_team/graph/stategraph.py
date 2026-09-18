@@ -215,8 +215,13 @@ def build_engineering_graph(
         """
         tool_results.append(result)
         if trace is not None:
+            # The span carries which tool ran, not that some tool ran. A single
+            # literal made every tool observation in a campaign identical, so
+            # Langfuse could neither group nor filter by tool without parsing
+            # each payload for `output.tool_name` -- the identity was already
+            # there, just not where the backend indexes it.
             trace.record(
-                "MCP call", as_type="tool", output=result.model_dump(mode="json"),
+                result.tool_name, as_type="tool", output=result.model_dump(mode="json"),
                 metadata=mcp_trace_metadata(adapter),
             )
         blocking = (

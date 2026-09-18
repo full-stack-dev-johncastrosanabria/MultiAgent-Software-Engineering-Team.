@@ -53,6 +53,87 @@ _DISTRIBUTION_NAME = "autonomous-engineering-team"
 
 
 
+_OUTPUT_TAIL = 4000
+_ERROR_BLOCK_LIMIT = 8
+_ERROR_BLOCK_BUDGET = 1500
+_BUILD_ERRORS_HEADING = "\nBuild errors, extracted before truncation:\n"
+
+# One `[ERROR]` line plus the unprefixed continuation lines javac indents under
+# it, ending at the next `[ERROR]` or at the `[INFO]` banner of the next phase.
+_MAVEN_ERROR_BLOCK = re.compile(
+    r"^\[ERROR\].*?(?=^\[ERROR\]|^\[INFO\]|\Z)", re.MULTILINE | re.DOTALL
+)
+# Surefire's own summary lines, with or without Maven's `[ERROR] ` prefix. Only a
+# run that failed something matches: `Failures: 0, Errors: 0` does not.
+_SUREFIRE_FAILURE_HEADER = re.compile(
+    r"^.*(?:Tests in error:|Failed tests:|Tests run:.*?(?:Failures|Errors): [1-9]).*$",
+    re.MULTILINE,
+)
+# Maven's help footer is printed verbatim on every failure and names no cause.
+_MAVEN_BOILERPLATE = (
+    "-> [Help 1]",
+    "To see the full stack trace",
+    "Re-run Maven using the -X switch",
+    "For more information about the errors and possible solutions",
+    "[Help 1] http",
+)
+
+
+def extract_build_errors(
+    full_output: str,
+    *,
+    max_blocks: int = _ERROR_BLOCK_LIMIT,
+    budget: int = _ERROR_BLOCK_BUDGET,
+) -> str:
+    """The build's own error blocks, head-first, bounded by block count and bytes.
+
+    Maven prints its compilation errors and Surefire's failure summary near the
+    *head* of the failing phase and a fixed `[Help 1]` footer after them, so a cut
+    taken from the end keeps the footer and loses the cause. Two cuts are taken
+    from the end downstream -- 4000 characters in `_run` below, then 600 more in
+    `apply_run.tool_outcomes()` -- and this is the only point at which the head is
+    still reachable, which is why the extraction happens here and not there.
+
+    Bounded twice on purpose: a build that fails in a hundred files would
+    otherwise spend the whole budget on the first file's neighbours.
+    """
+    blocks: list[str] = []
+    for match in _MAVEN_ERROR_BLOCK.findall(full_output):
+        block = match.rstrip()
+        if not block.removeprefix("[ERROR]").strip():
+            continue
+        if any(noise in block for noise in _MAVEN_BOILERPLATE):
+            continue
+        blocks.append(block)
+        if len(blocks) >= max_blocks:
+            break
+    # A Surefire summary Maven did not prefix with `[ERROR]` matches nothing
+    # above, so it is looked for separately and only added when it is new.
+    for match in _SUREFIRE_FAILURE_HEADER.findall(full_output):
+        if len(blocks) >= max_blocks:
+            break
+        header = match.strip()
+        if header and not any(header in block for block in blocks):
+            blocks.append(header)
+    return "\n".join(blocks)[:budget]
+
+
+def retained_output(full_output: str) -> str:
+    """The tail a tool keeps, with the extracted error blocks appended after it.
+
+    After, not before: every consumer downstream cuts from the end, so anything
+    put at the head would be cut again. This is the ordering `_run` already
+    relies on to carry confirmed dependency advisories past the 600-character
+    excerpt in the run receipt.
+    """
+    errors = extract_build_errors(full_output)
+    if not errors:
+        return full_output[-_OUTPUT_TAIL:]
+    suffix = _BUILD_ERRORS_HEADING + errors
+    keep = _OUTPUT_TAIL - len(suffix)
+    return (full_output[-keep:] if keep > 0 else "") + suffix
+
+
 def build_runner(
     root: Path, settings: Settings, *, interpreter: Any = None,
     run_id: str = "", project: str = "",
@@ -718,7 +799,7 @@ class QualityMCP:
         except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
             return self._unavailable(role, tool, exc, started)
         full_output = completed.stdout + completed.stderr
-        output = full_output[-4000:]
+        output = retained_output(full_output)
         if completed.returncode < 0:
             return self._unavailable(
                 role, tool, RuntimeError("quality subprocess was terminated"), started

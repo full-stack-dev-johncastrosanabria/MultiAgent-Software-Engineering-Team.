@@ -10,6 +10,7 @@ decided policy would have to be re-audited once per implementation.
 from __future__ import annotations
 
 import difflib
+import time
 from pathlib import Path
 
 from engineering_team.contracts.enums import AgentRole, ToolStatus
@@ -55,14 +56,27 @@ class RepositoryMCP:
         status: ToolStatus,
         output: str = "",
         error: str | None = None,
+        *,
+        started: float | None = None,
     ) -> ToolResult:
+        """One tool result, timed from ``started`` when the caller opened a clock.
+
+        Every public entry point below starts one on its first line, so the
+        duration covers the refusal as well as the work: a denial that took a
+        millisecond is a measurement, and a hardcoded ``0`` was not. Callers
+        that have no clock still get ``0``, which is what this returned for
+        every repository tool before -- the same ``started: float`` pattern
+        ``mcp.quality`` already uses for its own subprocess-backed tools.
+        """
         return ToolResult(
             tool_name=tool,
             allowed_role=role,
             status=status,
             input_summary="safe",
             output_summary=output,
-            duration_ms=0,
+            duration_ms=(
+                0 if started is None else int((time.perf_counter() - started) * 1000)
+            ),
             error=error,
         )
 
@@ -71,13 +85,17 @@ class RepositoryMCP:
         return str(refuse_traversal(relative))
 
     def list_files(self, role: AgentRole) -> ToolResult:
+        started = time.perf_counter()
         if role not in _READ_ROLES:
-            return self._result(role, "list_files", ToolStatus.DENIED, error="role denied")
+            return self._result(
+                role, "list_files", ToolStatus.DENIED, error="role denied", started=started
+            )
         return self._result(
             role,
             "list_files",
             ToolStatus.SUCCESS,
             self._bounded_listing(),
+            started=started,
         )
 
     def _bounded_listing(self) -> str:
@@ -100,25 +118,36 @@ class RepositoryMCP:
         return "\n".join(listed)
 
     def read_file(self, role: AgentRole, relative: str) -> ToolResult:
+        started = time.perf_counter()
         if role not in _READ_ROLES:
-            return self._result(role, "read_file", ToolStatus.DENIED, error="role denied")
+            return self._result(
+                role, "read_file", ToolStatus.DENIED, error="role denied", started=started
+            )
         try:
             return self._result(
                 role,
                 "read_file",
                 ToolStatus.SUCCESS,
                 self.workspace.read(self._relative(relative)),
+                started=started,
             )
         except (OSError, ValueError) as exc:
-            return self._result(role, "read_file", ToolStatus.DENIED, error=str(exc))
+            return self._result(
+                role, "read_file", ToolStatus.DENIED, error=str(exc), started=started
+            )
 
     get_file_content = read_file
 
     def search_code(self, role: AgentRole, query: str) -> ToolResult:
+        started = time.perf_counter()
         if role not in _READ_ROLES:
-            return self._result(role, "search_code", ToolStatus.DENIED, error="role denied")
+            return self._result(
+                role, "search_code", ToolStatus.DENIED, error="role denied", started=started
+            )
         matches = [str(relative) for relative in self.workspace.search(query)]
-        return self._result(role, "search_code", ToolStatus.SUCCESS, "\n".join(matches))
+        return self._result(
+            role, "search_code", ToolStatus.SUCCESS, "\n".join(matches), started=started
+        )
 
     def create_file(self, role: AgentRole, relative: str, content: str) -> ToolResult:
         return self._write(role, "create_file", relative, content, create=True)
@@ -129,13 +158,18 @@ class RepositoryMCP:
     def _write(
         self, role: AgentRole, tool: str, relative: str, content: str, create: bool
     ) -> ToolResult:
+        started = time.perf_counter()
         if role not in _WRITE_ROLES:
-            return self._result(role, tool, ToolStatus.DENIED, error="role denied")
+            return self._result(
+                role, tool, ToolStatus.DENIED, error="role denied", started=started
+            )
         try:
             normalized = self._relative(relative)
             existed = self.workspace.exists(normalized)
             if not create and not existed:
-                return self._result(role, tool, ToolStatus.FAIL, error="file not found")
+                return self._result(
+                    role, tool, ToolStatus.FAIL, error="file not found", started=started
+                )
             # Strip trailing WS per line and always end with a newline so LLM
             # omissions cannot loop Reviewer→HITL (apply-474c7045 / apply-30fc75c0).
             lines = [line.rstrip(" \t") for line in content.splitlines()]
@@ -158,19 +192,26 @@ class RepositoryMCP:
                     or "".join(normalized_content.split())
                     == "".join(normalized_existing.split())
                 ):
-                    return self._result(role, tool, ToolStatus.SUCCESS, relative)
+                    return self._result(
+                        role, tool, ToolStatus.SUCCESS, relative, started=started
+                    )
             if normalized not in self._originals:
                 self._originals[normalized] = (
                     self.workspace.read(normalized) if existed else None
                 )
             self.workspace.write(normalized, normalized_content)
-            return self._result(role, tool, ToolStatus.SUCCESS, relative)
+            return self._result(role, tool, ToolStatus.SUCCESS, relative, started=started)
         except (OSError, ValueError) as exc:
-            return self._result(role, tool, ToolStatus.DENIED, error=str(exc))
+            return self._result(
+                role, tool, ToolStatus.DENIED, error=str(exc), started=started
+            )
 
     def get_diff(self, role: AgentRole) -> ToolResult:
+        started = time.perf_counter()
         if role not in _WRITE_ROLES:
-            return self._result(role, "get_diff", ToolStatus.DENIED, error="role denied")
+            return self._result(
+                role, "get_diff", ToolStatus.DENIED, error="role denied", started=started
+            )
         sections: list[str] = []
         for relative, original in self._originals.items():
             current = (
@@ -189,4 +230,6 @@ class RepositoryMCP:
                 tofile="/dev/null" if current is None else f"b/{relative}",
                 lineterm="",
             ))
-        return self._result(role, "get_diff", ToolStatus.SUCCESS, "\n".join(sections))
+        return self._result(
+            role, "get_diff", ToolStatus.SUCCESS, "\n".join(sections), started=started
+        )

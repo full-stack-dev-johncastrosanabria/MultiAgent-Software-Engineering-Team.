@@ -269,12 +269,21 @@ def test_real_mcp_protocol_failure_changes_reviewer_route_and_is_remediated(tmp_
         "Developer", "Testing", "Reviewer"
     ]
     assert result["final_status"] == "APPROVED"
+    # What this asserts is that a stdio call carries its protocol version, which
+    # does not depend on what the span happens to be called. Selecting by the
+    # observation's type rather than by one name keeps it that way the next time
+    # a name improves -- it used to select the literal "MCP call", which every
+    # tool observation shared.
     protocol_events = [
         event for event in trace.events
-        if event["name"] == "MCP call" and event["metadata"].get("transport") == "stdio"
+        if event["type"] == "tool" and event["metadata"].get("transport") == "stdio"
     ]
     assert protocol_events
     assert all(event["metadata"]["protocol_version"] for event in protocol_events)
+    assert {event["name"] for event in protocol_events} <= {
+        item.tool_name for item in result["tool_results"]
+    }
+    assert "run_tests" in {event["name"] for event in protocol_events}
     assert any(item.code is ErrorCode.TOOL_ERROR for item in result["errors"])
     assert any(event["name"] == "TOOL_ERROR" for event in trace.events)
 
