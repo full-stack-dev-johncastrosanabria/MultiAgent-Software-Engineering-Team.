@@ -16,7 +16,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterable
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -207,29 +207,53 @@ class _ProjectInfrastructureQuality:
         self.quality = None
         self._closed = False
 
+    @staticmethod
+    @contextmanager
+    def _infrastructure_step():
+        """Name a failure inside this block as the infrastructure's, not ASET's.
+
+        `ServiceStartupError` is what the CLI turns into its infrastructure
+        exit status, and the ghcycle scorer into `infrastructure_unavailable`
+        (`contracts/enums.py`, `INFRASTRUCTURE_EXIT_CODE`). So only the steps
+        that ask the infrastructure something are wrapped -- the sweep, reading
+        the compose model, bringing the services and the run daemon up -- by
+        *step*, not by exception type: a bare `RuntimeError` from `up` is still
+        a dependency that never came up. Wiring the components on top of a
+        stack that did come up is ASET's own code; a bug or a refusal there
+        propagates as itself and reads as a crash.
+        """
+        from engineering_team.services import ServiceStartupError
+
+        try:
+            yield
+        except Exception as exc:
+            raise ServiceStartupError(f"INFRASTRUCTURE_ERROR: {exc}") from exc
+
     def __enter__(self):
         from engineering_team.mcp.quality import CompositeQuality
         from engineering_team.services import ServiceStack, ServiceStartupError
 
         try:
-            # The sweep runs before anything is started: what a crashed run left
-            # behind is removed now, and only what no live run owns. A runtime
-            # that never answers is not one with nothing to clean (A-13, B-11):
-            # report it as the infrastructure failure it is instead of starting
-            # against a stack the sweep never actually looked at.
-            swept = sweep(self.run_id)
-            if swept["error_code"] is not None:
-                raise ServiceStartupError(
-                    "the pre-run Docker sweep never got an answer from the "
-                    "runtime partway through; cleanup is incomplete, not "
-                    "confirmed done"
+            with self._infrastructure_step():
+                # The sweep runs before anything is started: what a crashed run
+                # left behind is removed now, and only what no live run owns. A
+                # runtime that never answers is not one with nothing to clean
+                # (A-13, B-11): report it as the infrastructure failure it is
+                # instead of starting against a stack the sweep never actually
+                # looked at.
+                swept = sweep(self.run_id)
+                if swept["error_code"] is not None:
+                    raise ServiceStartupError(
+                        "the pre-run Docker sweep never got an answer from the "
+                        "runtime partway through; cleanup is incomplete, not "
+                        "confirmed done"
+                    )
+                deadline = time.monotonic() + self.timeout_seconds
+                self.services = ServiceStack(
+                    self.root, self.run_id or str(uuid.uuid4()), project=self.project,
+                    deadline=deadline,
                 )
-            deadline = time.monotonic() + self.timeout_seconds
-            self.services = ServiceStack(
-                self.root, self.run_id or str(uuid.uuid4()), project=self.project,
-                deadline=deadline,
-            )
-            self.services.up(deadline)
+                self.services.up(deadline)
             # The project declared nothing and this run inferred it. Under ADR 18
             # that is a blocking prerequisite to deliver, not a detail: the
             # inference used to be written to a temporary file and deleted, so
@@ -244,17 +268,18 @@ class _ProjectInfrastructureQuality:
                     run_id=self.run_id or None,
                     project=self.project,
                 )
-                self.daemon.up(time.monotonic() + self.timeout_seconds)
+                with self._infrastructure_step():
+                    self.daemon.up(time.monotonic() + self.timeout_seconds)
             for component in self.targets:
                 self._add_component(component)
             # Keep a stable handle even when a new test project is authored.
             self.quality = CompositeQuality(self.backends, refresh=self.refresh_components)
             return self.quality
-        except BaseException as exc:
+        except BaseException:
+            # Everything started so far is torn down whatever failed; only the
+            # name of the failure depends on which step it came from.
             self.close()
-            if not isinstance(exc, Exception):
-                raise
-            raise ServiceStartupError(f"INFRASTRUCTURE_ERROR: {exc}") from exc
+            raise
 
     def _add_component(self, component):
         from engineering_team.mcp.container import ContainerRunner

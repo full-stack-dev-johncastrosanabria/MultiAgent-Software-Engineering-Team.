@@ -18,10 +18,10 @@ detalle, las cifras y el método están en la
 | Ledger de salud de modelos (`4ff4ae2`) | Ninguna corrida; `workspace/model-health.json` no existe | **No verificado** | — |
 | Disponibilidad de las cadenas de modelos | 290 de 478 generaciones fallidas; 13 de 24 corridas con reporte crudo pararon por cadena agotada | **Fallando** | Lista de proveedores aprobados y tope de gasto |
 | Fallback local Ollama en modo nube | 0 de 26 intentos | **Fallando** | Preflight o retiro |
-| Suite de tests (`fix/audit160926`, cierre de la fase 1) | 2026-09-18, `env -i`, daemon Docker real: 1393 passed, 19 skipped (imágenes locales ausentes), 5 xfailed, salida 0; con el daemon colgado (criterio de salida de la fase): 1375 passed, 37 skipped con razón, 5 xfailed, 0 failed | Verde con daemon; sin daemon verde con omisiones nombradas. Ver el [cierre de la fase 1](#comprobaciones-del-2026-09-18-cierre-de-la-fase-1-de-la-remediación) | Omisiones fuera del presupuesto `needs_docker`; marca de red para el test de PyPI |
+| Suite de tests (`fix/audit160926`, cierre de la fase 1) | 2026-09-18, tras la corrección N-1, `tests` completo (incluye los 6 de `tests/e2e`): daemon Docker real, 1404 passed, 19 skipped (imágenes locales ausentes), 5 xfailed, salida 0; con el daemon colgado (criterio de salida de la fase): 1383 passed, 40 skipped con razón, 5 xfailed, 0 failed | Verde con daemon; sin daemon verde con omisiones nombradas. Ver el [cierre de la fase 1](#comprobaciones-del-2026-09-18-cierre-de-la-fase-1-de-la-remediación) | Omisiones fuera del presupuesto `needs_docker`; marca de red para el test de PyPI |
 | Sandbox de contenedor, contención de rutas, escritura autorizada, entrega con dos llaves, redacción antes de la nube | Código y tests; revisión de seguridad del 2026-09-16 | Verificado en código | Salida de código fuente a proveedores sin política |
 | Decisiones 16, 17 y 18 contra daemon real | `results/` de `adr16/`, `adr17/` y `adr18/` en `evaluation/benchmarks/` (2026-09-11): 5/5, 9/9, 11/11 | Verificado en esa fecha; los JSON no registran commit y los cambios del 09-16 en servicios y workspace no se re-verificaron | — |
-| Scorer `run_cycle.py` | Esquema v2 de la fase 1 (2026-09-18): tests de `_score` y `main()` | Atribuible **en código**: SHA de ASET leído antes y después de la corrida, «no ejercitado» distinto de «aprobado», causa de parada, fallos de entorno separados; **ninguna corrida ghcycle real con v2** todavía | Cuelgue tras el clon sin reporte; causa tipada para una suite que excede su plazo. Ver el [cierre de la fase 1](#comprobaciones-del-2026-09-18-cierre-de-la-fase-1-de-la-remediación) |
+| Scorer `run_cycle.py` | Esquema v2 de la fase 1 (2026-09-18): tests de `_score` y `main()` | Atribuible **en código**: SHA de ASET leído antes y después de la corrida, «no ejercitado» distinto de «aprobado», causa de parada, fallos de entorno separados; **ninguna corrida ghcycle real con v2** todavía | Cuelgue tras el clon sin reporte; clon fallido y CLI matada por señal leídos como `crash`; causa tipada de timeout; una corrida por host. Ver el [cierre de la fase 1](#comprobaciones-del-2026-09-18-cierre-de-la-fase-1-de-la-remediación) |
 | Reviewer contra parches malos conocidos | [test_known_bad_patches.py](../tests/unit/test_known_bad_patches.py) (fase 1) | **Fallando**: aprueba con puntuación 100 un test vacuo nombrado con las palabras de la especificación (#5, `xfail(strict=True)`) | Fase 4 del plan; ver el [cierre de la fase 1](#comprobaciones-del-2026-09-18-cierre-de-la-fase-1-de-la-remediación) |
 
 ## Campaña GitHub del 2026-09-13 — aceptación no cumplida
@@ -605,8 +605,9 @@ histórica, no comprobable en esta máquina.
 
 La fase 1 del [plan de remediación](audit160926/12-plan-de-remediacion.md),
 «medición confiable», se integró en la rama `fix/audit160926`: las nueve tareas
-hasta `a8ebcaf` y una tanda final de correcciones de la revisión de rama entera
-(sin `push` ni `merge`: la compuerta del operador sigue en pie). Esta sección
+hasta `a8ebcaf`, una tanda final de correcciones de la revisión de rama entera y
+la corrección N-1 de su re-revisión (sin `push` ni `merge`: la compuerta del
+operador sigue en pie). Esta sección
 separa lo ejecutado de lo que queda **abierto**. Ninguna corrida ghcycle real se
 lanzó con el scorer nuevo: todo lo que sigue sobre el scorer está verificado por
 tests, no por una campaña.
@@ -617,6 +618,7 @@ tests, no por una campaña.
 | Criterio de salida del gate con el daemon colgado (rama de la tarea 9, shim de `docker` que no contesta, sin `--ignore`) | 1313 passed, 37 skipped con razón, 3 xfailed, 0 failed, 235.62 s |
 | El mismo criterio con el daemon colgado tras la tanda final (mismo shim, `-o faulthandler_timeout=90`) | 1375 passed, 37 skipped con razón, 5 xfailed, 0 failed, salida 0, 251.70 s |
 | La misma suite con daemon real tras la tanda final de correcciones | 1393 passed, 19 skipped, 5 xfailed, salida 0, 432.11 s (una pasada anterior sobre el mismo código dio lo mismo en 369.79 s). Las 19 omisiones, el mismo número que con `a8ebcaf`, son todas marcas locales que exigen una imagen presente (`test_container.py`, `test_service_stack.py`, `test_run_daemon_live.py`, `test_workspace_contract.py`, `test_workspace_runner.py`); ninguna es `needs_docker`. Los 31 tests de más son los que añade la tanda |
+| Tras la corrección N-1, `tests` completo (los 6 de `tests/e2e` de más respecto de las filas anteriores; los 5 restantes son los que añade N-1) | Daemon real: 1404 passed, 19 skipped, 5 xfailed, salida 0, 472.95 s; una pasada anterior bajo carga (load average ~42) falló solo `test_approved_workspace_change_is_applied_to_selected_source`, cuya espera fija es de 3 s, y pasa aislado. Daemon colgado (mismo shim, `timeout 1800`): 1383 passed, 40 skipped con razón (37 más los 3 de `tests/e2e`), 5 xfailed, 0 failed, salida 0, 223 s |
 | Ruff sobre `src`, `tests` y `run_cycle.py` | Los 3 avisos preexistentes (SIM103, PYI034, PIE807) |
 
 Los 5 `xfailed` son reproducciones deliberadas con `xfail(strict=True)`: C-01,
@@ -656,12 +658,38 @@ corridas congeladas. Calibración: cinco parches malos conocidos.
   reporte solo al final de una corrida completa, así que una corrida colgada o
   matada no deja reporte y el scorer no distingue si murió antes o después de
   clonar (`stages.clone.detail` lo dice). Arreglarlo exige persistir evidencia
-  antes, en la fase 2. Lo que sí cruza ya el proceso es un fallo tipado antes del
-  grafo (código de salida 3); cualquier otra salida distinta de cero sin reporte
-  se registra como `crash`.
-- **Una suite que excede su plazo no tiene causa tipada propia.** Ya no se
-  archiva como fallo de entorno (vuelve a `mcp_unavailable`, la etiqueta previa a
-  la fase), pero tampoco dice «la suite colgó».
+  antes, en la fase 2. Lo que sí cruza ya el proceso es un fallo tipado de un
+  paso de infraestructura antes del grafo —el barrido previo, leer el compose,
+  levantar los servicios o el daemon del run— (código de salida 3); cualquier
+  otra salida distinta de cero sin reporte se registra como `crash`, incluido un
+  fallo de ASET al cablear los componentes sobre una pila que sí arrancó.
+- **Dos fallos antes del reporte se leen `crash` sin serlo del todo (N-2).** Un
+  `git clone` fallido (red, límite de peticiones, autenticación) sale como un
+  `RuntimeError` sin tipo y exit 1, y una CLI matada por una señal (código de
+  retorno negativo: falta de memoria, un `kill` externo) también se registra
+  `crash`. Ninguno está tipado hoy, así que el scorer no puede separarlos sin
+  leer texto; tipar el clon es trabajo de la fase 2.
+- **El timeout sin tipo cubre más que la suite (N-3).** Un comando que excede su
+  plazo ya no se archiva como fallo de entorno (vuelve a `mcp_unavailable`, la
+  etiqueta previa a la fase), pero tampoco dice qué pasó, y esa misma rama cubre:
+  la suite que colgó, los comandos de preparación e instalación
+  (`mvn dependency:go-offline`, `npm ci`, pip), los escaneos de seguridad, un
+  daemon que se cuelga después de `docker create` (`docker start --attach` no
+  vuelve) y un plazo que `create` o `network connect` ya consumieron, de modo que
+  la espera expira de inmediato (`mcp/container.py`); en los dos últimos el
+  código bajo prueba nunca llegó a correr. En cambio, los timeouts de las
+  migraciones y del aprovisionamiento del intérprete siguen marcados
+  `INFRASTRUCTURE_ERROR`. La causa tipada de timeout de la fase 2 tiene que
+  cubrir todos estos casos.
+- **Dos corridas simultáneas en el mismo host pueden borrarse recursos vivos
+  (decisión 16).** El barrido previo (`docker_labels._owned`) solo excluye los
+  recursos de la corrida actual, así que una segunda corrida de apply en el mismo
+  host fuerza el borrado de los contenedores, volúmenes y redes de otra que sigue
+  viva. Compartir proyecto no la protege: el rechazo por nombre de compose
+  (`ServiceStack._refuse_a_concurrent_run`) corre dentro de `services.up`,
+  después del barrido, y para entonces no queda nada de la otra corrida que
+  rechazar. Contradice lo que la decisión promete. Hasta que la fase 2 lo
+  corrija, las campañas de la fase 3 corren **una por host**.
 - **D10, `cost_usd` por generación, no se implementó**; el costo sigue sin
   registrarse.
 - **Residuos de A-09 en el instrumento nuevo.** La negativa de nuestra propia

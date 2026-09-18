@@ -126,8 +126,14 @@ def test_run_project_carries_a_typed_infrastructure_failure_across_the_process_b
 def test_run_project_does_not_dress_any_other_failure_as_infrastructure(
     monkeypatch, tmp_path,
 ) -> None:
-    """Only the typed failure maps to the infrastructure status: an ASET bug is
-    still an uncaught exception, which the scorer records as a crash."""
+    """The CLI's own half of the mapping: only `ServiceStartupError` becomes the
+    infrastructure status; anything else stays an uncaught exception.
+
+    This patches `run_on_project`, so it says nothing about *which* failures
+    reach the CLI as `ServiceStartupError`. That half -- an ASET bug during
+    stack startup must not arrive wrapped -- is pinned on the real startup
+    path in `tests/mcp/test_apply_infrastructure.py`
+    (`test_run_project_exits_as_a_crash_for_an_aset_bug_during_stack_startup`)."""
 
     def crash(*_args, **_kwargs):
         raise RuntimeError("workflow completed without a terminal state")

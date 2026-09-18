@@ -231,6 +231,144 @@ def test_a_bind_mount_refusal_reaches_the_caller_as_a_typed_startup_error(
     assert caught.value.code is ErrorCode.INFRASTRUCTURE_ERROR
 
 
+def _asets_own_attribute_error(monkeypatch):
+    """A bug in ASET's own wiring, after every infrastructure step succeeded."""
+
+    def broken(self, stack, root):
+        raise AttributeError("'Stack' object has no attribute 'environment'")
+
+    monkeypatch.setattr("engineering_team.services.ServiceStack.environment_for_component", broken)
+    return AttributeError
+
+
+def _quality_constructor_refusal(monkeypatch):
+    """`QualityMCP(...)` refusing its own configuration (a `ValueError`)."""
+
+    def refuse(root, _settings, **_kwargs):
+        raise ValueError("container image must be pinned by digest")
+
+    monkeypatch.setattr("engineering_team.mcp.quality.build_runner", refuse)
+    return ValueError
+
+
+@pytest.mark.parametrize(
+    "inject", [_asets_own_attribute_error, _quality_constructor_refusal],
+    ids=["environment_for_component-bug", "QualityMCP-refusal"],
+)
+def test_a_failure_after_the_infrastructure_steps_is_not_dressed_as_infrastructure(
+    tmp_path, monkeypatch, infrastructure, inject
+):
+    """N-1: only the infrastructure steps (`sweep`, `ServiceStack(...)`,
+    `services.up`, `daemon.up`) may become `ServiceStartupError`. A failure in
+    wiring the components on top of a stack that came up -- ASET's own bug or
+    its own refusal -- propagates as itself, so the CLI exits as a crash
+    instead of with the infrastructure status. Cleanup still runs."""
+    events, _, _ = infrastructure
+    expected = inject(monkeypatch)
+
+    with (
+        pytest.raises(expected) as caught,
+        apply_run.open_project_quality(
+            tmp_path, Settings(quality_runner="container"), timeout_seconds=30
+        ),
+    ):
+        pytest.fail("the components must not be wired")
+
+    assert not isinstance(caught.value, ServiceStartupError)
+    # Torn down all the same: any runner already built is closed, then the stack.
+    assert events[0] == "up" and events[-1] == "down" and events.count("down") == 1
+    assert "command" not in events
+
+
+def _run_project_through_the_real_startup(tmp_path, monkeypatch):
+    """`engineering-team run-project` down to `_ProjectInfrastructureQuality.
+    __enter__`, with only the model runtimes, tracer and repository client
+    faked -- none of which the startup path under test touches."""
+    from typer.testing import CliRunner
+
+    from engineering_team import cli
+
+    monkeypatch.setattr(apply_run, "MCPRepositoryClient", lambda *a, **k: nullcontext(object()))
+    monkeypatch.setattr(apply_run, "LocalModelRuntime", lambda *a, **k: object())
+    monkeypatch.setattr(apply_run, "build_retriever", lambda *a, **k: object())
+    monkeypatch.setattr(apply_run, "LangfuseTracer", lambda **k: SimpleNamespace(
+        start_run=lambda *a: SimpleNamespace(trace_id="test")
+    ))
+    monkeypatch.setattr(
+        cli, "Settings", lambda: Settings(quality_runner="container", cloud_enabled=False)
+    )
+    return CliRunner().invoke(cli.app, [
+        "run-project", str(tmp_path), "--spec", "add endpoint",
+        "--report-path", str(tmp_path / "report.json"),
+    ])
+
+
+def test_run_project_exits_as_a_crash_for_an_aset_bug_during_stack_startup(
+    tmp_path, monkeypatch, infrastructure
+):
+    """N-1 at the process boundary, on the real path rather than a patched
+    `run_on_project`: the scorer must read this run as `crash`, never as
+    `infrastructure_unavailable`."""
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    _asets_own_attribute_error(monkeypatch)
+
+    result = _run_project_through_the_real_startup(tmp_path, monkeypatch)
+
+    assert result.exit_code not in (0, INFRASTRUCTURE_EXIT_CODE)
+    assert isinstance(result.exception, AttributeError)
+
+
+def test_run_project_exits_with_the_infrastructure_status_when_a_dependency_never_came_up(
+    tmp_path, monkeypatch, infrastructure
+):
+    """The other half, on the same real path: a failed infrastructure step is
+    what the infrastructure status exists for."""
+    from engineering_team.contracts.enums import INFRASTRUCTURE_EXIT_CODE
+
+    def fail(self, deadline):
+        raise RuntimeError("database unhealthy")
+
+    monkeypatch.setattr("engineering_team.services.ServiceStack.up", fail)
+
+    result = _run_project_through_the_real_startup(tmp_path, monkeypatch)
+
+    assert result.exit_code == INFRASTRUCTURE_EXIT_CODE
+
+
+def test_a_run_daemon_that_never_came_up_is_an_infrastructure_failure(
+    tmp_path, monkeypatch, infrastructure
+):
+    """The fourth infrastructure step, pinned like the sweep, the compose read
+    and `services.up`: without this, unwrapping `daemon.up` left every test
+    green and a daemon that never came up read as an ASET crash."""
+    from engineering_team.mcp.run_daemon import RunDaemon, RunDaemonStartupError
+
+    events, _, runners = infrastructure
+
+    def fail(self, deadline):
+        raise RunDaemonStartupError("run daemon startup deadline exceeded")
+
+    monkeypatch.setattr(RunDaemon, "up", fail)
+    monkeypatch.setattr(RunDaemon, "down", lambda self: events.append("daemon-down"))
+    settings = Settings(
+        quality_runner="container",
+        quality_run_daemon_image="docker@sha256:" + "0" * 64,
+    )
+
+    with (
+        pytest.raises(
+            ServiceStartupError, match="INFRASTRUCTURE_ERROR: run daemon startup deadline"
+        ) as caught,
+        apply_run.open_project_quality(tmp_path, settings, timeout_seconds=30),
+    ):
+        pytest.fail("the components must not be wired")
+
+    assert isinstance(caught.value.__cause__, RunDaemonStartupError)
+    assert events == ["up", "daemon-down", "down"]
+    assert not runners
+
+
 @pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
 def test_interrupted_start_cleans_and_preserves_interruption(
     tmp_path, monkeypatch, infrastructure, interruption
